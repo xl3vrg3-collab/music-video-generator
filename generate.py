@@ -82,6 +82,8 @@ def main():
                         help="Regenerate a single scene by index (0-based)")
     parser.add_argument("--prompt", default=None,
                         help="New prompt for the scene being regenerated (used with --regen)")
+    parser.add_argument("-y", "--yes", action="store_true",
+                        help="Skip confirmation prompt")
     args = parser.parse_args()
 
     # --- Regen mode ---
@@ -132,14 +134,15 @@ def main():
         return
 
     # Confirm
-    try:
-        answer = input(f"Generate {n} scenes? [Y/n] ").strip().lower()
-        if answer and answer != "y":
-            print("Aborted.")
+    if not args.yes:
+        try:
+            answer = input(f"Generate {n} scenes? [Y/n] ").strip().lower()
+            if answer and answer != "y":
+                print("Aborted.")
+                return
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted.")
             return
-    except (EOFError, KeyboardInterrupt):
-        print("\nAborted.")
-        return
 
     # --- Step 3: Generate video clips ---
     print("\n=== GENERATING VIDEO CLIPS ===")
