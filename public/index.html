@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Music Video Generator</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --border: #2a2a3a;
+    --cyan: #00d4ff;
+    --cyan-dim: #00d4ff40;
+    --magenta: #ff2d7b;
+    --magenta-dim: #ff2d7b40;
+    --amber: #ffaa00;
+    --text: #c8c8d4;
+    --text-dim: #6a6a7a;
+    --green: #00ff88;
+    --red: #ff4455;
+  }
+
+  body {
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Scanline overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      transparent, transparent 2px,
+      rgba(0,0,0,0.05) 2px, rgba(0,0,0,0.05) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* Ambient glow */
+  .glow-tl { position: fixed; top: -200px; left: -200px; width: 600px; height: 600px;
+    background: radial-gradient(circle, var(--cyan-dim) 0%, transparent 70%);
+    pointer-events: none; z-index: 0; }
+  .glow-br { position: fixed; bottom: -200px; right: -200px; width: 600px; height: 600px;
+    background: radial-gradient(circle, var(--magenta-dim) 0%, transparent 70%);
+    pointer-events: none; z-index: 0; }
+
+  .container {
+    max-width: 900px; margin: 0 auto; padding: 40px 20px;
+    position: relative; z-index: 1;
+  }
+
+  /* Header */
+  .header {
+    text-align: center; margin-bottom: 50px;
+    border-bottom: 1px solid var(--border); padding-bottom: 30px;
+  }
+  .header h1 {
+    font-size: 28px; font-weight: 300; letter-spacing: 8px;
+    text-transform: uppercase; color: var(--cyan);
+    text-shadow: 0 0 30px var(--cyan-dim);
+  }
+  .header .sub {
+    font-size: 11px; color: var(--text-dim); margin-top: 8px;
+    letter-spacing: 4px; text-transform: uppercase;
+  }
+
+  /* Panels */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
+  .panel-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+    font-size: 11px; text-transform: uppercase;
+    letter-spacing: 3px; color: var(--text-dim);
+  }
+  .panel-header .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--cyan);
+    box-shadow: 0 0 8px var(--cyan);
+  }
+  .panel-body { padding: 20px; }
+
+  /* Upload zone */
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 4px;
+    padding: 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+  }
+  .upload-zone:hover, .upload-zone.dragover {
+    border-color: var(--cyan);
+    background: rgba(0,212,255,0.03);
+  }
+  .upload-zone .icon { font-size: 36px; margin-bottom: 12px; opacity: 0.6; }
+  .upload-zone .label { font-size: 13px; color: var(--text-dim); }
+  .upload-zone .filename {
+    color: var(--green); font-size: 13px; margin-top: 10px;
+  }
+  .upload-zone input[type="file"] { display: none; }
+
+  /* Style input */
+  .style-input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 14px 16px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    resize: vertical;
+    min-height: 70px;
+    transition: border-color 0.3s;
+  }
+  .style-input:focus {
+    outline: none;
+    border-color: var(--cyan);
+  }
+  .style-input::placeholder { color: var(--text-dim); }
+
+  .hint {
+    font-size: 11px; color: var(--text-dim); margin-top: 8px;
+    line-height: 1.6;
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 12px 28px;
+    font-family: inherit; font-size: 12px;
+    letter-spacing: 3px; text-transform: uppercase;
+    border: 1px solid var(--cyan);
+    background: transparent;
+    color: var(--cyan);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.3s;
+  }
+  .btn:hover {
+    background: rgba(0,212,255,0.1);
+    box-shadow: 0 0 20px var(--cyan-dim);
+  }
+  .btn:disabled {
+    opacity: 0.3; cursor: not-allowed;
+    box-shadow: none;
+  }
+  .btn-magenta {
+    border-color: var(--magenta);
+    color: var(--magenta);
+  }
+  .btn-magenta:hover {
+    background: rgba(255,45,123,0.1);
+    box-shadow: 0 0 20px var(--magenta-dim);
+  }
+
+  .btn-row {
+    display: flex; gap: 12px; justify-content: center;
+    margin-top: 20px;
+  }
+
+  /* Progress */
+  .progress-bar-track {
+    width: 100%; height: 4px;
+    background: var(--border); border-radius: 2px;
+    margin-bottom: 20px; overflow: hidden;
+  }
+  .progress-bar-fill {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--cyan), var(--magenta));
+    border-radius: 2px;
+    transition: width 0.5s;
+  }
+  .phase-label {
+    font-size: 12px; color: var(--amber); text-align: center;
+    margin-bottom: 16px; letter-spacing: 2px; text-transform: uppercase;
+  }
+
+  .scene-list {
+    max-height: 400px; overflow-y: auto;
+  }
+  .scene-item {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .scene-item:last-child { border-bottom: none; }
+  .scene-idx {
+    color: var(--text-dim); min-width: 30px;
+    flex-shrink: 0;
+  }
+  .scene-prompt {
+    flex: 1; color: var(--text); line-height: 1.5;
+    word-break: break-word;
+  }
+  .scene-status { min-width: 80px; text-align: right; flex-shrink: 0; }
+  .scene-status.pending { color: var(--text-dim); }
+  .scene-status.working { color: var(--amber); }
+  .scene-status.done { color: var(--green); }
+  .scene-status.failed { color: var(--red); }
+
+  /* Video preview */
+  .preview-wrap {
+    text-align: center;
+  }
+  .preview-wrap video {
+    max-width: 100%; border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+
+  /* Analysis info */
+  .analysis-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+  }
+  .stat-box {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 12px; text-align: center;
+  }
+  .stat-box .val {
+    font-size: 20px; font-weight: 700; color: var(--cyan);
+  }
+  .stat-box .lbl {
+    font-size: 10px; color: var(--text-dim); margin-top: 4px;
+    text-transform: uppercase; letter-spacing: 2px;
+  }
+
+  .hidden { display: none !important; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+  @media (max-width: 600px) {
+    .analysis-grid { grid-template-columns: repeat(2, 1fr); }
+    .header h1 { font-size: 20px; letter-spacing: 4px; }
+  }
+</style>
+</head>
+<body>
+<div class="glow-tl"></div>
+<div class="glow-br"></div>
+
+<div class="container">
+  <div class="header">
+    <h1>Music Video Generator</h1>
+    <div class="sub">Grok AI &middot; Video Synthesis Engine</div>
+  </div>
+
+  <!-- Upload Panel -->
+  <div class="panel" id="uploadPanel">
+    <div class="panel-header"><span class="dot"></span> Audio Source</div>
+    <div class="panel-body">
+      <div class="upload-zone" id="uploadZone">
+        <div class="icon">&#9835;</div>
+        <div class="label">Drop an audio file here or click to browse</div>
+        <div class="filename hidden" id="uploadFilename"></div>
+        <input type="file" id="fileInput" accept="audio/*">
+      </div>
+    </div>
+  </div>
+
+  <!-- Style Panel -->
+  <div class="panel" id="stylePanel">
+    <div class="panel-header"><span class="dot"></span> Visual Style</div>
+    <div class="panel-body">
+      <textarea class="style-input" id="styleInput"
+        placeholder="Describe the visual style... e.g. cyberpunk city, neon rain, dark mood, flying through tunnels"></textarea>
+      <div class="hint">
+        Tip: be descriptive. Include setting, mood, color palette, camera style.
+        Each scene prompt will be varied automatically based on song energy.
+      </div>
+    </div>
+  </div>
+
+  <!-- Generate -->
+  <div class="btn-row">
+    <button class="btn" id="generateBtn" disabled>Generate Video</button>
+  </div>
+
+  <!-- Analysis Panel (shown after generation starts) -->
+  <div class="panel hidden" id="analysisPanel">
+    <div class="panel-header"><span class="dot"></span> Audio Analysis</div>
+    <div class="panel-body">
+      <div class="analysis-grid" id="analysisGrid"></div>
+    </div>
+  </div>
+
+  <!-- Progress Panel -->
+  <div class="panel hidden" id="progressPanel">
+    <div class="panel-header"><span class="dot"></span> Generation Progress</div>
+    <div class="panel-body">
+      <div class="phase-label" id="phaseLabel">Initializing...</div>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" id="progressFill"></div>
+      </div>
+      <div class="scene-list" id="sceneList"></div>
+    </div>
+  </div>
+
+  <!-- Preview Panel -->
+  <div class="panel hidden" id="previewPanel">
+    <div class="panel-header"><span class="dot"></span> Result</div>
+    <div class="panel-body">
+      <div class="preview-wrap">
+        <video id="previewVideo" controls></video>
+      </div>
+      <div class="btn-row">
+        <a class="btn btn-magenta" id="downloadBtn" href="/api/download" download="music_video.mp4">
+          Download MP4
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const $ = id => document.getElementById(id);
+
+  // Elements
+  const uploadZone = $('uploadZone');
+  const fileInput = $('fileInput');
+  const uploadFilename = $('uploadFilename');
+  const styleInput = $('styleInput');
+  const generateBtn = $('generateBtn');
+  const analysisPanel = $('analysisPanel');
+  const analysisGrid = $('analysisGrid');
+  const progressPanel = $('progressPanel');
+  const phaseLabel = $('phaseLabel');
+  const progressFill = $('progressFill');
+  const sceneList = $('sceneList');
+  const previewPanel = $('previewPanel');
+  const previewVideo = $('previewVideo');
+
+  let uploadedFilename = null;
+  let pollTimer = null;
+
+  // --- Upload ---
+  uploadZone.addEventListener('click', () => fileInput.click());
+  uploadZone.addEventListener('dragover', e => {
+    e.preventDefault(); uploadZone.classList.add('dragover');
+  });
+  uploadZone.addEventListener('dragleave', () => {
+    uploadZone.classList.remove('dragover');
+  });
+  uploadZone.addEventListener('drop', e => {
+    e.preventDefault(); uploadZone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length) uploadFile(fileInput.files[0]);
+  });
+
+  async function uploadFile(file) {
+    uploadFilename.textContent = 'Uploading...';
+    uploadFilename.classList.remove('hidden');
+
+    const form = new FormData();
+    form.append('file', file);
+
+    try {
+      const resp = await fetch('/api/upload', { method: 'POST', body: form });
+      const data = await resp.json();
+      if (data.ok) {
+        uploadedFilename = data.filename;
+        uploadFilename.textContent = data.filename + ' (' + (data.size / 1048576).toFixed(1) + ' MB)';
+        generateBtn.disabled = false;
+      } else {
+        uploadFilename.textContent = 'Error: ' + (data.error || 'Upload failed');
+      }
+    } catch (err) {
+      uploadFilename.textContent = 'Error: ' + err.message;
+    }
+  }
+
+  // --- Generate ---
+  generateBtn.addEventListener('click', async () => {
+    if (!uploadedFilename) return;
+
+    const style = styleInput.value.trim() || 'cinematic atmospheric moody';
+    generateBtn.disabled = true;
+
+    try {
+      const resp = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: uploadedFilename, style }),
+      });
+      const data = await resp.json();
+      if (!data.ok) {
+        alert('Error: ' + (data.error || 'Failed to start'));
+        generateBtn.disabled = false;
+        return;
+      }
+
+      progressPanel.classList.remove('hidden');
+      previewPanel.classList.add('hidden');
+      startPolling();
+    } catch (err) {
+      alert('Error: ' + err.message);
+      generateBtn.disabled = false;
+    }
+  });
+
+  // --- Polling ---
+  function startPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(pollProgress, 1500);
+    pollProgress();
+  }
+
+  async function pollProgress() {
+    try {
+      const resp = await fetch('/api/progress');
+      const data = await resp.json();
+      updateUI(data);
+
+      if (!data.running && data.phase !== 'starting') {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        generateBtn.disabled = false;
+      }
+    } catch (e) {
+      // ignore transient errors
+    }
+  }
+
+  function updateUI(data) {
+    // Phase
+    const phaseMap = {
+      idle: 'Idle',
+      starting: 'Starting...',
+      analyzing: 'Analyzing audio...',
+      planning: 'Planning scenes...',
+      generating: 'Generating video clips...',
+      stitching: 'Stitching final video...',
+      done: 'Complete',
+      error: 'Error: ' + (data.error || ''),
+    };
+    phaseLabel.textContent = phaseMap[data.phase] || data.phase;
+
+    // Analysis
+    if (data.analysis) {
+      analysisPanel.classList.remove('hidden');
+      const a = data.analysis;
+      analysisGrid.innerHTML = `
+        <div class="stat-box"><div class="val">${a.bpm}</div><div class="lbl">BPM</div></div>
+        <div class="stat-box"><div class="val">${a.duration.toFixed(1)}s</div><div class="lbl">Duration</div></div>
+        <div class="stat-box"><div class="val">${a.beats.length}</div><div class="lbl">Beats</div></div>
+        <div class="stat-box"><div class="val">${a.sections.length}</div><div class="lbl">Sections</div></div>
+      `;
+    }
+
+    // Scene progress
+    if (data.progress && data.progress.length) {
+      let doneCount = 0;
+      let html = '';
+      data.progress.forEach((p, i) => {
+        let cls = 'pending';
+        let label = 'pending';
+        const s = (p.status || '').toLowerCase();
+        if (s.includes('done')) { cls = 'done'; label = 'done'; doneCount++; }
+        else if (s.includes('fail')) { cls = 'failed'; label = 'failed'; doneCount++; }
+        else if (s !== 'pending') { cls = 'working'; label = p.status; }
+
+        const prompt = p.prompt || '';
+        html += `<div class="scene-item">
+          <span class="scene-idx">#${i + 1}</span>
+          <span class="scene-prompt">${escHtml(prompt.substring(0, 120))}</span>
+          <span class="scene-status ${cls}">${escHtml(label.substring(0, 30))}</span>
+        </div>`;
+      });
+      sceneList.innerHTML = html;
+
+      const pct = data.total_scenes > 0
+        ? Math.round((doneCount / data.total_scenes) * 100) : 0;
+      progressFill.style.width = pct + '%';
+    }
+
+    // Done
+    if (data.phase === 'done' && data.has_output) {
+      previewPanel.classList.remove('hidden');
+      previewVideo.src = '/api/download?t=' + Date.now();
+      progressFill.style.width = '100%';
+    }
+  }
+
+  function escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,115 @@
+"""
+Scene planner.
+Takes audio analysis + user style prompts and generates a list of scenes,
+each with a video-generation prompt tailored to section type and energy.
+"""
+
+import random
+
+# Section-specific prompt modifiers
+SECTION_MOODS = {
+    "intro": [
+        "wide establishing shot",
+        "slow camera pull through",
+        "aerial view descending into",
+        "fog revealing",
+    ],
+    "verse": [
+        "medium shot tracking through",
+        "steady dolly shot of",
+        "close-up details of",
+        "slow pan across",
+    ],
+    "chorus": [
+        "dynamic sweeping shot of",
+        "fast motion through",
+        "high-energy montage of",
+        "dramatic rotating shot of",
+        "intense close-up of",
+    ],
+    "bridge": [
+        "dreamy slow-motion shot of",
+        "abstract flowing visuals of",
+        "surreal morphing shapes in",
+        "soft-focus transition through",
+    ],
+    "outro": [
+        "pulling back wide shot of",
+        "fading aerial view of",
+        "slow dissolve revealing",
+        "distant silhouette in",
+    ],
+}
+
+ENERGY_DESCRIPTORS = {
+    "low": ["calm", "muted tones", "subtle movement", "quiet atmosphere"],
+    "mid": ["moderate motion", "balanced lighting", "flowing movement"],
+    "high": ["vibrant colors", "fast motion", "intense lighting", "pulsing energy"],
+}
+
+QUALITY_SUFFIX = "cinematic, 4k, detailed, moody lighting, professional color grading"
+
+
+def plan_scenes(analysis: dict, style: str, seed: int | None = None) -> list:
+    """
+    Generate a scene list from audio analysis and user style prompt.
+
+    Args:
+        analysis: dict from audio_analyzer.analyze()
+        style: user-provided style description (e.g. "cyberpunk city neon rain")
+        seed: optional random seed for reproducibility
+
+    Returns:
+        list of scene dicts: [{start_sec, end_sec, duration, prompt, section_type}]
+    """
+    if seed is not None:
+        random.seed(seed)
+
+    sections = analysis.get("sections", [])
+    if not sections:
+        # Fallback: single scene for the whole track
+        dur = analysis.get("duration", 8)
+        return [{
+            "start_sec": 0,
+            "end_sec": dur,
+            "duration": dur,
+            "prompt": f"{style}, {QUALITY_SUFFIX}",
+            "section_type": "verse",
+        }]
+
+    scenes = []
+    for section in sections:
+        start = section["start"]
+        end = section["end"]
+        dur = round(end - start, 3)
+        stype = section.get("type", "verse")
+        energy = section.get("energy", 0.5)
+
+        prompt = _build_prompt(style, stype, energy)
+
+        scenes.append({
+            "start_sec": start,
+            "end_sec": end,
+            "duration": dur,
+            "prompt": prompt,
+            "section_type": stype,
+        })
+
+    return scenes
+
+
+def _build_prompt(style: str, section_type: str, energy: float) -> str:
+    """Build a detailed video generation prompt."""
+    # Pick a section-appropriate camera/mood modifier
+    moods = SECTION_MOODS.get(section_type, SECTION_MOODS["verse"])
+    mood = random.choice(moods)
+
+    # Energy descriptor
+    if energy < 0.35:
+        energy_words = random.choice(ENERGY_DESCRIPTORS["low"])
+    elif energy < 0.65:
+        energy_words = random.choice(ENERGY_DESCRIPTORS["mid"])
+    else:
+        energy_words = random.choice(ENERGY_DESCRIPTORS["high"])
+
+    return f"{mood} {style}, {energy_words}, {QUALITY_SUFFIX}"
