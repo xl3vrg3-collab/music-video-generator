@@ -100,13 +100,6 @@ def _overlay_audio(clip: str, audio: str, output: str,
         "ffmpeg", "-y",
         "-i", clip,
         "-i", audio,
-        "-filter_complex", (
-            f"[0:v]fade=t=in:st=0:d={fade_dur},"
-            f"fade=t=out:st=end:d={fade_dur}[v];"
-            f"[1:a]afade=t=in:st=0:d={fade_dur},"
-            f"afade=t=out:st=end:d={fade_dur}[a]"
-        ),
-        "-map", "[v]", "-map", "[a]",
         "-c:v", "libx264", "-c:a", "aac",
         "-shortest",
         output,
