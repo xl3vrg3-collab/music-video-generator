@@ -2,9 +2,49 @@
 Scene planner.
 Takes audio analysis + user style prompts and generates a list of scenes,
 each with a video-generation prompt tailored to section type and energy.
+Includes per-scene transition type assignment based on section flow.
 """
 
 import random
+
+# ---- Transition types ----
+TRANSITION_TYPES = [
+    "crossfade",    # xfade=transition=fade (default)
+    "hard_cut",     # instant cut, no filter
+    "fade_black",   # fade to black, then fade in
+    "wipe_left",    # horizontal wipe left
+    "wipe_right",   # horizontal wipe right
+    "dissolve",     # like crossfade but slower duration
+    "zoom_in",      # zoom into center, next scene zooms out
+    "glitch",       # rapid 0.1s alternating cuts (cyberpunk)
+]
+
+# Auto-assign transitions based on section flow (from_type -> to_type)
+TRANSITION_MAP = {
+    ("intro", "verse"):   "dissolve",
+    ("intro", "chorus"):  "zoom_in",
+    ("verse", "chorus"):  "hard_cut",
+    ("verse", "verse"):   "crossfade",
+    ("verse", "bridge"):  "dissolve",
+    ("chorus", "verse"):  "fade_black",
+    ("chorus", "chorus"): "crossfade",
+    ("chorus", "bridge"): "dissolve",
+    ("chorus", "outro"):  "fade_black",
+    ("bridge", "chorus"): "hard_cut",
+    ("bridge", "verse"):  "dissolve",
+    ("bridge", "outro"):  "fade_black",
+}
+
+# Fallback: any section going to outro gets fade_black
+_DEFAULT_TRANSITION = "crossfade"
+
+
+def auto_assign_transition(from_type: str, to_type: str) -> str:
+    """Pick a transition type based on section flow."""
+    if to_type == "outro":
+        return "fade_black"
+    return TRANSITION_MAP.get((from_type, to_type), _DEFAULT_TRANSITION)
+
 
 # Section-specific prompt modifiers
 SECTION_MOODS = {
@@ -62,7 +102,8 @@ def plan_scenes(analysis: dict, style: str, seed: int | None = None,
         references: optional dict of {"name": "path/to/image.jpg"} for character/env references
 
     Returns:
-        list of scene dicts: [{start_sec, end_sec, duration, prompt, section_type, matched_references}]
+        list of scene dicts: [{start_sec, end_sec, duration, prompt, section_type,
+                               matched_references, transition}]
     """
     if seed is not None:
         random.seed(seed)
@@ -81,10 +122,11 @@ def plan_scenes(analysis: dict, style: str, seed: int | None = None,
             "prompt": f"{style}, {QUALITY_SUFFIX}",
             "section_type": "verse",
             "matched_references": matched,
+            "transition": "crossfade",
         }]
 
     scenes = []
-    for section in sections:
+    for i, section in enumerate(sections):
         start = section["start"]
         end = section["end"]
         dur = round(end - start, 3)
@@ -94,6 +136,14 @@ def plan_scenes(analysis: dict, style: str, seed: int | None = None,
         prompt = _build_prompt(style, stype, energy)
         matched = _match_references(prompt, refs)
 
+        # Auto-assign transition to the *next* scene boundary
+        # (transition is the effect leading INTO this scene from the previous one)
+        if i == 0:
+            transition = "crossfade"  # first scene: no previous, default
+        else:
+            prev_type = sections[i - 1].get("type", "verse")
+            transition = auto_assign_transition(prev_type, stype)
+
         scenes.append({
             "start_sec": start,
             "end_sec": end,
@@ -101,6 +151,7 @@ def plan_scenes(analysis: dict, style: str, seed: int | None = None,
             "prompt": prompt,
             "section_type": stype,
             "matched_references": matched,
+            "transition": transition,
         })
 
     return scenes

@@ -21,9 +21,12 @@ except ImportError:
     pass
 
 from lib.audio_analyzer import analyze
-from lib.scene_planner import plan_scenes
+from lib.scene_planner import plan_scenes, TRANSITION_TYPES
 from lib.video_generator import generate_scene, generate_all
 from lib.video_stitcher import stitch
+from lib.prompt_assistant import (
+    STYLE_PRESETS, get_preset, enhance_prompt, suggest_from_song_name,
+)
 
 
 SCENE_PLAN_PATH = os.path.join("output", "scene_plan.json")
@@ -82,6 +85,12 @@ def main():
                         help="Regenerate a single scene by index (0-based)")
     parser.add_argument("--prompt", default=None,
                         help="New prompt for the scene being regenerated (used with --regen)")
+    parser.add_argument("--transition", default=None,
+                        choices=TRANSITION_TYPES,
+                        help="Default transition type for all scenes (e.g. crossfade, hard_cut, glitch)")
+    parser.add_argument("--preset", default=None,
+                        choices=list(STYLE_PRESETS.keys()),
+                        help="Use a style preset (e.g. cyberpunk, synthwave, space)")
     parser.add_argument("-y", "--yes", action="store_true",
                         help="Skip confirmation prompt")
     args = parser.parse_args()
@@ -93,8 +102,26 @@ def main():
     # --- Full generation mode ---
     if not args.song:
         parser.error("--song is required for full generation")
-    if not args.style:
-        parser.error("--style is required for full generation")
+
+    # Resolve style: preset, --style, or both
+    style = None
+    if args.preset:
+        preset_text = get_preset(args.preset)
+        if args.style:
+            # Combine preset with custom style
+            style = f"{preset_text}, {args.style}"
+        else:
+            style = preset_text
+    elif args.style:
+        style = args.style
+    else:
+        # Try to suggest from song filename
+        suggested = suggest_from_song_name(os.path.basename(args.song))
+        print(f"  No --style or --preset given. Auto-suggesting: {suggested[:80]}")
+        style = suggested
+
+    if not style:
+        parser.error("--style or --preset is required for full generation")
 
     song_path = os.path.abspath(args.song)
     output_path = args.output or os.path.join("output", "final_video.mp4")
@@ -113,13 +140,19 @@ def main():
 
     # --- Step 2: Scene planning ---
     print("\n=== SCENE PLAN ===")
-    scenes = plan_scenes(analysis, args.style, seed=args.seed)
+    scenes = plan_scenes(analysis, style, seed=args.seed)
+
+    # Apply default transition override if specified
+    if args.transition:
+        for scene in scenes:
+            scene["transition"] = args.transition
 
     print(f"  Total scenes: {len(scenes)}")
     print()
     for i, scene in enumerate(scenes):
+        trans = scene.get("transition", "crossfade")
         print(f"  Scene {i + 1:2d} | {scene['start_sec']:6.1f}s - {scene['end_sec']:6.1f}s "
-              f"| {scene['section_type']:6s} | {scene['prompt'][:70]}...")
+              f"| {scene['section_type']:6s} | {trans:10s} | {scene['prompt'][:60]}...")
     print()
 
     # --- Cost estimate ---
@@ -175,7 +208,13 @@ def main():
     def on_stitch(status):
         print(f"  {status}")
 
-    stitch(clip_paths, song_path, output_path, progress_cb=on_stitch)
+    # Extract per-scene transitions
+    scene_transitions = [s.get("transition", "crossfade") for s in scenes]
+    default_trans = args.transition or "crossfade"
+
+    stitch(clip_paths, song_path, output_path,
+           transitions=scene_transitions, default_transition=default_trans,
+           progress_cb=on_stitch)
 
     file_size = os.path.getsize(output_path) / (1024 * 1024)
     print(f"\n=== COMPLETE ===")
@@ -224,11 +263,13 @@ def handle_regen(scene_index: int, new_prompt: str | None):
     # Re-stitch
     print("\n=== RE-STITCHING FINAL VIDEO ===")
     clip_paths = [s.get("clip_path") for s in plan["scenes"]]
+    scene_transitions = [s.get("transition", "crossfade") for s in plan["scenes"]]
 
     def on_stitch(status):
         print(f"  {status}")
 
-    stitch(clip_paths, song_path, output_path, progress_cb=on_stitch)
+    stitch(clip_paths, song_path, output_path,
+           transitions=scene_transitions, progress_cb=on_stitch)
 
     file_size = os.path.getsize(output_path) / (1024 * 1024)
     print(f"\n=== COMPLETE ===")

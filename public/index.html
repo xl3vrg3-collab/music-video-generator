@@ -421,6 +421,133 @@
     letter-spacing: 1px;
   }
 
+  /* ---- Style presets ---- */
+  .preset-grid {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-bottom: 14px;
+  }
+  .preset-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: all 0.25s;
+    min-width: 100px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .preset-card:hover {
+    border-color: var(--cyan);
+    box-shadow: 0 0 12px var(--cyan-dim);
+  }
+  .preset-card.selected {
+    border-color: var(--cyan);
+    background: rgba(0,212,255,0.06);
+  }
+  .preset-card .preset-name {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--cyan);
+    position: relative;
+    z-index: 1;
+  }
+  .preset-card .preset-desc {
+    font-size: 9px;
+    color: var(--text-dim);
+    margin-top: 4px;
+    line-height: 1.4;
+    position: relative;
+    z-index: 1;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .preset-card .preset-swatch {
+    position: absolute;
+    inset: 0;
+    opacity: 0.08;
+    z-index: 0;
+  }
+
+  .style-row {
+    display: flex; gap: 8px; align-items: flex-start;
+  }
+  .style-row .style-input { flex: 1; }
+  .btn-enhance {
+    padding: 14px 16px;
+    font-size: 10px;
+    letter-spacing: 2px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    align-self: flex-start;
+    min-height: 70px;
+    display: flex;
+    align-items: center;
+  }
+
+  /* ---- Transition controls ---- */
+  .se-transition-row {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 10px;
+  }
+  .se-transition-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    min-width: 80px;
+  }
+  .se-transition-select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236a6a7a'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    padding-right: 24px;
+  }
+  .se-transition-select:focus {
+    outline: none;
+    border-color: var(--cyan);
+  }
+  .se-transition-select option {
+    background: var(--surface);
+    color: var(--text);
+  }
+
+  /* Transition indicator between scenes */
+  .se-transition-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 0;
+    gap: 8px;
+    opacity: 0.5;
+  }
+  .se-transition-indicator .trans-line {
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .se-transition-indicator .trans-label {
+    font-size: 9px;
+    color: var(--amber);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    white-space: nowrap;
+  }
+
   /* Scrollbar */
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
@@ -431,6 +558,8 @@
     .analysis-grid { grid-template-columns: repeat(2, 1fr); }
     .header h1 { font-size: 20px; letter-spacing: 4px; }
     .se-scene-time { display: none; }
+    .preset-grid { gap: 6px; }
+    .preset-card { min-width: 80px; padding: 8px 10px; }
   }
 </style>
 </head>
@@ -480,11 +609,16 @@
   <div class="panel" id="stylePanel">
     <div class="panel-header"><span class="dot"></span> Visual Style</div>
     <div class="panel-body">
-      <textarea class="style-input" id="styleInput"
-        placeholder="Describe the visual style... e.g. cyberpunk city, neon rain, dark mood, flying through tunnels"></textarea>
+      <div class="se-transition-label" style="margin-bottom:8px;">Style Presets</div>
+      <div class="preset-grid" id="presetGrid"></div>
+      <div class="style-row">
+        <textarea class="style-input" id="styleInput"
+          placeholder="Describe the visual style... e.g. cyberpunk city, neon rain, dark mood, flying through tunnels"></textarea>
+        <button class="btn btn-small btn-amber btn-enhance" id="enhanceBtn" title="Auto-enhance your prompt with cinematic keywords">Enhance</button>
+      </div>
       <div class="hint">
-        Tip: be descriptive. Include setting, mood, color palette, camera style.
-        Each scene prompt will be varied automatically based on song energy.
+        Tip: select a preset above to auto-fill, or type your own. Click "Enhance" to add cinematic keywords.
+        Presets can be combined with custom text. Each scene prompt will be varied automatically based on song energy.
       </div>
     </div>
   </div>
@@ -569,10 +703,116 @@
   const refNameInput = $('refNameInput');
   const refUploadBtn = $('refUploadBtn');
   const refFileInput = $('refFileInput');
+  const presetGrid = $('presetGrid');
+  const enhanceBtn = $('enhanceBtn');
 
   let uploadedFilename = null;
   let pollTimer = null;
   let editorScenes = [];
+  let selectedPreset = null;
+  const TRANSITION_TYPES = ['crossfade','hard_cut','fade_black','wipe_left','wipe_right','dissolve','zoom_in','glitch'];
+
+  // Preset swatch colors for visual thumbnails
+  const PRESET_COLORS = {
+    cyberpunk: 'linear-gradient(135deg, #7b2ff7, #00d4ff)',
+    synthwave: 'linear-gradient(135deg, #ff6ec7, #7b68ee)',
+    dark_cinematic: 'linear-gradient(135deg, #1a1a2e, #555)',
+    nature: 'linear-gradient(135deg, #2d7d46, #f0c040)',
+    abstract: 'linear-gradient(135deg, #ff4444, #4444ff, #44ff44)',
+    horror: 'linear-gradient(135deg, #1a0000, #660000)',
+    space: 'linear-gradient(135deg, #0a0033, #6633cc)',
+    urban: 'linear-gradient(135deg, #555, #ff8800)',
+    underwater: 'linear-gradient(135deg, #003366, #00cc88)',
+    vintage: 'linear-gradient(135deg, #b8860b, #f5deb3)',
+    anime: 'linear-gradient(135deg, #ff69b4, #87ceeb)',
+    desert: 'linear-gradient(135deg, #cc6600, #ffcc00)',
+    winter: 'linear-gradient(135deg, #aaddff, #ffffff)',
+    party: 'linear-gradient(135deg, #ff0055, #ffcc00, #00ff88)',
+    emotional: 'linear-gradient(135deg, #4a5568, #ecc94b)',
+  };
+
+  // ===================== PRESETS =====================
+
+  async function loadPresets() {
+    try {
+      const resp = await fetch('/api/presets');
+      const data = await resp.json();
+      renderPresets(data.presets || []);
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function renderPresets(presets) {
+    presetGrid.innerHTML = presets.map(p => {
+      const color = PRESET_COLORS[p.name] || 'linear-gradient(135deg, #333, #666)';
+      const shortDesc = p.prompt.length > 40 ? p.prompt.substring(0, 40) + '...' : p.prompt;
+      return `
+        <div class="preset-card" data-preset="${escHtml(p.name)}" data-prompt="${escHtml(p.prompt)}" title="${escHtml(p.prompt)}">
+          <div class="preset-swatch" style="background:${color};"></div>
+          <div class="preset-name">${escHtml(p.name.replace('_', ' '))}</div>
+          <div class="preset-desc">${escHtml(shortDesc)}</div>
+        </div>
+      `;
+    }).join('');
+
+    presetGrid.querySelectorAll('.preset-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const name = card.dataset.preset;
+        const prompt = card.dataset.prompt;
+
+        // Toggle selection
+        if (selectedPreset === name) {
+          selectedPreset = null;
+          card.classList.remove('selected');
+          // Don't clear the input, user might have edited
+        } else {
+          // Deselect previous
+          presetGrid.querySelectorAll('.preset-card').forEach(c => c.classList.remove('selected'));
+          selectedPreset = name;
+          card.classList.add('selected');
+
+          // If style input is empty or contains a previous preset, replace it
+          const current = styleInput.value.trim();
+          if (!current || presets.some(p => current === p.prompt)) {
+            styleInput.value = prompt;
+          } else {
+            // Append to existing
+            styleInput.value = current + ', ' + prompt;
+          }
+        }
+      });
+    });
+  }
+
+  loadPresets();
+
+  // ===================== ENHANCE =====================
+
+  enhanceBtn.addEventListener('click', async () => {
+    const prompt = styleInput.value.trim();
+    if (!prompt) {
+      alert('Please enter a style description first, then click Enhance.');
+      return;
+    }
+    enhanceBtn.disabled = true;
+    enhanceBtn.textContent = '...';
+    try {
+      const resp = await fetch('/api/enhance-prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+      });
+      const data = await resp.json();
+      if (data.enhanced) {
+        styleInput.value = data.enhanced;
+      }
+    } catch (e) {
+      // ignore
+    }
+    enhanceBtn.disabled = false;
+    enhanceBtn.textContent = 'ENHANCE';
+  });
 
   // ===================== REFERENCES =====================
 
@@ -816,13 +1056,33 @@
       return;
     }
 
-    sceneEditorTimeline.innerHTML = editorScenes.map((s, i) => {
+    let html = '';
+    editorScenes.forEach((s, i) => {
       const dur = (s.duration || (s.end_sec - s.start_sec)).toFixed(1);
       const clipUrl = s.clip_url || '';
       const hasClip = s.clip_exists;
       const matchedRefs = (s.matched_references || []).join(', ');
+      const currentTrans = s.transition || 'crossfade';
 
-      return `
+      // Transition indicator between scenes (before each scene except the first)
+      if (i > 0) {
+        html += `
+          <div class="se-transition-indicator">
+            <div class="trans-line"></div>
+            <span class="trans-label" id="se-trans-label-${i}">${escHtml(currentTrans.replace('_', ' '))}</span>
+            <div class="trans-line"></div>
+          </div>
+        `;
+      }
+
+      // Build transition select options
+      const transOptions = ['auto'].concat(TRANSITION_TYPES).map(t => {
+        const sel = (t === currentTrans) ? 'selected' : '';
+        const label = t === 'auto' ? 'Auto' : t.replace('_', ' ');
+        return `<option value="${t}" ${sel}>${label}</option>`;
+      }).join('');
+
+      html += `
         <div class="se-scene" data-index="${i}" id="se-scene-${i}">
           <div class="se-scene-header" onclick="window._toggleScene(${i})">
             <span class="se-scene-idx">#${i}</span>
@@ -838,6 +1098,13 @@
               }
             </div>
             ${matchedRefs ? `<div class="hint" style="margin-bottom:8px;">Matched references: <span style="color:var(--magenta)">${escHtml(matchedRefs)}</span></div>` : ''}
+            ${i > 0 ? `
+            <div class="se-transition-row">
+              <span class="se-transition-label">Transition</span>
+              <select class="se-transition-select" data-scene-index="${i}" onchange="window._updateTransition(${i}, this.value)">
+                ${transOptions}
+              </select>
+            </div>` : ''}
             <textarea class="se-prompt-edit" id="se-prompt-${i}" rows="3">${escHtml(s.prompt || '')}</textarea>
             <div class="se-scene-actions">
               <button class="btn btn-small btn-magenta" onclick="window._regenScene(${i})">Regenerate</button>
@@ -846,12 +1113,38 @@
           </div>
         </div>
       `;
-    }).join('');
+    });
+
+    sceneEditorTimeline.innerHTML = html;
   }
 
   window._toggleScene = function(index) {
     const el = document.getElementById('se-scene-' + index);
     if (el) el.classList.toggle('expanded');
+  };
+
+  window._updateTransition = async function(index, value) {
+    try {
+      const resp = await fetch(`/api/scenes/${index}/transition`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transition: value }),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        // Update local state
+        if (editorScenes[index]) {
+          editorScenes[index].transition = data.transition;
+        }
+        // Update the indicator label between scenes
+        const label = document.getElementById('se-trans-label-' + index);
+        if (label) {
+          label.textContent = data.transition.replace('_', ' ');
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
   };
 
   window._regenScene = async function(index) {

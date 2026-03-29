@@ -1,6 +1,7 @@
 """
 Video stitcher using ffmpeg.
-Concatenates clips with crossfade transitions, overlays the audio track,
+Concatenates clips with configurable transitions (crossfade, hard_cut,
+fade_black, wipe, dissolve, zoom, glitch), overlays the audio track,
 and applies fade in/out.
 """
 
@@ -8,6 +9,19 @@ import os
 import sys
 import subprocess
 import tempfile
+
+
+# ---- Supported transition types ----
+TRANSITION_TYPES = [
+    "crossfade",    # xfade=transition=fade
+    "hard_cut",     # instant concat, no filter
+    "fade_black",   # fade out + black gap + fade in
+    "wipe_left",    # xfade=transition=wipeleft
+    "wipe_right",   # xfade=transition=wiperight
+    "dissolve",     # xfade=transition=dissolve (longer duration)
+    "zoom_in",      # xfade=transition=zoomin
+    "glitch",       # rapid 0.1s alternating cuts
+]
 
 
 def _subprocess_kwargs() -> dict:
@@ -51,8 +65,31 @@ def _get_clip_duration(path: str) -> float:
         return 8.0  # default assumption
 
 
+def _get_xfade_name(transition: str) -> str | None:
+    """Map transition type to ffmpeg xfade transition name. Returns None for non-xfade types."""
+    mapping = {
+        "crossfade": "fade",
+        "wipe_left": "wipeleft",
+        "wipe_right": "wiperight",
+        "dissolve": "dissolve",
+        "zoom_in": "zoomin",
+    }
+    return mapping.get(transition)
+
+
+def _get_transition_duration(transition: str, base_crossfade: float) -> float:
+    """Get the xfade duration for a transition type."""
+    if transition == "dissolve":
+        return min(base_crossfade * 2.0, 2.0)  # slower dissolve
+    if transition in ("hard_cut", "glitch", "fade_black"):
+        return 0.0  # these don't use xfade
+    return base_crossfade
+
+
 def stitch(clip_paths: list, audio_path: str, output_path: str,
            crossfade: float = 0.5, fade_dur: float = 1.0,
+           transitions: list | None = None,
+           default_transition: str = "crossfade",
            progress_cb=None) -> str:
     """
     Stitch video clips together with audio.
@@ -61,8 +98,12 @@ def stitch(clip_paths: list, audio_path: str, output_path: str,
         clip_paths: ordered list of video clip file paths (Nones are skipped)
         audio_path: path to the audio track
         output_path: where to write the final video
-        crossfade: crossfade duration in seconds between clips
+        crossfade: base crossfade duration in seconds between clips
         fade_dur: fade in/out duration in seconds
+        transitions: optional list of transition types per clip (same length as clip_paths).
+                     Each entry is the transition INTO that clip from the previous one.
+                     First entry is ignored (no previous clip). None entries use default.
+        default_transition: fallback transition type when not specified
         progress_cb: optional callable(status_str)
 
     Returns:
@@ -70,8 +111,17 @@ def stitch(clip_paths: list, audio_path: str, output_path: str,
     """
     _check_ffmpeg()
 
-    # Filter out None/missing clips
-    valid_clips = [p for p in clip_paths if p and os.path.isfile(p)]
+    # Filter out None/missing clips, tracking original indices for transition mapping
+    valid_clips = []
+    valid_transitions = []
+    for i, p in enumerate(clip_paths):
+        if p and os.path.isfile(p):
+            valid_clips.append(p)
+            if transitions and i < len(transitions) and transitions[i]:
+                valid_transitions.append(transitions[i])
+            else:
+                valid_transitions.append(default_transition)
+
     if not valid_clips:
         raise RuntimeError("No valid video clips to stitch")
 
@@ -81,13 +131,22 @@ def stitch(clip_paths: list, audio_path: str, output_path: str,
         progress_cb("preparing clips...")
 
     if len(valid_clips) == 1:
-        # Single clip - just overlay audio
         return _overlay_audio(valid_clips[0], audio_path, output_path, fade_dur,
                               progress_cb)
 
-    # --- Multi-clip: build complex ffmpeg filter for crossfades ---
-    return _stitch_with_crossfades(valid_clips, audio_path, output_path,
-                                   crossfade, fade_dur, progress_cb)
+    # Check if we need the advanced multi-transition pipeline or simple crossfade
+    unique_transitions = set(valid_transitions[1:])  # skip first (no previous clip)
+    has_complex = unique_transitions - {"crossfade"}
+
+    if not has_complex:
+        # All crossfade: use the simple pipeline
+        return _stitch_with_crossfades(valid_clips, audio_path, output_path,
+                                       crossfade, fade_dur, progress_cb)
+
+    # Mixed transitions: use the advanced pipeline
+    return _stitch_with_transitions(valid_clips, audio_path, output_path,
+                                     crossfade, fade_dur, valid_transitions,
+                                     progress_cb)
 
 
 def _overlay_audio(clip: str, audio: str, output: str,
@@ -120,22 +179,15 @@ def _stitch_with_crossfades(clips: list, audio: str, output: str,
     if progress_cb:
         progress_cb(f"stitching {len(clips)} clips with crossfades...")
 
-    # Get durations for offset calculations
     durations = [_get_clip_duration(c) for c in clips]
 
-    # Build input args
     input_args = []
     for c in clips:
         input_args += ["-i", c]
     input_args += ["-i", audio]
 
-    # Build xfade filter chain
-    # xfade works pair-wise: first merge [0] and [1], then result with [2], etc.
     filter_parts = []
     n = len(clips)
-
-    # Calculate offsets: each xfade starts at (accumulated duration - crossfade)
-    # After each xfade, the combined duration shrinks by crossfade seconds
     running_duration = durations[0]
 
     for i in range(1, n):
@@ -149,7 +201,6 @@ def _stitch_with_crossfades(clips: list, audio: str, output: str,
         )
         running_duration = offset + durations[i]
 
-    # Add fade in/out to final video
     total_dur = running_duration
     fade_out_start = max(0, total_dur - fade_dur)
     if n > 1:
@@ -163,7 +214,134 @@ def _stitch_with_crossfades(clips: list, audio: str, output: str,
             f"fade=t=out:st={fade_out_start:.3f}:d={fade_dur}[v]"
         )
 
-    # Audio: use the audio input (last input index)
+    audio_idx = n
+    filter_parts.append(
+        f"[{audio_idx}:a]afade=t=in:st=0:d={fade_dur},"
+        f"afade=t=out:st={fade_out_start:.3f}:d={fade_dur}[a]"
+    )
+
+    filter_complex = ";".join(filter_parts)
+
+    cmd = [
+        "ffmpeg", "-y",
+        *input_args,
+        "-filter_complex", filter_complex,
+        "-map", "[v]", "-map", "[a]",
+        "-c:v", "libx264", "-c:a", "aac",
+        "-shortest",
+        "-pix_fmt", "yuv420p",
+        output,
+    ]
+
+    if progress_cb:
+        progress_cb("running ffmpeg...")
+
+    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+
+    if progress_cb:
+        progress_cb("done")
+
+    return output
+
+
+def _stitch_with_transitions(clips: list, audio: str, output: str,
+                              crossfade: float, fade_dur: float,
+                              transitions: list,
+                              progress_cb=None) -> str:
+    """
+    Stitch clips with per-scene transition types.
+    Handles crossfade, hard_cut, fade_black, wipe, dissolve, zoom, and glitch.
+    """
+    if progress_cb:
+        progress_cb(f"stitching {len(clips)} clips with mixed transitions...")
+
+    n = len(clips)
+    durations = [_get_clip_duration(c) for c in clips]
+
+    input_args = []
+    for c in clips:
+        input_args += ["-i", c]
+    input_args += ["-i", audio]
+
+    filter_parts = []
+    running_duration = durations[0]
+
+    # We process transitions pair-wise.
+    # For hard_cut and glitch, we use concat demuxer approach or handle them
+    # as xfade with 0 duration (effectively a cut).
+    # For fade_black, we add fade-out and fade-in filters around the boundary.
+
+    for i in range(1, n):
+        trans = transitions[i] if i < len(transitions) else "crossfade"
+        xfade_name = _get_xfade_name(trans)
+        trans_dur = _get_transition_duration(trans, crossfade)
+
+        in_label = f"[{i - 1}:v]" if i == 1 else "[xf]"
+        out_label = "[xf]" if i < n - 1 else "[xfout]"
+
+        if trans == "hard_cut":
+            # Hard cut: xfade with 0 duration effectively just concats
+            offset = max(0, running_duration)
+            filter_parts.append(
+                f"{in_label}[{i}:v]xfade=transition=fade:duration=0.001"
+                f":offset={offset:.3f}{out_label}"
+            )
+            running_duration = offset + durations[i]
+
+        elif trans == "fade_black":
+            # Fade to black then fade in: use xfade=transition=fadeblack
+            fb_dur = min(crossfade * 1.5, 1.5)
+            offset = max(0, running_duration - fb_dur)
+            filter_parts.append(
+                f"{in_label}[{i}:v]xfade=transition=fadeblack:duration={fb_dur:.3f}"
+                f":offset={offset:.3f}{out_label}"
+            )
+            running_duration = offset + durations[i]
+
+        elif trans == "glitch":
+            # Glitch: use pixelize xfade for a digital distortion effect
+            glitch_dur = min(crossfade * 0.8, 0.4)
+            offset = max(0, running_duration - glitch_dur)
+            filter_parts.append(
+                f"{in_label}[{i}:v]xfade=transition=pixelize:duration={glitch_dur:.3f}"
+                f":offset={offset:.3f}{out_label}"
+            )
+            running_duration = offset + durations[i]
+
+        elif xfade_name:
+            # Standard xfade-based transitions
+            offset = max(0, running_duration - trans_dur)
+            filter_parts.append(
+                f"{in_label}[{i}:v]xfade=transition={xfade_name}:duration={trans_dur:.3f}"
+                f":offset={offset:.3f}{out_label}"
+            )
+            running_duration = offset + durations[i]
+
+        else:
+            # Unknown transition, fallback to crossfade
+            offset = max(0, running_duration - crossfade)
+            filter_parts.append(
+                f"{in_label}[{i}:v]xfade=transition=fade:duration={crossfade}"
+                f":offset={offset:.3f}{out_label}"
+            )
+            running_duration = offset + durations[i]
+
+    # Fade in/out on final composite
+    total_dur = running_duration
+    fade_out_start = max(0, total_dur - fade_dur)
+
+    if n > 1:
+        filter_parts.append(
+            f"[xfout]fade=t=in:st=0:d={fade_dur},"
+            f"fade=t=out:st={fade_out_start:.3f}:d={fade_dur}[v]"
+        )
+    else:
+        filter_parts.append(
+            f"[0:v]fade=t=in:st=0:d={fade_dur},"
+            f"fade=t=out:st={fade_out_start:.3f}:d={fade_dur}[v]"
+        )
+
+    # Audio
     audio_idx = n
     filter_parts.append(
         f"[{audio_idx}:a]afade=t=in:st=0:d={fade_dur},"

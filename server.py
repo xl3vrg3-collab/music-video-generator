@@ -38,9 +38,13 @@ except ImportError:
     pass
 
 from lib.audio_analyzer import analyze
-from lib.scene_planner import plan_scenes
+from lib.scene_planner import plan_scenes, TRANSITION_TYPES
 from lib.video_generator import generate_scene, generate_all
 from lib.video_stitcher import stitch
+from lib.prompt_assistant import (
+    STYLE_PRESETS, get_preset, enhance_prompt, suggest_from_song_name,
+    get_preset_names, suggest_style,
+)
 
 PORT = 3849
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -172,7 +176,9 @@ def _run_generation(song_path: str, style: str):
         with gen_lock:
             gen_state["phase"] = "stitching"
 
-        stitch(clip_paths, song_path, output_file)
+        # Extract transitions for stitching
+        scene_transitions = [s.get("transition", "crossfade") for s in scenes]
+        stitch(clip_paths, song_path, output_file, transitions=scene_transitions)
 
         with gen_lock:
             gen_state["phase"] = "done"
@@ -253,10 +259,11 @@ def _run_restitch():
             gen_state["phase"] = "stitching"
 
         clip_paths = [s.get("clip_path") for s in plan["scenes"]]
+        scene_transitions = [s.get("transition", "crossfade") for s in plan["scenes"]]
         song_path = plan["song_path"]
         output_path = plan["output_path"]
 
-        stitch(clip_paths, song_path, output_path)
+        stitch(clip_paths, song_path, output_path, transitions=scene_transitions)
 
         with gen_lock:
             gen_state["phase"] = "done"
@@ -404,6 +411,12 @@ class Handler(BaseHTTPRequestHandler):
             name = urllib.parse.unquote(path[len("/api/references/"):])
             self._handle_get_reference_image(name)
 
+        elif path == "/api/presets":
+            self._handle_get_presets()
+
+        elif path == "/api/transitions":
+            self._send_json({"transitions": TRANSITION_TYPES})
+
         elif path.startswith("/output/"):
             rel = path[len("/output/"):]
             safe = os.path.normpath(rel)
@@ -431,6 +444,19 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/api/references/upload":
             self._handle_upload_reference()
+
+        elif path == "/api/enhance-prompt":
+            self._handle_enhance_prompt()
+
+        elif path == "/api/suggest-style":
+            self._handle_suggest_style()
+
+        elif path == "/api/scenes/update-transitions":
+            self._handle_update_transitions()
+
+        elif re.match(r'^/api/scenes/(\d+)/transition$', path):
+            m = re.match(r'^/api/scenes/(\d+)/transition$', path)
+            self._handle_update_scene_transition(int(m.group(1)))
 
         else:
             self.send_error(404)
@@ -686,6 +712,121 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "deleted": name})
         else:
             self._send_json({"error": f"Reference '{name}' not found"}, 404)
+
+    # ---- Prompt assistant endpoints ----
+
+    def _handle_get_presets(self):
+        """Return all style presets."""
+        presets = []
+        for name in get_preset_names():
+            presets.append({
+                "name": name,
+                "prompt": STYLE_PRESETS[name],
+            })
+        self._send_json({"presets": presets})
+
+    def _handle_enhance_prompt(self):
+        """Enhance a user prompt with cinematic keywords."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        prompt = params.get("prompt", "")
+        if not prompt:
+            self._send_json({"error": "No prompt provided"}, 400)
+            return
+
+        enhanced = enhance_prompt(prompt)
+        self._send_json({"ok": True, "original": prompt, "enhanced": enhanced})
+
+    def _handle_suggest_style(self):
+        """Suggest a style based on genre/mood."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        genre = params.get("genre", "")
+        mood = params.get("mood", "")
+        song_name = params.get("song_name", "")
+
+        if song_name:
+            suggestion = suggest_from_song_name(song_name)
+        else:
+            suggestion = suggest_style(genre=genre, mood=mood)
+
+        self._send_json({"ok": True, "suggestion": suggestion})
+
+    # ---- Transition update endpoints ----
+
+    def _handle_update_scene_transition(self, index: int):
+        """Update the transition type for a single scene."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        transition = params.get("transition", "")
+        if transition not in TRANSITION_TYPES and transition != "auto":
+            self._send_json({"error": f"Invalid transition: {transition}"}, 400)
+            return
+
+        plan = _load_scene_plan()
+        if not plan:
+            self._send_json({"error": "No scene plan found"}, 404)
+            return
+
+        scenes = plan["scenes"]
+        if index < 0 or index >= len(scenes):
+            self._send_json({"error": f"Scene index {index} out of range"}, 400)
+            return
+
+        if transition == "auto":
+            # Re-compute auto transition
+            from lib.scene_planner import auto_assign_transition
+            if index == 0:
+                transition = "crossfade"
+            else:
+                prev_type = scenes[index - 1].get("section_type", "verse")
+                cur_type = scenes[index].get("section_type", "verse")
+                transition = auto_assign_transition(prev_type, cur_type)
+
+        scenes[index]["transition"] = transition
+        with open(SCENE_PLAN_PATH, "w") as f:
+            json.dump(plan, f, indent=2)
+
+        self._send_json({"ok": True, "index": index, "transition": transition})
+
+    def _handle_update_transitions(self):
+        """Bulk update transitions for all scenes."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        transitions = params.get("transitions", [])
+        plan = _load_scene_plan()
+        if not plan:
+            self._send_json({"error": "No scene plan found"}, 404)
+            return
+
+        for i, trans in enumerate(transitions):
+            if i < len(plan["scenes"]) and trans in TRANSITION_TYPES:
+                plan["scenes"][i]["transition"] = trans
+
+        with open(SCENE_PLAN_PATH, "w") as f:
+            json.dump(plan, f, indent=2)
+
+        self._send_json({"ok": True})
 
 
 def main():
