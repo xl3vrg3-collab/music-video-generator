@@ -55,7 +55,7 @@
     pointer-events: none; z-index: 0; }
 
   .container {
-    max-width: 900px; margin: 0 auto; padding: 40px 20px;
+    max-width: 960px; margin: 0 auto; padding: 40px 20px;
     position: relative; z-index: 1;
   }
 
@@ -94,6 +94,10 @@
     background: var(--cyan);
     box-shadow: 0 0 8px var(--cyan);
   }
+  .panel-header .dot-magenta {
+    background: var(--magenta);
+    box-shadow: 0 0 8px var(--magenta);
+  }
   .panel-body { padding: 20px; }
 
   /* Upload zone */
@@ -115,6 +119,10 @@
     color: var(--green); font-size: 13px; margin-top: 10px;
   }
   .upload-zone input[type="file"] { display: none; }
+  .upload-zone.mini {
+    padding: 16px;
+  }
+  .upload-zone.mini .icon { font-size: 20px; margin-bottom: 6px; }
 
   /* Style input */
   .style-input {
@@ -153,6 +161,7 @@
     border-radius: 4px;
     cursor: pointer;
     transition: all 0.3s;
+    text-decoration: none;
   }
   .btn:hover {
     background: rgba(0,212,255,0.1);
@@ -170,10 +179,31 @@
     background: rgba(255,45,123,0.1);
     box-shadow: 0 0 20px var(--magenta-dim);
   }
+  .btn-amber {
+    border-color: var(--amber);
+    color: var(--amber);
+  }
+  .btn-amber:hover {
+    background: rgba(255,170,0,0.1);
+    box-shadow: 0 0 20px rgba(255,170,0,0.3);
+  }
+  .btn-small {
+    padding: 6px 14px;
+    font-size: 10px;
+    letter-spacing: 2px;
+  }
+  .btn-red {
+    border-color: var(--red);
+    color: var(--red);
+  }
+  .btn-red:hover {
+    background: rgba(255,68,85,0.1);
+  }
 
   .btn-row {
     display: flex; gap: 12px; justify-content: center;
     margin-top: 20px;
+    flex-wrap: wrap;
   }
 
   /* Progress */
@@ -244,6 +274,153 @@
 
   .hidden { display: none !important; }
 
+  /* ---- References panel ---- */
+  .ref-grid {
+    display: flex; flex-wrap: wrap; gap: 12px;
+    margin-bottom: 12px;
+  }
+  .ref-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px;
+    width: 110px;
+    text-align: center;
+    position: relative;
+  }
+  .ref-card img {
+    width: 94px; height: 94px;
+    object-fit: cover;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+  }
+  .ref-card .ref-name {
+    font-size: 11px;
+    color: var(--cyan);
+    margin-top: 6px;
+    letter-spacing: 1px;
+    word-break: break-word;
+  }
+  .ref-card .ref-delete {
+    position: absolute; top: 4px; right: 4px;
+    background: rgba(10,10,15,0.8);
+    border: 1px solid var(--red);
+    color: var(--red);
+    font-size: 10px;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    line-height: 1;
+    transition: all 0.2s;
+  }
+  .ref-card .ref-delete:hover {
+    background: var(--red);
+    color: #fff;
+  }
+  .ref-upload-row {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  }
+  .ref-name-input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 12px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    width: 140px;
+  }
+  .ref-name-input:focus {
+    outline: none;
+    border-color: var(--cyan);
+  }
+  .ref-name-input::placeholder { color: var(--text-dim); }
+  .ref-file-input { display: none; }
+
+  /* ---- Scene Editor ---- */
+  .scene-editor-timeline {
+    display: flex; flex-direction: column; gap: 0;
+  }
+  .se-scene {
+    border: 1px solid var(--border);
+    border-bottom: none;
+    background: var(--surface2);
+    transition: all 0.2s;
+  }
+  .se-scene:last-child { border-bottom: 1px solid var(--border); }
+  .se-scene:hover { border-color: var(--cyan-dim); }
+  .se-scene.expanded { border-color: var(--cyan); }
+  .se-scene-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .se-scene-idx {
+    font-size: 11px; color: var(--amber);
+    min-width: 28px; font-weight: 700;
+  }
+  .se-scene-time {
+    font-size: 10px; color: var(--text-dim);
+    min-width: 100px;
+    letter-spacing: 1px;
+  }
+  .se-scene-prompt-preview {
+    flex: 1; font-size: 11px; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .se-scene-type {
+    font-size: 9px; color: var(--magenta);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    min-width: 60px;
+    text-align: right;
+  }
+  .se-scene-body {
+    display: none;
+    padding: 0 16px 16px 16px;
+    border-top: 1px solid var(--border);
+  }
+  .se-scene.expanded .se-scene-body { display: block; }
+  .se-scene-preview {
+    margin: 12px 0;
+    text-align: center;
+  }
+  .se-scene-preview video {
+    max-width: 100%; max-height: 300px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+  .se-scene-preview .no-clip {
+    color: var(--text-dim); font-size: 11px;
+    padding: 40px; border: 1px dashed var(--border);
+    border-radius: 4px;
+  }
+  .se-prompt-edit {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 14px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    resize: vertical;
+    min-height: 60px;
+    margin-bottom: 10px;
+  }
+  .se-prompt-edit:focus {
+    outline: none; border-color: var(--cyan);
+  }
+  .se-scene-actions {
+    display: flex; gap: 8px; align-items: center;
+  }
+  .se-scene-status {
+    font-size: 11px; margin-left: auto;
+    letter-spacing: 1px;
+  }
+
   /* Scrollbar */
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
@@ -253,6 +430,7 @@
   @media (max-width: 600px) {
     .analysis-grid { grid-template-columns: repeat(2, 1fr); }
     .header h1 { font-size: 20px; letter-spacing: 4px; }
+    .se-scene-time { display: none; }
   }
 </style>
 </head>
@@ -275,6 +453,25 @@
         <div class="label">Drop an audio file here or click to browse</div>
         <div class="filename hidden" id="uploadFilename"></div>
         <input type="file" id="fileInput" accept="audio/*">
+      </div>
+    </div>
+  </div>
+
+  <!-- References Panel -->
+  <div class="panel" id="referencesPanel">
+    <div class="panel-header"><span class="dot dot-magenta"></span> Reference Images</div>
+    <div class="panel-body">
+      <div class="ref-grid" id="refGrid"></div>
+      <div class="ref-upload-row">
+        <input type="text" class="ref-name-input" id="refNameInput" placeholder="Name (e.g. hero)">
+        <button class="btn btn-small" id="refUploadBtn">Upload Image</button>
+        <input type="file" class="ref-file-input" id="refFileInput" accept="image/*">
+      </div>
+      <div class="hint" style="margin-top:10px;">
+        Upload character, location, or object references. Use their names in your style prompt
+        (e.g. "hero walking through neon city"). The generator will note matched references in scene prompts.
+        <br><em>Note: Grok's video API (grok-imagine-video) does not currently accept image inputs alongside text prompts.
+        Reference names are embedded as descriptive keywords in prompts for stylistic consistency.</em>
       </div>
     </div>
   </div>
@@ -331,6 +528,20 @@
       </div>
     </div>
   </div>
+
+  <!-- Scene Editor Panel -->
+  <div class="panel hidden" id="sceneEditorPanel">
+    <div class="panel-header"><span class="dot dot-magenta"></span> Scene Editor</div>
+    <div class="panel-body">
+      <div class="hint" style="margin-bottom:14px;">
+        Click a scene to expand. Edit its prompt and regenerate individually. When satisfied, restitch the final video.
+      </div>
+      <div class="scene-editor-timeline" id="sceneEditorTimeline"></div>
+      <div class="btn-row" style="margin-top:16px;">
+        <button class="btn btn-amber" id="restitchBtn">Restitch Final Video</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -351,11 +562,85 @@
   const sceneList = $('sceneList');
   const previewPanel = $('previewPanel');
   const previewVideo = $('previewVideo');
+  const sceneEditorPanel = $('sceneEditorPanel');
+  const sceneEditorTimeline = $('sceneEditorTimeline');
+  const restitchBtn = $('restitchBtn');
+  const refGrid = $('refGrid');
+  const refNameInput = $('refNameInput');
+  const refUploadBtn = $('refUploadBtn');
+  const refFileInput = $('refFileInput');
 
   let uploadedFilename = null;
   let pollTimer = null;
+  let editorScenes = [];
 
-  // --- Upload ---
+  // ===================== REFERENCES =====================
+
+  async function loadReferences() {
+    try {
+      const resp = await fetch('/api/references');
+      const data = await resp.json();
+      renderReferences(data.references || []);
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function renderReferences(refs) {
+    if (!refs.length) {
+      refGrid.innerHTML = '<div style="font-size:11px;color:var(--text-dim);">No references uploaded yet.</div>';
+      return;
+    }
+    refGrid.innerHTML = refs.map(r => `
+      <div class="ref-card" data-name="${escHtml(r.name)}">
+        <button class="ref-delete" title="Delete">&times;</button>
+        <img src="${r.url}" alt="${escHtml(r.name)}">
+        <div class="ref-name">${escHtml(r.name)}</div>
+      </div>
+    `).join('');
+
+    refGrid.querySelectorAll('.ref-delete').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const card = btn.closest('.ref-card');
+        const name = card.dataset.name;
+        await fetch('/api/references/' + encodeURIComponent(name), { method: 'DELETE' });
+        loadReferences();
+      });
+    });
+  }
+
+  refUploadBtn.addEventListener('click', () => refFileInput.click());
+  refFileInput.addEventListener('change', async () => {
+    const file = refFileInput.files[0];
+    if (!file) return;
+    const name = refNameInput.value.trim();
+    if (!name) {
+      alert('Please enter a name for this reference (e.g. "hero", "city")');
+      return;
+    }
+    const form = new FormData();
+    form.append('name', name);
+    form.append('file', file);
+    try {
+      const resp = await fetch('/api/references/upload', { method: 'POST', body: form });
+      const data = await resp.json();
+      if (data.ok) {
+        refNameInput.value = '';
+        refFileInput.value = '';
+        loadReferences();
+      } else {
+        alert('Upload error: ' + (data.error || 'unknown'));
+      }
+    } catch (e) {
+      alert('Upload failed: ' + e.message);
+    }
+  });
+
+  loadReferences();
+
+  // ===================== UPLOAD =====================
+
   uploadZone.addEventListener('click', () => fileInput.click());
   uploadZone.addEventListener('dragover', e => {
     e.preventDefault(); uploadZone.classList.add('dragover');
@@ -393,7 +678,8 @@
     }
   }
 
-  // --- Generate ---
+  // ===================== GENERATE =====================
+
   generateBtn.addEventListener('click', async () => {
     if (!uploadedFilename) return;
 
@@ -415,6 +701,7 @@
 
       progressPanel.classList.remove('hidden');
       previewPanel.classList.add('hidden');
+      sceneEditorPanel.classList.add('hidden');
       startPolling();
     } catch (err) {
       alert('Error: ' + err.message);
@@ -422,7 +709,8 @@
     }
   });
 
-  // --- Polling ---
+  // ===================== POLLING =====================
+
   function startPolling() {
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(pollProgress, 1500);
@@ -502,14 +790,193 @@
       previewPanel.classList.remove('hidden');
       previewVideo.src = '/api/download?t=' + Date.now();
       progressFill.style.width = '100%';
+      // Load scene editor
+      loadSceneEditor();
     }
   }
+
+  // ===================== SCENE EDITOR =====================
+
+  async function loadSceneEditor() {
+    try {
+      const resp = await fetch('/api/scenes');
+      const data = await resp.json();
+      if (data.error) return;
+      editorScenes = data.scenes || [];
+      renderSceneEditor();
+      sceneEditorPanel.classList.remove('hidden');
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function renderSceneEditor() {
+    if (!editorScenes.length) {
+      sceneEditorTimeline.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:20px;">No scenes available.</div>';
+      return;
+    }
+
+    sceneEditorTimeline.innerHTML = editorScenes.map((s, i) => {
+      const dur = (s.duration || (s.end_sec - s.start_sec)).toFixed(1);
+      const clipUrl = s.clip_url || '';
+      const hasClip = s.clip_exists;
+      const matchedRefs = (s.matched_references || []).join(', ');
+
+      return `
+        <div class="se-scene" data-index="${i}" id="se-scene-${i}">
+          <div class="se-scene-header" onclick="window._toggleScene(${i})">
+            <span class="se-scene-idx">#${i}</span>
+            <span class="se-scene-time">${s.start_sec.toFixed(1)}s - ${s.end_sec.toFixed(1)}s (${dur}s)</span>
+            <span class="se-scene-prompt-preview">${escHtml((s.prompt || '').substring(0, 80))}</span>
+            <span class="se-scene-type">${escHtml(s.section_type || '')}</span>
+          </div>
+          <div class="se-scene-body">
+            <div class="se-scene-preview">
+              ${hasClip
+                ? `<video src="${clipUrl}?t=${Date.now()}" controls preload="metadata"></video>`
+                : '<div class="no-clip">No clip generated</div>'
+              }
+            </div>
+            ${matchedRefs ? `<div class="hint" style="margin-bottom:8px;">Matched references: <span style="color:var(--magenta)">${escHtml(matchedRefs)}</span></div>` : ''}
+            <textarea class="se-prompt-edit" id="se-prompt-${i}" rows="3">${escHtml(s.prompt || '')}</textarea>
+            <div class="se-scene-actions">
+              <button class="btn btn-small btn-magenta" onclick="window._regenScene(${i})">Regenerate</button>
+              <span class="se-scene-status" id="se-status-${i}"></span>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  window._toggleScene = function(index) {
+    const el = document.getElementById('se-scene-' + index);
+    if (el) el.classList.toggle('expanded');
+  };
+
+  window._regenScene = async function(index) {
+    const promptEl = document.getElementById('se-prompt-' + index);
+    const statusEl = document.getElementById('se-status-' + index);
+    if (!promptEl) return;
+
+    const newPrompt = promptEl.value.trim();
+    if (!newPrompt) {
+      alert('Please enter a prompt.');
+      return;
+    }
+
+    statusEl.textContent = 'SUBMITTING...';
+    statusEl.style.color = 'var(--amber)';
+
+    try {
+      const resp = await fetch(`/api/scenes/${index}/regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: newPrompt }),
+      });
+      const data = await resp.json();
+      if (!data.ok) {
+        statusEl.textContent = 'ERROR: ' + (data.error || 'failed');
+        statusEl.style.color = 'var(--red)';
+        return;
+      }
+
+      statusEl.textContent = 'GENERATING...';
+
+      // Poll for completion
+      const regenPoll = setInterval(async () => {
+        try {
+          const pr = await fetch('/api/progress');
+          const pd = await pr.json();
+          const st = pd.progress && pd.progress[0] ? pd.progress[0].status : '';
+          statusEl.textContent = st.toUpperCase();
+
+          if (pd.phase === 'done' || pd.phase === 'error') {
+            clearInterval(regenPoll);
+            if (pd.phase === 'done') {
+              statusEl.textContent = 'DONE';
+              statusEl.style.color = 'var(--green)';
+              // Refresh scene editor to get new clip
+              await loadSceneEditor();
+              // Re-expand this scene
+              const el = document.getElementById('se-scene-' + index);
+              if (el) el.classList.add('expanded');
+            } else {
+              statusEl.textContent = 'ERROR: ' + (pd.error || '');
+              statusEl.style.color = 'var(--red)';
+            }
+          }
+        } catch (e) { /* ignore */ }
+      }, 2000);
+    } catch (e) {
+      statusEl.textContent = 'ERROR: ' + e.message;
+      statusEl.style.color = 'var(--red)';
+    }
+  };
+
+  // ===================== RESTITCH =====================
+
+  restitchBtn.addEventListener('click', async () => {
+    restitchBtn.disabled = true;
+    restitchBtn.textContent = 'STITCHING...';
+
+    try {
+      const resp = await fetch('/api/restitch', { method: 'POST' });
+      const data = await resp.json();
+      if (!data.ok) {
+        alert('Error: ' + (data.error || 'failed'));
+        restitchBtn.disabled = false;
+        restitchBtn.textContent = 'RESTITCH FINAL VIDEO';
+        return;
+      }
+
+      // Poll for completion
+      const stitchPoll = setInterval(async () => {
+        try {
+          const pr = await fetch('/api/progress');
+          const pd = await pr.json();
+          if (pd.phase === 'done') {
+            clearInterval(stitchPoll);
+            restitchBtn.disabled = false;
+            restitchBtn.textContent = 'RESTITCH FINAL VIDEO';
+            // Refresh video preview
+            previewVideo.src = '/api/download?t=' + Date.now();
+            previewPanel.classList.remove('hidden');
+          } else if (pd.phase === 'error') {
+            clearInterval(stitchPoll);
+            restitchBtn.disabled = false;
+            restitchBtn.textContent = 'RESTITCH FINAL VIDEO';
+            alert('Restitch error: ' + (pd.error || 'unknown'));
+          }
+        } catch (e) { /* ignore */ }
+      }, 2000);
+    } catch (e) {
+      alert('Error: ' + e.message);
+      restitchBtn.disabled = false;
+      restitchBtn.textContent = 'RESTITCH FINAL VIDEO';
+    }
+  });
+
+  // ===================== UTILS =====================
 
   function escHtml(s) {
     const d = document.createElement('div');
     d.textContent = s;
     return d.innerHTML;
   }
+
+  // On page load, check if there's already a scene plan to show editor
+  (async function checkExistingPlan() {
+    try {
+      const resp = await fetch('/api/scenes');
+      const data = await resp.json();
+      if (data.scenes && data.scenes.length) {
+        editorScenes = data.scenes;
+        renderSceneEditor();
+        sceneEditorPanel.classList.remove('hidden');
+      }
+    } catch (e) { /* no plan yet */ }
+  })();
 })();
 </script>
 </body>

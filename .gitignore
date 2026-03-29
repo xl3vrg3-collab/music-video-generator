@@ -1,6 +1,7 @@
 .env
 output/
 uploads/
+references/
 __pycache__/
 *.pyc
 node_modules/

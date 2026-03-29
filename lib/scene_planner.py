@@ -50,7 +50,8 @@ ENERGY_DESCRIPTORS = {
 QUALITY_SUFFIX = "cinematic, 4k, detailed, moody lighting, professional color grading"
 
 
-def plan_scenes(analysis: dict, style: str, seed: int | None = None) -> list:
+def plan_scenes(analysis: dict, style: str, seed: int | None = None,
+                references: dict | None = None) -> list:
     """
     Generate a scene list from audio analysis and user style prompt.
 
@@ -58,23 +59,28 @@ def plan_scenes(analysis: dict, style: str, seed: int | None = None) -> list:
         analysis: dict from audio_analyzer.analyze()
         style: user-provided style description (e.g. "cyberpunk city neon rain")
         seed: optional random seed for reproducibility
+        references: optional dict of {"name": "path/to/image.jpg"} for character/env references
 
     Returns:
-        list of scene dicts: [{start_sec, end_sec, duration, prompt, section_type}]
+        list of scene dicts: [{start_sec, end_sec, duration, prompt, section_type, matched_references}]
     """
     if seed is not None:
         random.seed(seed)
+
+    refs = references or {}
 
     sections = analysis.get("sections", [])
     if not sections:
         # Fallback: single scene for the whole track
         dur = analysis.get("duration", 8)
+        matched = _match_references(style, refs)
         return [{
             "start_sec": 0,
             "end_sec": dur,
             "duration": dur,
             "prompt": f"{style}, {QUALITY_SUFFIX}",
             "section_type": "verse",
+            "matched_references": matched,
         }]
 
     scenes = []
@@ -86,6 +92,7 @@ def plan_scenes(analysis: dict, style: str, seed: int | None = None) -> list:
         energy = section.get("energy", 0.5)
 
         prompt = _build_prompt(style, stype, energy)
+        matched = _match_references(prompt, refs)
 
         scenes.append({
             "start_sec": start,
@@ -93,9 +100,16 @@ def plan_scenes(analysis: dict, style: str, seed: int | None = None) -> list:
             "duration": dur,
             "prompt": prompt,
             "section_type": stype,
+            "matched_references": matched,
         })
 
     return scenes
+
+
+def _match_references(text: str, references: dict) -> list:
+    """Find reference names mentioned in the text. Returns list of matched names."""
+    text_lower = text.lower()
+    return [name for name in references if name.lower() in text_lower]
 
 
 def _build_prompt(style: str, section_type: str, energy: float) -> str:
