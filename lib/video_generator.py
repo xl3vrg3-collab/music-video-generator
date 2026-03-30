@@ -575,9 +575,6 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
         traceback.print_exc()
         # NO FALLBACK TO IMAGES — user wants video only
         raise RuntimeError(f"Scene {index} video generation failed: {e}") from e
-            raise RuntimeError(
-                f"Scene {index} Runway generation failed entirely: {e2}"
-            ) from e2
 
 
 # ---- OpenAI GPT Image Generation ----
