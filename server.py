@@ -28,6 +28,13 @@ import subprocess
 import sys
 import threading
 import time
+
+# Ensure ffmpeg is on PATH (winget installs to a long path)
+_FFMPEG_DIR = os.path.expanduser(
+    r"~\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin"
+)
+if os.path.isdir(_FFMPEG_DIR) and _FFMPEG_DIR not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _FFMPEG_DIR + os.pathsep + os.environ.get("PATH", "")
 import uuid as _uuid
 import urllib.parse
 import zipfile
@@ -458,8 +465,13 @@ def _run_manual_generate_scene(scene_id: str):
 
         # Build the prompt - handle multi-photo compositing
         gen_prompt = scene["prompt"]
+        scene_photo_path = None  # The photo to send to the API for style transfer
         photo_paths = scene.get("photo_paths", [])
         valid_photos = [p for p in photo_paths if p and os.path.isfile(p)]
+
+        print(f"[_run_manual_generate_scene] scene_id={scene_id}, prompt={gen_prompt[:80]}...")
+        print(f"[_run_manual_generate_scene] photo_path={scene.get('photo_path')}, photo_paths={photo_paths}")
+        print(f"[_run_manual_generate_scene] valid_photos count={len(valid_photos)}")
 
         if len(valid_photos) > 1:
             # Feature 5: Multiple photos - describe all and merge into prompt
@@ -473,20 +485,28 @@ def _run_manual_generate_scene(scene_id: str):
                     gen_prompt = merged_desc + ", style: " + gen_prompt
                 else:
                     gen_prompt = merged_desc
-            except Exception:
+                # Use first photo for style transfer
+                scene_photo_path = valid_photos[0]
+                print(f"[_run_manual_generate_scene] Multi-photo: using first photo {scene_photo_path} for style transfer")
+            except Exception as e:
+                print(f"[_run_manual_generate_scene] Multi-photo describe failed: {e}")
                 # Fall back to single photo behavior
                 if scene.get("photo_path") and os.path.isfile(scene["photo_path"]):
-                    gen_prompt += ", matching the reference image style"
+                    scene_photo_path = scene["photo_path"]
         elif scene.get("photo_path") and os.path.isfile(scene["photo_path"]):
-            gen_prompt += ", matching the reference image style"
+            scene_photo_path = scene["photo_path"]
+            print(f"[_run_manual_generate_scene] Single photo found: {scene_photo_path}")
 
         gen_scene = {
             "prompt": gen_prompt,
             "duration": scene.get("duration", 8),
+            "camera_movement": scene.get("camera_movement", "zoom_in"),
         }
 
+        print(f"[_run_manual_generate_scene] Calling generate_scene with photo_path={scene_photo_path}")
         clip_path = generate_scene(gen_scene, scene_idx, MANUAL_CLIPS_DIR,
-                                   progress_cb=on_progress, cost_cb=_record_cost)
+                                   progress_cb=on_progress, cost_cb=_record_cost,
+                                   photo_path=scene_photo_path)
         scene["clip_path"] = clip_path
         scene["has_clip"] = True
         plan["scenes"][scene_idx] = scene
@@ -506,6 +526,7 @@ def _run_manual_generate_scene(scene_id: str):
 def _run_manual_generate_from_photo(scene_id: str):
     """Background thread to generate a video clip from a scene's photo + prompt."""
     try:
+        print(f"[_run_manual_generate_from_photo] START scene_id={scene_id}")
         plan = _load_manual_plan()
         scene = None
         scene_idx = None
@@ -515,6 +536,7 @@ def _run_manual_generate_from_photo(scene_id: str):
                 scene_idx = i
                 break
         if scene is None:
+            print(f"[_run_manual_generate_from_photo] ERROR: Scene {scene_id} not found in plan")
             with gen_lock:
                 gen_state["phase"] = "error"
                 gen_state["error"] = f"Scene {scene_id} not found"
@@ -522,7 +544,10 @@ def _run_manual_generate_from_photo(scene_id: str):
             return
 
         photo_path = scene.get("photo_path", "")
+        print(f"[_run_manual_generate_from_photo] photo_path={photo_path}, exists={os.path.isfile(photo_path) if photo_path else False}")
+        print(f"[_run_manual_generate_from_photo] prompt={scene.get('prompt', '')[:80]}")
         if not photo_path or not os.path.isfile(photo_path):
+            print(f"[_run_manual_generate_from_photo] ERROR: No photo file found at {photo_path}")
             with gen_lock:
                 gen_state["phase"] = "error"
                 gen_state["error"] = "Scene has no photo uploaded"
@@ -608,8 +633,11 @@ def _run_manual_generate_all():
 
             # Build prompt with multi-photo compositing
             gen_prompt = scene["prompt"]
+            scene_photo_path = None
             photo_paths = scene.get("photo_paths", [])
             valid_photos = [p for p in photo_paths if p and os.path.isfile(p)]
+
+            print(f"[_run_manual_generate_all] scene {scene_idx}: prompt={gen_prompt[:60]}..., photo_path={scene.get('photo_path')}")
 
             if len(valid_photos) > 1:
                 try:
@@ -619,20 +647,23 @@ def _run_manual_generate_all():
                         descriptions.append(desc)
                     merged_desc = "Scene combining: " + " with ".join(descriptions)
                     gen_prompt = merged_desc + (", style: " + gen_prompt if gen_prompt else "")
+                    scene_photo_path = valid_photos[0]
                 except Exception:
                     if scene.get("photo_path") and os.path.isfile(scene["photo_path"]):
-                        gen_prompt += ", matching the reference image style"
+                        scene_photo_path = scene["photo_path"]
             elif scene.get("photo_path") and os.path.isfile(scene["photo_path"]):
-                gen_prompt += ", matching the reference image style"
+                scene_photo_path = scene["photo_path"]
 
             gen_scene = {
                 "prompt": gen_prompt,
                 "duration": scene.get("duration", 8),
+                "camera_movement": scene.get("camera_movement", "zoom_in"),
             }
 
             try:
                 clip_path = generate_scene(gen_scene, scene_idx, MANUAL_CLIPS_DIR,
-                                           progress_cb=on_progress, cost_cb=_record_cost)
+                                           progress_cb=on_progress, cost_cb=_record_cost,
+                                           photo_path=scene_photo_path)
                 scene["clip_path"] = clip_path
                 scene["has_clip"] = True
             except Exception as e:
@@ -1762,10 +1793,12 @@ class Handler(BaseHTTPRequestHandler):
                 if s.get("photo_path") and os.path.isfile(s["photo_path"]):
                     os.remove(s["photo_path"])
                 photo_path = os.path.join(SCENE_PHOTOS_DIR, f"{scene_id}{file_ext}")
+                os.makedirs(SCENE_PHOTOS_DIR, exist_ok=True)
                 with open(photo_path, "wb") as f:
                     f.write(file_data)
                 s["photo_path"] = photo_path
                 _save_manual_plan(plan)
+                print(f"[upload_photo] Saved photo for scene {scene_id}: {photo_path} ({len(file_data)} bytes)")
                 self._send_json({"ok": True, "photo_url": f"/api/manual/scene-photo/{scene_id}"})
                 return
 

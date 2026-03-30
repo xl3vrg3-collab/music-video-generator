@@ -13,6 +13,13 @@ import os
 import sys
 import time
 
+# Ensure ffmpeg is on PATH (winget installs to a long path)
+_FFMPEG_DIR = os.path.expanduser(
+    r"~\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin"
+)
+if os.path.isdir(_FFMPEG_DIR) and _FFMPEG_DIR not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _FFMPEG_DIR + os.pathsep + os.environ.get("PATH", "")
+
 # Load .env if python-dotenv is available
 try:
     from dotenv import load_dotenv

@@ -168,6 +168,9 @@ def _generate_image_from_photo(prompt: str, photo_path: str) -> str:
     Sends the photo as base64 data URI for style transfer.
     Returns the styled image URL.
     """
+    print(f"[_generate_image_from_photo] START photo_path={photo_path}, prompt={prompt[:80]}...")
+    print(f"[_generate_image_from_photo] Photo file exists: {os.path.isfile(photo_path)}, size: {os.path.getsize(photo_path) if os.path.isfile(photo_path) else 'N/A'} bytes")
+
     # Read photo and convert to base64 data URI
     with open(photo_path, "rb") as f:
         photo_bytes = f.read()
@@ -184,8 +187,10 @@ def _generate_image_from_photo(prompt: str, photo_path: str) -> str:
     mime = mime_map.get(ext, "image/jpeg")
     b64_data = base64.b64encode(photo_bytes).decode("ascii")
     data_uri = f"data:{mime};base64,{b64_data}"
+    print(f"[_generate_image_from_photo] Encoded {len(photo_bytes)} bytes as base64 ({len(b64_data)} chars), mime={mime}")
 
     # Call Grok image API with image parameter for style transfer
+    print(f"[_generate_image_from_photo] Calling Grok API: POST {API_BASE}/images/generations with image param...")
     resp = requests.post(
         f"{API_BASE}/images/generations",
         headers=_headers(),
@@ -197,11 +202,16 @@ def _generate_image_from_photo(prompt: str, photo_path: str) -> str:
         },
         timeout=120,
     )
+    print(f"[_generate_image_from_photo] API response status: {resp.status_code}")
+    if resp.status_code != 200:
+        print(f"[_generate_image_from_photo] API error body: {resp.text[:500]}")
     resp.raise_for_status()
     data = resp.json()
     images = data.get("data", [])
     if not images:
+        print(f"[_generate_image_from_photo] ERROR: No images in response: {data}")
         raise RuntimeError("No image returned from photo style transfer API")
+    print(f"[_generate_image_from_photo] SUCCESS: Got styled image URL: {images[0]['url'][:80]}...")
     return images[0]["url"]
 
 
@@ -295,7 +305,8 @@ def _ken_burns(image_path: str, output_path: str, duration: float = 8.0,
 # ---- Public API ----
 
 def generate_scene(scene: dict, index: int, output_dir: str,
-                   progress_cb=None, cost_cb=None) -> str:
+                   progress_cb=None, cost_cb=None,
+                   photo_path: str = None) -> str:
     """
     Generate a single video clip for a scene.
 
@@ -306,6 +317,7 @@ def generate_scene(scene: dict, index: int, output_dir: str,
         output_dir: directory to save clips
         progress_cb: optional callable(index, status_str)
         cost_cb: optional callable(scene_key, gen_type) to record cost
+        photo_path: optional path to an uploaded photo for style transfer
 
     Returns:
         path to the generated video clip
@@ -319,7 +331,11 @@ def generate_scene(scene: dict, index: int, output_dir: str,
     camera_suffix = CAMERA_PROMPT_SUFFIXES.get(camera, "")
     gen_prompt = prompt + camera_suffix if camera_suffix else prompt
 
+    has_photo = photo_path and os.path.isfile(photo_path)
+    print(f"[generate_scene] index={index}, prompt={gen_prompt[:80]}..., photo_path={photo_path}, has_photo={has_photo}, camera={camera}")
+
     def _report(msg):
+        print(f"[generate_scene][{index}] {msg}")
         if progress_cb:
             progress_cb(index, msg)
 
@@ -327,7 +343,28 @@ def generate_scene(scene: dict, index: int, output_dir: str,
         if cost_cb:
             cost_cb(str(scene.get("id", index)), gen_type)
 
-    # Try video generation first
+    # If scene has a photo, use photo+prompt pipeline (style transfer)
+    if has_photo:
+        print(f"[generate_scene][{index}] Photo detected at {photo_path}, using photo+prompt pipeline")
+        try:
+            _report("sending photo to Grok for style transfer...")
+            img_url = _generate_image_from_photo(gen_prompt, photo_path)
+            print(f"[generate_scene][{index}] Got styled image URL: {img_url[:80]}...")
+            img_path = os.path.join(output_dir, f"img_{index:03d}_styled.png")
+            _report("downloading styled image...")
+            _download(img_url, img_path)
+            print(f"[generate_scene][{index}] Downloaded styled image to {img_path}")
+            _report("creating Ken Burns video from styled image...")
+            _ken_burns(img_path, clip_path, duration, camera=camera)
+            _record("image")
+            _report("done (photo style transfer + Ken Burns)")
+            print(f"[generate_scene][{index}] SUCCESS: photo+prompt clip at {clip_path}")
+            return clip_path
+        except Exception as e:
+            print(f"[generate_scene][{index}] Photo+prompt failed: {e}")
+            _report(f"photo style transfer failed ({e}), falling back to video...")
+
+    # Try video generation (text-only)
     try:
         _report("submitting video request...")
         request_id = _submit_video(gen_prompt)
@@ -379,9 +416,12 @@ def generate_from_photo(photo_path: str, prompt: str, duration: float,
         path to the generated video clip
     """
     def _report(msg):
+        print(f"[generate_from_photo] {msg}")
         if progress_cb:
             progress_cb(msg)
 
+    print(f"[generate_from_photo] START photo_path={photo_path}, prompt={prompt[:80]}..., duration={duration}, camera={camera}")
+    print(f"[generate_from_photo] Photo exists: {os.path.isfile(photo_path)}, output_path={output_path}")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     # Attempt 1: True style transfer with base64 photo
@@ -391,11 +431,16 @@ def generate_from_photo(photo_path: str, prompt: str, duration: float,
         img_path = output_path.replace(".mp4", "_styled.png")
         _report("downloading styled image...")
         _download(img_url, img_path)
+        print(f"[generate_from_photo] Styled image downloaded to {img_path}, size={os.path.getsize(img_path)} bytes")
         _report("creating Ken Burns video from styled image...")
         _ken_burns(img_path, output_path, duration, camera=camera)
         _report("done (photo style transfer + Ken Burns)")
+        print(f"[generate_from_photo] SUCCESS: clip at {output_path}")
         return output_path
     except Exception as e:
+        print(f"[generate_from_photo] Style transfer FAILED: {e}")
+        import traceback
+        traceback.print_exc()
         _report(f"style transfer failed ({e}), trying text-only generation...")
 
     # Attempt 2: Generate image using text prompt referencing the photo
