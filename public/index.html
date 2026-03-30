@@ -497,20 +497,145 @@
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
 
-  /* ---- Mode Toggle ---- */
-  .mode-toggle { display: flex; justify-content: center; gap: 0; margin-bottom: var(--gap-xl); }
+  /* ---- Mode Toggle (Tab Bar) ---- */
+  .mode-toggle { display: flex; justify-content: center; gap: 0; margin-bottom: var(--gap-xl); flex-wrap: wrap; }
   .mode-btn {
-    padding: 10px 28px; font-family: inherit; font-size: 11px;
-    letter-spacing: 3px; text-transform: uppercase;
+    padding: 10px 18px; font-family: inherit; font-size: 10px;
+    letter-spacing: 2px; text-transform: uppercase;
     border: 1px solid var(--border); background: transparent;
     color: var(--text-dim); cursor: pointer; transition: all var(--transition);
   }
-  .mode-btn:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+  .mode-btn { border-radius: 0; margin-left: -1px; }
+  .mode-btn:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
   .mode-btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
   .mode-btn.active {
     background: rgba(0,212,255,0.1); border-color: var(--cyan);
     color: var(--cyan); box-shadow: 0 0 12px var(--cyan-dim);
   }
+  .mode-btn.pos-tab.active {
+    background: rgba(124,92,255,0.1); border-color: #7c5cff;
+    color: #7c5cff; box-shadow: 0 0 12px rgba(124,92,255,0.25);
+  }
+
+  /* ---- Prompt OS Variables ---- */
+  :root {
+    --purple: #7c5cff;
+    --purple-dim: rgba(124,92,255,0.4);
+  }
+
+  /* ---- Prompt OS Styles ---- */
+  .pos-accent { color: #7c5cff; }
+  .pos-panel { border-left: 2px solid #7c5cff; }
+  .pos-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 3px;
+    font-size: 9px; letter-spacing: 1px; text-transform: uppercase;
+    font-weight: 500;
+  }
+  .pos-badge-prompt { background: rgba(124,92,255,0.15); color: #7c5cff; }
+  .pos-badge-char { background: rgba(0,212,255,0.15); color: var(--cyan); }
+  .pos-badge-costume { background: rgba(255,170,0,0.15); color: var(--amber); }
+  .pos-badge-env { background: rgba(0,255,136,0.15); color: var(--green); }
+  .pos-badge-scene { background: rgba(255,45,123,0.15); color: var(--magenta); }
+  .pos-badge-locked { background: rgba(255,68,85,0.15); color: var(--red); }
+
+  .var-badge {
+    background: rgba(124,92,255,0.15); color: #7c5cff;
+    padding: 1px 6px; border-radius: 3px; font-family: monospace;
+    font-size: 12px;
+  }
+  .var-unresolved { color: #ef4444; background: rgba(239,68,68,0.15); }
+  .var-resolved { color: #4ade80; background: rgba(74,222,128,0.15); }
+
+  .pos-entity-list { display: flex; flex-direction: column; gap: 8px; }
+  .pos-entity-card {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 12px 16px;
+    display: flex; align-items: center; gap: 12px;
+    cursor: pointer; transition: all var(--transition);
+  }
+  .pos-entity-card:hover { border-color: #7c5cff; background: rgba(124,92,255,0.03); }
+  .pos-entity-card .entity-name { flex: 1; font-size: 13px; }
+  .pos-entity-card .entity-meta { font-size: 10px; color: var(--text-dim); }
+  .pos-entity-card .entity-actions { display: flex; gap: 4px; }
+
+  .pos-form { display: flex; flex-direction: column; gap: 12px; }
+  .pos-form label {
+    font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+    color: var(--text-dim); margin-bottom: 2px;
+  }
+  .pos-form input, .pos-form textarea, .pos-form select {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 10px 12px; color: var(--text);
+    font-family: inherit; font-size: 12px;
+    transition: border-color var(--transition);
+  }
+  .pos-form input:focus, .pos-form textarea:focus, .pos-form select:focus {
+    outline: none; border-color: #7c5cff;
+  }
+  .pos-form textarea { min-height: 60px; resize: vertical; }
+  .pos-form .form-row { display: flex; gap: 12px; }
+  .pos-form .form-row > * { flex: 1; }
+
+  .pos-field-group { display: flex; flex-direction: column; gap: 4px; }
+
+  .pos-section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .pos-section-header h3 {
+    font-size: 13px; font-weight: 400; letter-spacing: 2px;
+    text-transform: uppercase; color: #7c5cff;
+  }
+
+  .pos-assembly-section {
+    background: var(--surface2); border-left: 3px solid #7c5cff;
+    padding: 10px 14px; margin-bottom: 8px; border-radius: 0 var(--radius) var(--radius) 0;
+  }
+  .pos-assembly-section .section-label {
+    font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+    color: #7c5cff; margin-bottom: 4px;
+  }
+  .pos-assembly-section .section-text {
+    font-size: 12px; color: var(--text); line-height: 1.5;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .pos-warning {
+    padding: 6px 10px; border-radius: var(--radius); font-size: 11px;
+    margin-bottom: 4px;
+  }
+  .pos-warning.warning { background: rgba(255,170,0,0.1); color: var(--amber); border-left: 3px solid var(--amber); }
+  .pos-warning.error { background: rgba(255,68,85,0.1); color: var(--red); border-left: 3px solid var(--red); }
+  .pos-warning.info { background: rgba(0,212,255,0.1); color: var(--cyan); border-left: 3px solid var(--cyan); }
+  .pos-warning.ok { background: rgba(0,255,136,0.1); color: var(--green); border-left: 3px solid var(--green); }
+
+  .pos-dashboard-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 12px; margin-bottom: 16px;
+  }
+  .pos-stat-card {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px; text-align: center;
+  }
+  .pos-stat-card .stat-val { font-size: 24px; font-weight: 300; color: #7c5cff; }
+  .pos-stat-card .stat-label {
+    font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+    color: var(--text-dim); margin-top: 4px;
+  }
+
+  .pos-lock-icon { color: var(--red); font-size: 12px; }
+  .pos-empty { text-align: center; padding: 30px; color: var(--text-dim); font-size: 12px; }
+  .pos-raw-prompt {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+  }
+
+  .pos-tag { display: inline-block; padding: 1px 6px; border-radius: 3px;
+    background: rgba(124,92,255,0.1); color: #7c5cff; font-size: 10px; margin: 2px; }
+
+  .btn-purple { border-color: #7c5cff; color: #7c5cff; }
+  .btn-purple:hover { background: rgba(124,92,255,0.1); box-shadow: 0 0 20px rgba(124,92,255,0.25); }
 
   /* ---- Manual Scene Cards ---- */
   .manual-scene-list { display: flex; flex-direction: column; gap: var(--gap-md); }
@@ -1172,10 +1297,16 @@
     </div>
   </div>
 
-  <!-- Mode Toggle -->
+  <!-- Mode Toggle / Tab Bar -->
   <div class="mode-toggle">
-    <button class="mode-btn active" id="autoModeBtn" onclick="window._setMode('auto')">Auto Mode</button>
-    <button class="mode-btn" id="manualModeBtn" onclick="window._setMode('manual')">Manual Mode</button>
+    <button class="mode-btn active" id="autoModeBtn" onclick="window._setMode('auto')">Auto</button>
+    <button class="mode-btn" id="manualModeBtn" onclick="window._setMode('manual')">Manual</button>
+    <button class="mode-btn pos-tab" id="posPromptsBtn" onclick="window._setMode('pos-prompts')">Prompts</button>
+    <button class="mode-btn pos-tab" id="posCharsBtn" onclick="window._setMode('pos-characters')">Characters</button>
+    <button class="mode-btn pos-tab" id="posCostumesBtn" onclick="window._setMode('pos-costumes')">Costumes</button>
+    <button class="mode-btn pos-tab" id="posEnvsBtn" onclick="window._setMode('pos-environments')">Environments</button>
+    <button class="mode-btn pos-tab" id="posScenesBtn" onclick="window._setMode('pos-scenes')">Scenes</button>
+    <button class="mode-btn pos-tab" id="posOutputBtn" onclick="window._setMode('pos-output')">Output</button>
   </div>
 
   <!-- ============ AUTO MODE ============ -->
@@ -1711,6 +1842,451 @@
     </div>
 
   </div><!-- /manualModeContainer -->
+
+  <!-- ============ PROMPT OS: PROMPTS TAB ============ -->
+  <div id="posPromptsContainer" class="hidden">
+    <div class="panel pos-panel">
+      <div class="panel-header">
+        <span class="dot" style="background:#7c5cff;box-shadow:0 0 8px rgba(124,92,255,0.6)"></span>
+        <span class="panel-title">Master Prompt Library</span>
+      </div>
+      <div class="panel-body">
+        <div class="pos-section-header">
+          <h3>Prompts</h3>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <select id="posPromptCatFilter" class="pos-form" style="width:auto;padding:4px 8px;font-size:10px;">
+              <option value="">All Categories</option>
+              <option value="character">Character</option>
+              <option value="environment">Environment</option>
+              <option value="style">Style</option>
+              <option value="camera">Camera</option>
+              <option value="lighting">Lighting</option>
+              <option value="action">Action</option>
+              <option value="general">General</option>
+            </select>
+            <button class="btn btn-small btn-purple" onclick="window._posShowPromptForm()">+ New Prompt</button>
+          </div>
+        </div>
+        <div id="posPromptFormWrap" class="hidden" style="margin-bottom:16px;">
+          <div class="pos-form" style="background:var(--surface2);padding:16px;border-radius:var(--radius);border:1px solid var(--border);">
+            <input type="hidden" id="posPromptEditId" value="">
+            <div class="pos-field-group">
+              <label>Name</label>
+              <input type="text" id="posPromptName" placeholder="e.g. Cyberpunk Street Shot">
+            </div>
+            <div class="form-row">
+              <div class="pos-field-group">
+                <label>Category</label>
+                <select id="posPromptCategory">
+                  <option value="general">General</option>
+                  <option value="character">Character</option>
+                  <option value="environment">Environment</option>
+                  <option value="style">Style</option>
+                  <option value="camera">Camera</option>
+                  <option value="lighting">Lighting</option>
+                  <option value="action">Action</option>
+                </select>
+              </div>
+              <div class="pos-field-group">
+                <label>Tags (comma-separated)</label>
+                <input type="text" id="posPromptTags" placeholder="neon, rain, night">
+              </div>
+            </div>
+            <div class="pos-field-group">
+              <label>Raw Prompt (use [VARIABLES] for placeholders)</label>
+              <textarea id="posPromptRaw" rows="4" placeholder="[CHARACTER NAME] walking through [ENVIRONMENT] wearing [COSTUME], cinematic lighting, 4k"></textarea>
+            </div>
+            <div id="posPromptVarPreview" style="margin-top:4px;"></div>
+            <div class="pos-field-group">
+              <label>Notes</label>
+              <textarea id="posPromptNotes" rows="2" placeholder="Optional notes..."></textarea>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="checkbox" id="posPromptImmutable"> Lock (Immutable)
+              </label>
+            </div>
+            <div class="btn-row" style="justify-content:flex-start;">
+              <button class="btn btn-small btn-purple" onclick="window._posSavePrompt()">Save</button>
+              <button class="btn btn-small" onclick="window._posCancelPromptForm()">Cancel</button>
+            </div>
+          </div>
+        </div>
+        <div id="posPromptList" class="pos-entity-list">
+          <div class="pos-empty">No prompts yet. Click "+ New Prompt" to create one.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PROMPT OS: CHARACTERS TAB ============ -->
+  <div id="posCharsContainer" class="hidden">
+    <div class="panel pos-panel">
+      <div class="panel-header">
+        <span class="dot" style="background:#7c5cff;box-shadow:0 0 8px rgba(124,92,255,0.6)"></span>
+        <span class="panel-title">Character Library</span>
+      </div>
+      <div class="panel-body">
+        <div class="pos-section-header">
+          <h3>Characters</h3>
+          <button class="btn btn-small btn-purple" onclick="window._posShowCharForm()">+ New Character</button>
+        </div>
+        <div id="posCharFormWrap" class="hidden" style="margin-bottom:16px;">
+          <div class="pos-form" style="background:var(--surface2);padding:16px;border-radius:var(--radius);border:1px solid var(--border);">
+            <input type="hidden" id="posCharEditId" value="">
+            <div class="pos-field-group">
+              <label>Name</label>
+              <input type="text" id="posCharName" placeholder="Character name">
+            </div>
+            <div class="pos-field-group">
+              <label>Physical Description</label>
+              <textarea id="posCharPhysical" rows="2" placeholder="Overall look..."></textarea>
+            </div>
+            <div class="form-row">
+              <div class="pos-field-group">
+                <label>Hair</label>
+                <input type="text" id="posCharHair" placeholder="e.g. Long black braids">
+              </div>
+              <div class="pos-field-group">
+                <label>Skin Tone</label>
+                <input type="text" id="posCharSkin" placeholder="e.g. Warm brown">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="pos-field-group">
+                <label>Body Type</label>
+                <input type="text" id="posCharBody" placeholder="e.g. Athletic, slim">
+              </div>
+              <div class="pos-field-group">
+                <label>Age Range</label>
+                <input type="text" id="posCharAge" placeholder="e.g. 20s">
+              </div>
+            </div>
+            <div class="pos-field-group">
+              <label>Distinguishing Features</label>
+              <input type="text" id="posCharFeatures" placeholder="e.g. Scar on left cheek, glowing eyes">
+            </div>
+            <div class="pos-field-group">
+              <label>Default Expression</label>
+              <input type="text" id="posCharExpression" placeholder="e.g. Confident smirk">
+            </div>
+            <div class="pos-field-group">
+              <label>Reference Photo (name from References panel)</label>
+              <input type="text" id="posCharRefPhoto" placeholder="e.g. character_ref_01">
+            </div>
+            <div class="pos-field-group">
+              <label>Tags (comma-separated)</label>
+              <input type="text" id="posCharTags" placeholder="protagonist, hero">
+            </div>
+            <div class="pos-field-group">
+              <label>Notes</label>
+              <textarea id="posCharNotes" rows="2" placeholder="Optional notes..."></textarea>
+            </div>
+            <div class="btn-row" style="justify-content:flex-start;">
+              <button class="btn btn-small btn-purple" onclick="window._posSaveChar()">Save</button>
+              <button class="btn btn-small" onclick="window._posCancelCharForm()">Cancel</button>
+            </div>
+          </div>
+        </div>
+        <div id="posCharList" class="pos-entity-list">
+          <div class="pos-empty">No characters yet.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PROMPT OS: COSTUMES TAB ============ -->
+  <div id="posCostumesContainer" class="hidden">
+    <div class="panel pos-panel">
+      <div class="panel-header">
+        <span class="dot" style="background:#7c5cff;box-shadow:0 0 8px rgba(124,92,255,0.6)"></span>
+        <span class="panel-title">Costume Library</span>
+      </div>
+      <div class="panel-body">
+        <div class="pos-section-header">
+          <h3>Costumes</h3>
+          <button class="btn btn-small btn-purple" onclick="window._posShowCostumeForm()">+ New Costume</button>
+        </div>
+        <div id="posCostumeFormWrap" class="hidden" style="margin-bottom:16px;">
+          <div class="pos-form" style="background:var(--surface2);padding:16px;border-radius:var(--radius);border:1px solid var(--border);">
+            <input type="hidden" id="posCostumeEditId" value="">
+            <div class="form-row">
+              <div class="pos-field-group">
+                <label>Name</label>
+                <input type="text" id="posCostumeName" placeholder="Costume name">
+              </div>
+              <div class="pos-field-group">
+                <label>Character</label>
+                <select id="posCostumeCharId"><option value="">-- None --</option></select>
+              </div>
+            </div>
+            <div class="pos-field-group">
+              <label>Description</label>
+              <textarea id="posCostumeDesc" rows="2" placeholder="Full costume description..."></textarea>
+            </div>
+            <div class="form-row">
+              <div class="pos-field-group">
+                <label>Upper Body</label>
+                <input type="text" id="posCostumeUpper" placeholder="e.g. Black leather jacket">
+              </div>
+              <div class="pos-field-group">
+                <label>Lower Body</label>
+                <input type="text" id="posCostumeLower" placeholder="e.g. Ripped jeans">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="pos-field-group">
+                <label>Footwear</label>
+                <input type="text" id="posCostumeFootwear" placeholder="e.g. Combat boots">
+              </div>
+              <div class="pos-field-group">
+                <label>Accessories</label>
+                <input type="text" id="posCostumeAccessories" placeholder="e.g. Silver chain, rings">
+              </div>
+            </div>
+            <div class="pos-field-group">
+              <label>Color Palette</label>
+              <input type="text" id="posCostumeColors" placeholder="e.g. Black, silver, neon blue">
+            </div>
+            <div class="pos-field-group">
+              <label>Tags (comma-separated)</label>
+              <input type="text" id="posCostumeTags" placeholder="streetwear, dark">
+            </div>
+            <div class="pos-field-group">
+              <label>Notes</label>
+              <textarea id="posCostumeNotes" rows="2" placeholder="Optional notes..."></textarea>
+            </div>
+            <div class="btn-row" style="justify-content:flex-start;">
+              <button class="btn btn-small btn-purple" onclick="window._posSaveCostume()">Save</button>
+              <button class="btn btn-small" onclick="window._posCancelCostumeForm()">Cancel</button>
+            </div>
+          </div>
+        </div>
+        <div id="posCostumeList" class="pos-entity-list">
+          <div class="pos-empty">No costumes yet.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PROMPT OS: ENVIRONMENTS TAB ============ -->
+  <div id="posEnvsContainer" class="hidden">
+    <div class="panel pos-panel">
+      <div class="panel-header">
+        <span class="dot" style="background:#7c5cff;box-shadow:0 0 8px rgba(124,92,255,0.6)"></span>
+        <span class="panel-title">Environment Library</span>
+      </div>
+      <div class="panel-body">
+        <div class="pos-section-header">
+          <h3>Environments</h3>
+          <button class="btn btn-small btn-purple" onclick="window._posShowEnvForm()">+ New Environment</button>
+        </div>
+        <div id="posEnvFormWrap" class="hidden" style="margin-bottom:16px;">
+          <div class="pos-form" style="background:var(--surface2);padding:16px;border-radius:var(--radius);border:1px solid var(--border);">
+            <input type="hidden" id="posEnvEditId" value="">
+            <div class="pos-field-group">
+              <label>Name</label>
+              <input type="text" id="posEnvName" placeholder="Environment name">
+            </div>
+            <div class="pos-field-group">
+              <label>Description</label>
+              <textarea id="posEnvDesc" rows="2" placeholder="Full environment description..."></textarea>
+            </div>
+            <div class="form-row">
+              <div class="pos-field-group">
+                <label>Location</label>
+                <input type="text" id="posEnvLocation" placeholder="e.g. Tokyo alleyway">
+              </div>
+              <div class="pos-field-group">
+                <label>Time of Day</label>
+                <input type="text" id="posEnvTime" placeholder="e.g. Night, golden hour">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="pos-field-group">
+                <label>Weather</label>
+                <input type="text" id="posEnvWeather" placeholder="e.g. Light rain">
+              </div>
+              <div class="pos-field-group">
+                <label>Lighting</label>
+                <input type="text" id="posEnvLighting" placeholder="e.g. Neon signs, volumetric fog">
+              </div>
+            </div>
+            <div class="pos-field-group">
+              <label>Key Props</label>
+              <input type="text" id="posEnvProps" placeholder="e.g. Vending machines, wet pavement">
+            </div>
+            <div class="pos-field-group">
+              <label>Atmosphere</label>
+              <input type="text" id="posEnvAtmosphere" placeholder="e.g. Moody, cyberpunk, isolated">
+            </div>
+            <div class="pos-field-group">
+              <label>Tags (comma-separated)</label>
+              <input type="text" id="posEnvTags" placeholder="urban, night, neon">
+            </div>
+            <div class="pos-field-group">
+              <label>Notes</label>
+              <textarea id="posEnvNotes" rows="2" placeholder="Optional notes..."></textarea>
+            </div>
+            <div class="btn-row" style="justify-content:flex-start;">
+              <button class="btn btn-small btn-purple" onclick="window._posSaveEnv()">Save</button>
+              <button class="btn btn-small" onclick="window._posCancelEnvForm()">Cancel</button>
+            </div>
+          </div>
+        </div>
+        <div id="posEnvList" class="pos-entity-list">
+          <div class="pos-empty">No environments yet.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PROMPT OS: SCENES TAB ============ -->
+  <div id="posScenesContainer" class="hidden">
+    <div class="panel pos-panel">
+      <div class="panel-header">
+        <span class="dot" style="background:#7c5cff;box-shadow:0 0 8px rgba(124,92,255,0.6)"></span>
+        <span class="panel-title">Scene Builder</span>
+      </div>
+      <div class="panel-body">
+        <div class="pos-section-header">
+          <h3>Scenes</h3>
+          <button class="btn btn-small btn-purple" onclick="window._posShowSceneForm()">+ New Scene</button>
+        </div>
+        <div id="posSceneFormWrap" class="hidden" style="margin-bottom:16px;">
+          <div class="pos-form" style="background:var(--surface2);padding:16px;border-radius:var(--radius);border:1px solid var(--border);">
+            <input type="hidden" id="posSceneEditId" value="">
+            <div class="pos-field-group">
+              <label>Scene Name</label>
+              <input type="text" id="posSceneName" placeholder="e.g. Opening Shot">
+            </div>
+            <div class="form-row">
+              <div class="pos-field-group">
+                <label>Prompt</label>
+                <select id="posScenePromptId"><option value="">-- Select Prompt --</option></select>
+              </div>
+              <div class="pos-field-group">
+                <label>Character</label>
+                <select id="posSceneCharId"><option value="">-- None --</option></select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="pos-field-group">
+                <label>Costume</label>
+                <select id="posSceneCostumeId"><option value="">-- None --</option></select>
+              </div>
+              <div class="pos-field-group">
+                <label>Environment</label>
+                <select id="posSceneEnvId"><option value="">-- None --</option></select>
+              </div>
+            </div>
+            <div class="pos-field-group">
+              <label>Shot Description</label>
+              <textarea id="posSceneShotDesc" rows="2" placeholder="What happens in this shot..."></textarea>
+            </div>
+            <div class="form-row">
+              <div class="pos-field-group">
+                <label>Camera Angle</label>
+                <input type="text" id="posSceneCamAngle" placeholder="e.g. Low angle, close-up">
+              </div>
+              <div class="pos-field-group">
+                <label>Camera Movement</label>
+                <input type="text" id="posSceneCamMove" placeholder="e.g. Slow dolly in">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="pos-field-group">
+                <label>Duration (seconds)</label>
+                <input type="number" id="posSceneDuration" value="5" min="1" max="60">
+              </div>
+              <div class="pos-field-group">
+                <label>Order</label>
+                <input type="number" id="posSceneOrder" value="0" min="0">
+              </div>
+            </div>
+            <div class="pos-field-group">
+              <label>Tags (comma-separated)</label>
+              <input type="text" id="posSceneTags" placeholder="intro, dramatic">
+            </div>
+            <div class="pos-field-group">
+              <label>Notes</label>
+              <textarea id="posSceneNotes" rows="2" placeholder="Optional notes..."></textarea>
+            </div>
+            <div class="btn-row" style="justify-content:flex-start;">
+              <button class="btn btn-small btn-purple" onclick="window._posSaveScene()">Save</button>
+              <button class="btn btn-small" onclick="window._posCancelSceneForm()">Cancel</button>
+            </div>
+          </div>
+        </div>
+        <div id="posSceneList" class="pos-entity-list">
+          <div class="pos-empty">No scenes yet. Create prompts, characters, and environments first, then build scenes.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PROMPT OS: OUTPUT TAB ============ -->
+  <div id="posOutputContainer" class="hidden">
+    <div class="panel pos-panel">
+      <div class="panel-header">
+        <span class="dot" style="background:#7c5cff;box-shadow:0 0 8px rgba(124,92,255,0.6)"></span>
+        <span class="panel-title">Prompt OS Dashboard</span>
+      </div>
+      <div class="panel-body">
+        <div id="posDashboard" class="pos-dashboard-grid"></div>
+      </div>
+    </div>
+
+    <div class="panel pos-panel">
+      <div class="panel-header">
+        <span class="dot" style="background:#7c5cff;box-shadow:0 0 8px rgba(124,92,255,0.6)"></span>
+        <span class="panel-title">Assembly Preview</span>
+      </div>
+      <div class="panel-body">
+        <div style="margin-bottom:12px;">
+          <label style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);">Select Scene to Assemble</label>
+          <select id="posOutputSceneSelect" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;color:var(--text);font-family:inherit;font-size:12px;margin-top:4px;">
+            <option value="">-- Choose a Scene --</option>
+          </select>
+        </div>
+        <div class="btn-row" style="justify-content:flex-start;margin-top:8px;">
+          <button class="btn btn-small btn-purple" onclick="window._posAssemblePreview()">Assemble</button>
+          <button class="btn btn-small btn-green" onclick="window._posValidateScene()">Validate</button>
+          <button class="btn btn-small" onclick="window._posExportText()">Export Text</button>
+          <button class="btn btn-small btn-amber" onclick="window._posExportJson()">Export JSON</button>
+          <button class="btn btn-small btn-magenta" onclick="window._posUseInVideo()">Use in Video</button>
+        </div>
+        <div id="posAssemblyResult" style="margin-top:16px;"></div>
+        <div id="posValidationResult" style="margin-top:12px;"></div>
+      </div>
+    </div>
+
+    <div class="panel pos-panel">
+      <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
+        <span class="dot" style="background:#7c5cff;box-shadow:0 0 8px rgba(124,92,255,0.6)"></span>
+        <span class="panel-title">Style Locks &amp; World Rules</span>
+        <span class="collapse-icon">&#9660;</span>
+      </div>
+      <div class="panel-body">
+        <div style="margin-bottom:16px;">
+          <div class="pos-section-header">
+            <h3>Style Locks</h3>
+            <button class="btn btn-small btn-purple" onclick="window._posAddStyleLock()">+ Add</button>
+          </div>
+          <div id="posStyleLocksList"></div>
+          <button class="btn btn-small btn-green" style="margin-top:8px;" onclick="window._posSaveStyleLocks()">Save Style Locks</button>
+        </div>
+        <div>
+          <div class="pos-section-header">
+            <h3>World Rules</h3>
+            <button class="btn btn-small btn-purple" onclick="window._posAddWorldRule()">+ Add</button>
+          </div>
+          <div id="posWorldRulesList"></div>
+          <button class="btn btn-small btn-green" style="margin-top:8px;" onclick="window._posSaveWorldRules()">Save World Rules</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div class="footer">
     <span>Music Video Generator v3.0</span>
@@ -2385,19 +2961,45 @@
       .catch(e => alert('Reset error: ' + e));
   };
 
+  // All tab containers and buttons
+  const _allTabContainers = {
+    'auto': autoModeContainer,
+    'manual': manualModeContainer,
+    'pos-prompts': $('posPromptsContainer'),
+    'pos-characters': $('posCharsContainer'),
+    'pos-costumes': $('posCostumesContainer'),
+    'pos-environments': $('posEnvsContainer'),
+    'pos-scenes': $('posScenesContainer'),
+    'pos-output': $('posOutputContainer'),
+  };
+  const _allTabBtns = {
+    'auto': autoModeBtn,
+    'manual': manualModeBtn,
+    'pos-prompts': $('posPromptsBtn'),
+    'pos-characters': $('posCharsBtn'),
+    'pos-costumes': $('posCostumesBtn'),
+    'pos-environments': $('posEnvsBtn'),
+    'pos-scenes': $('posScenesBtn'),
+    'pos-output': $('posOutputBtn'),
+  };
+
   window._setMode = function(mode) {
-    if (mode === 'manual') {
-      autoModeContainer.classList.add('hidden');
-      manualModeContainer.classList.remove('hidden');
-      autoModeBtn.classList.remove('active');
-      manualModeBtn.classList.add('active');
-      loadManualScenes();
-    } else {
-      autoModeContainer.classList.remove('hidden');
-      manualModeContainer.classList.add('hidden');
-      autoModeBtn.classList.add('active');
-      manualModeBtn.classList.remove('active');
+    // Hide all containers, deactivate all buttons
+    for (const key in _allTabContainers) {
+      if (_allTabContainers[key]) _allTabContainers[key].classList.add('hidden');
+      if (_allTabBtns[key]) _allTabBtns[key].classList.remove('active');
     }
+    // Show selected
+    if (_allTabContainers[mode]) _allTabContainers[mode].classList.remove('hidden');
+    if (_allTabBtns[mode]) _allTabBtns[mode].classList.add('active');
+    // Trigger data load for specific tabs
+    if (mode === 'manual') loadManualScenes();
+    if (mode === 'pos-prompts') window._posLoadPrompts();
+    if (mode === 'pos-characters') window._posLoadChars();
+    if (mode === 'pos-costumes') window._posLoadCostumes();
+    if (mode === 'pos-environments') window._posLoadEnvs();
+    if (mode === 'pos-scenes') window._posLoadScenes();
+    if (mode === 'pos-output') window._posLoadOutput();
   };
 
   // ===================== MANUAL MODE =====================
@@ -4033,6 +4635,539 @@
     const data = await apiPost('/api/templates/load', { name: name });
     if (data.ok) { alert('Template loaded!'); await loadManualScenes(); }
     else { alert('Error: ' + (data.error || 'not found')); }
+  };
+
+  // ===================== PROMPT OS =====================
+
+  // ---- Helpers ----
+  function posApiPut(url, data) {
+    return fetch(url, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data||{}) }).then(r=>r.json()).catch(e=>({ok:false,error:e.message}));
+  }
+  function posApiDelete(url) {
+    return fetch(url, { method: 'DELETE' }).then(r=>r.json()).catch(e=>({ok:false,error:e.message}));
+  }
+  function posParseTags(str) { return str ? str.split(',').map(s=>s.trim()).filter(Boolean) : []; }
+  function posRenderTags(tags) { return (tags||[]).map(t=>'<span class="pos-tag">'+escHtml(t)+'</span>').join(' '); }
+  function posHighlightVars(text) {
+    if (!text) return '';
+    return escHtml(text).replace(/\[([A-Z][A-Z0-9_ ]*)\]/g, '<span class="var-badge">[$1]</span>');
+  }
+
+  // ---- PROMPTS ----
+  window._posLoadPrompts = async function() {
+    const filterEl = $('posPromptCatFilter');
+    const cat = filterEl ? filterEl.value : '';
+    const url = cat ? '/api/pos/prompts?category='+encodeURIComponent(cat) : '/api/pos/prompts';
+    const data = await apiGet(url);
+    const list = $('posPromptList');
+    const prompts = data.prompts || [];
+    if (!prompts.length) { list.innerHTML = '<div class="pos-empty">No prompts yet. Click "+ New Prompt" to create one.</div>'; return; }
+    list.innerHTML = prompts.map(p => {
+      const lockIcon = p.isImmutable ? ' <span class="pos-lock-icon" title="Locked">&#128274;</span>' : '';
+      return '<div class="pos-entity-card" data-id="'+p.id+'">'
+        + '<span class="pos-badge pos-badge-prompt">'+escHtml(p.category||'general')+'</span>'
+        + '<span class="entity-name">'+escHtml(p.name)+lockIcon+'</span>'
+        + '<span class="entity-meta">v'+p.version+' &middot; '+(p.variables||[]).length+' vars</span>'
+        + '<span class="entity-actions">'
+        + '<button class="btn btn-icon btn-purple" onclick="window._posEditPrompt(\''+p.id+'\')" title="Edit">&#9998;</button>'
+        + '<button class="btn btn-icon btn-red" onclick="window._posDeletePrompt(\''+p.id+'\')" title="Delete">&#10005;</button>'
+        + '</span></div>';
+    }).join('');
+  };
+
+  if ($('posPromptCatFilter')) $('posPromptCatFilter').addEventListener('change', () => window._posLoadPrompts());
+
+  window._posShowPromptForm = function(data) {
+    $('posPromptFormWrap').classList.remove('hidden');
+    $('posPromptEditId').value = data ? data.id : '';
+    $('posPromptName').value = data ? data.name : '';
+    $('posPromptCategory').value = data ? (data.category||'general') : 'general';
+    $('posPromptTags').value = data ? (data.tags||[]).join(', ') : '';
+    $('posPromptRaw').value = data ? data.rawPrompt : '';
+    $('posPromptNotes').value = data ? data.notes : '';
+    $('posPromptImmutable').checked = data ? !!data.isImmutable : false;
+    window._posUpdateVarPreview();
+  };
+  window._posCancelPromptForm = function() { $('posPromptFormWrap').classList.add('hidden'); };
+
+  window._posUpdateVarPreview = function() {
+    const raw = $('posPromptRaw').value;
+    const matches = raw.match(/\[([A-Z][A-Z0-9_ ]*)\]/g) || [];
+    const unique = [...new Set(matches)];
+    const el = $('posPromptVarPreview');
+    if (unique.length) {
+      el.innerHTML = '<span style="font-size:10px;color:var(--text-dim);margin-right:8px;">Variables:</span>' + unique.map(v=>'<span class="var-badge">'+v+'</span>').join(' ');
+    } else { el.innerHTML = ''; }
+  };
+  if ($('posPromptRaw')) $('posPromptRaw').addEventListener('input', () => window._posUpdateVarPreview());
+
+  window._posSavePrompt = async function() {
+    const editId = $('posPromptEditId').value;
+    const body = {
+      name: $('posPromptName').value, category: $('posPromptCategory').value,
+      rawPrompt: $('posPromptRaw').value, tags: posParseTags($('posPromptTags').value),
+      notes: $('posPromptNotes').value, isImmutable: $('posPromptImmutable').checked,
+    };
+    let result;
+    if (editId) { result = await posApiPut('/api/pos/prompts/'+editId, body); }
+    else { result = await apiPost('/api/pos/prompts', body); }
+    if (result.error) { alert('Error: '+result.error); return; }
+    $('posPromptFormWrap').classList.add('hidden');
+    window._posLoadPrompts();
+  };
+
+  window._posEditPrompt = async function(id) {
+    const data = await apiGet('/api/pos/prompts/'+id);
+    if (data.error) { alert('Not found'); return; }
+    window._posShowPromptForm(data);
+  };
+
+  window._posDeletePrompt = async function(id) {
+    if (!confirm('Delete this prompt?')) return;
+    await posApiDelete('/api/pos/prompts/'+id);
+    window._posLoadPrompts();
+  };
+
+  // ---- CHARACTERS ----
+  window._posLoadChars = async function() {
+    const data = await apiGet('/api/pos/characters');
+    const list = $('posCharList');
+    const chars = data.characters || [];
+    if (!chars.length) { list.innerHTML = '<div class="pos-empty">No characters yet.</div>'; return; }
+    list.innerHTML = chars.map(c => {
+      return '<div class="pos-entity-card" data-id="'+c.id+'">'
+        + '<span class="pos-badge pos-badge-char">CHAR</span>'
+        + '<span class="entity-name">'+escHtml(c.name)+'</span>'
+        + '<span class="entity-meta">'+escHtml(c.ageRange||'')+(c.referencePhoto?' &middot; has ref':'')+'</span>'
+        + '<span class="entity-actions">'
+        + '<button class="btn btn-icon btn-purple" onclick="window._posEditChar(\''+c.id+'\')" title="Edit">&#9998;</button>'
+        + '<button class="btn btn-icon btn-red" onclick="window._posDeleteChar(\''+c.id+'\')" title="Delete">&#10005;</button>'
+        + '</span></div>';
+    }).join('');
+  };
+
+  window._posShowCharForm = function(d) {
+    $('posCharFormWrap').classList.remove('hidden');
+    $('posCharEditId').value = d?d.id:'';
+    $('posCharName').value = d?d.name:'';
+    $('posCharPhysical').value = d?d.physicalDescription:'';
+    $('posCharHair').value = d?d.hair:'';
+    $('posCharSkin').value = d?d.skinTone:'';
+    $('posCharBody').value = d?d.bodyType:'';
+    $('posCharAge').value = d?d.ageRange:'';
+    $('posCharFeatures').value = d?d.distinguishingFeatures:'';
+    $('posCharExpression').value = d?d.defaultExpression:'';
+    $('posCharRefPhoto').value = d?d.referencePhoto:'';
+    $('posCharTags').value = d?(d.tags||[]).join(', '):'';
+    $('posCharNotes').value = d?d.notes:'';
+  };
+  window._posCancelCharForm = function() { $('posCharFormWrap').classList.add('hidden'); };
+
+  window._posSaveChar = async function() {
+    const editId = $('posCharEditId').value;
+    const body = {
+      name: $('posCharName').value, physicalDescription: $('posCharPhysical').value,
+      hair: $('posCharHair').value, skinTone: $('posCharSkin').value,
+      bodyType: $('posCharBody').value, ageRange: $('posCharAge').value,
+      distinguishingFeatures: $('posCharFeatures').value, defaultExpression: $('posCharExpression').value,
+      referencePhoto: $('posCharRefPhoto').value, tags: posParseTags($('posCharTags').value),
+      notes: $('posCharNotes').value,
+    };
+    let result;
+    if (editId) { result = await posApiPut('/api/pos/characters/'+editId, body); }
+    else { result = await apiPost('/api/pos/characters', body); }
+    if (result.error) { alert('Error: '+result.error); return; }
+    $('posCharFormWrap').classList.add('hidden');
+    window._posLoadChars();
+  };
+
+  window._posEditChar = async function(id) {
+    const data = await apiGet('/api/pos/characters/'+id);
+    if (data.error) { alert('Not found'); return; }
+    window._posShowCharForm(data);
+  };
+
+  window._posDeleteChar = async function(id) {
+    if (!confirm('Delete this character?')) return;
+    await posApiDelete('/api/pos/characters/'+id);
+    window._posLoadChars();
+  };
+
+  // ---- COSTUMES ----
+  window._posLoadCostumes = async function() {
+    const data = await apiGet('/api/pos/costumes');
+    const list = $('posCostumeList');
+    const costumes = data.costumes || [];
+    // Load chars for dropdown
+    const charData = await apiGet('/api/pos/characters');
+    const chars = charData.characters || [];
+    const charMap = {}; chars.forEach(c => charMap[c.id] = c.name);
+    // Populate character dropdown
+    const sel = $('posCostumeCharId');
+    if (sel) {
+      sel.innerHTML = '<option value="">-- None --</option>' + chars.map(c=>'<option value="'+c.id+'">'+escHtml(c.name)+'</option>').join('');
+    }
+    if (!costumes.length) { list.innerHTML = '<div class="pos-empty">No costumes yet.</div>'; return; }
+    list.innerHTML = costumes.map(c => {
+      const charName = charMap[c.characterId] || '';
+      return '<div class="pos-entity-card" data-id="'+c.id+'">'
+        + '<span class="pos-badge pos-badge-costume">COSTUME</span>'
+        + '<span class="entity-name">'+escHtml(c.name)+'</span>'
+        + '<span class="entity-meta">'+(charName?escHtml(charName):'unlinked')+'</span>'
+        + '<span class="entity-actions">'
+        + '<button class="btn btn-icon btn-purple" onclick="window._posEditCostume(\''+c.id+'\')" title="Edit">&#9998;</button>'
+        + '<button class="btn btn-icon btn-red" onclick="window._posDeleteCostume(\''+c.id+'\')" title="Delete">&#10005;</button>'
+        + '</span></div>';
+    }).join('');
+  };
+
+  window._posShowCostumeForm = function(d) {
+    $('posCostumeFormWrap').classList.remove('hidden');
+    $('posCostumeEditId').value = d?d.id:'';
+    $('posCostumeName').value = d?d.name:'';
+    if (d && d.characterId) $('posCostumeCharId').value = d.characterId;
+    $('posCostumeDesc').value = d?d.description:'';
+    $('posCostumeUpper').value = d?d.upperBody:'';
+    $('posCostumeLower').value = d?d.lowerBody:'';
+    $('posCostumeFootwear').value = d?d.footwear:'';
+    $('posCostumeAccessories').value = d?d.accessories:'';
+    $('posCostumeColors').value = d?d.colorPalette:'';
+    $('posCostumeTags').value = d?(d.tags||[]).join(', '):'';
+    $('posCostumeNotes').value = d?d.notes:'';
+  };
+  window._posCancelCostumeForm = function() { $('posCostumeFormWrap').classList.add('hidden'); };
+
+  window._posSaveCostume = async function() {
+    const editId = $('posCostumeEditId').value;
+    const body = {
+      name: $('posCostumeName').value, characterId: $('posCostumeCharId').value,
+      description: $('posCostumeDesc').value, upperBody: $('posCostumeUpper').value,
+      lowerBody: $('posCostumeLower').value, footwear: $('posCostumeFootwear').value,
+      accessories: $('posCostumeAccessories').value, colorPalette: $('posCostumeColors').value,
+      tags: posParseTags($('posCostumeTags').value), notes: $('posCostumeNotes').value,
+    };
+    let result;
+    if (editId) { result = await posApiPut('/api/pos/costumes/'+editId, body); }
+    else { result = await apiPost('/api/pos/costumes', body); }
+    if (result.error) { alert('Error: '+result.error); return; }
+    $('posCostumeFormWrap').classList.add('hidden');
+    window._posLoadCostumes();
+  };
+
+  window._posEditCostume = async function(id) {
+    const data = await apiGet('/api/pos/costumes/'+id);
+    if (data.error) { alert('Not found'); return; }
+    await window._posLoadCostumes(); // refresh char dropdown
+    window._posShowCostumeForm(data);
+  };
+
+  window._posDeleteCostume = async function(id) {
+    if (!confirm('Delete this costume?')) return;
+    await posApiDelete('/api/pos/costumes/'+id);
+    window._posLoadCostumes();
+  };
+
+  // ---- ENVIRONMENTS ----
+  window._posLoadEnvs = async function() {
+    const data = await apiGet('/api/pos/environments');
+    const list = $('posEnvList');
+    const envs = data.environments || [];
+    if (!envs.length) { list.innerHTML = '<div class="pos-empty">No environments yet.</div>'; return; }
+    list.innerHTML = envs.map(e => {
+      return '<div class="pos-entity-card" data-id="'+e.id+'">'
+        + '<span class="pos-badge pos-badge-env">ENV</span>'
+        + '<span class="entity-name">'+escHtml(e.name)+'</span>'
+        + '<span class="entity-meta">'+escHtml(e.timeOfDay||'')+(e.location?' &middot; '+escHtml(e.location):'')+'</span>'
+        + '<span class="entity-actions">'
+        + '<button class="btn btn-icon btn-purple" onclick="window._posEditEnv(\''+e.id+'\')" title="Edit">&#9998;</button>'
+        + '<button class="btn btn-icon btn-red" onclick="window._posDeleteEnv(\''+e.id+'\')" title="Delete">&#10005;</button>'
+        + '</span></div>';
+    }).join('');
+  };
+
+  window._posShowEnvForm = function(d) {
+    $('posEnvFormWrap').classList.remove('hidden');
+    $('posEnvEditId').value = d?d.id:'';
+    $('posEnvName').value = d?d.name:'';
+    $('posEnvDesc').value = d?d.description:'';
+    $('posEnvLocation').value = d?d.location:'';
+    $('posEnvTime').value = d?d.timeOfDay:'';
+    $('posEnvWeather').value = d?d.weather:'';
+    $('posEnvLighting').value = d?d.lighting:'';
+    $('posEnvProps').value = d?d.keyProps:'';
+    $('posEnvAtmosphere').value = d?d.atmosphere:'';
+    $('posEnvTags').value = d?(d.tags||[]).join(', '):'';
+    $('posEnvNotes').value = d?d.notes:'';
+  };
+  window._posCancelEnvForm = function() { $('posEnvFormWrap').classList.add('hidden'); };
+
+  window._posSaveEnv = async function() {
+    const editId = $('posEnvEditId').value;
+    const body = {
+      name: $('posEnvName').value, description: $('posEnvDesc').value,
+      location: $('posEnvLocation').value, timeOfDay: $('posEnvTime').value,
+      weather: $('posEnvWeather').value, lighting: $('posEnvLighting').value,
+      keyProps: $('posEnvProps').value, atmosphere: $('posEnvAtmosphere').value,
+      tags: posParseTags($('posEnvTags').value), notes: $('posEnvNotes').value,
+    };
+    let result;
+    if (editId) { result = await posApiPut('/api/pos/environments/'+editId, body); }
+    else { result = await apiPost('/api/pos/environments', body); }
+    if (result.error) { alert('Error: '+result.error); return; }
+    $('posEnvFormWrap').classList.add('hidden');
+    window._posLoadEnvs();
+  };
+
+  window._posEditEnv = async function(id) {
+    const data = await apiGet('/api/pos/environments/'+id);
+    if (data.error) { alert('Not found'); return; }
+    window._posShowEnvForm(data);
+  };
+
+  window._posDeleteEnv = async function(id) {
+    if (!confirm('Delete this environment?')) return;
+    await posApiDelete('/api/pos/environments/'+id);
+    window._posLoadEnvs();
+  };
+
+  // ---- SCENES ----
+  window._posLoadScenes = async function() {
+    const data = await apiGet('/api/pos/scenes');
+    const list = $('posSceneList');
+    const scenes = data.scenes || [];
+    // Load dropdowns
+    const [pData, cData, costData, eData] = await Promise.all([
+      apiGet('/api/pos/prompts'), apiGet('/api/pos/characters'),
+      apiGet('/api/pos/costumes'), apiGet('/api/pos/environments'),
+    ]);
+    const prompts = pData.prompts||[], chars = cData.characters||[];
+    const costumes = costData.costumes||[], envs = eData.environments||[];
+    // Populate form dropdowns
+    const pSel = $('posScenePromptId');
+    if (pSel) pSel.innerHTML = '<option value="">-- Select Prompt --</option>' + prompts.map(p=>'<option value="'+p.id+'">'+escHtml(p.name)+' ['+p.category+']</option>').join('');
+    const cSel = $('posSceneCharId');
+    if (cSel) cSel.innerHTML = '<option value="">-- None --</option>' + chars.map(c=>'<option value="'+c.id+'">'+escHtml(c.name)+'</option>').join('');
+    const coSel = $('posSceneCostumeId');
+    if (coSel) coSel.innerHTML = '<option value="">-- None --</option>' + costumes.map(c=>'<option value="'+c.id+'">'+escHtml(c.name)+'</option>').join('');
+    const eSel = $('posSceneEnvId');
+    if (eSel) eSel.innerHTML = '<option value="">-- None --</option>' + envs.map(e=>'<option value="'+e.id+'">'+escHtml(e.name)+'</option>').join('');
+    // Build maps
+    const promptMap = {}; prompts.forEach(p=>promptMap[p.id]=p.name);
+    const charMap = {}; chars.forEach(c=>charMap[c.id]=c.name);
+    const envMap = {}; envs.forEach(e=>envMap[e.id]=e.name);
+
+    if (!scenes.length) { list.innerHTML = '<div class="pos-empty">No scenes yet. Create prompts, characters, and environments first, then build scenes.</div>'; return; }
+    list.innerHTML = scenes.map(s => {
+      const links = [];
+      if (s.promptId && promptMap[s.promptId]) links.push('<span class="pos-badge pos-badge-prompt">'+escHtml(promptMap[s.promptId])+'</span>');
+      if (s.characterId && charMap[s.characterId]) links.push('<span class="pos-badge pos-badge-char">'+escHtml(charMap[s.characterId])+'</span>');
+      if (s.environmentId && envMap[s.environmentId]) links.push('<span class="pos-badge pos-badge-env">'+escHtml(envMap[s.environmentId])+'</span>');
+      return '<div class="pos-entity-card" data-id="'+s.id+'">'
+        + '<span class="pos-badge pos-badge-scene">#'+(s.orderIndex!==undefined?s.orderIndex:'?')+'</span>'
+        + '<span class="entity-name">'+escHtml(s.name)+'</span>'
+        + '<span class="entity-meta">'+links.join(' ')+'</span>'
+        + '<span class="entity-actions">'
+        + '<button class="btn btn-icon btn-purple" onclick="window._posEditScene(\''+s.id+'\')" title="Edit">&#9998;</button>'
+        + '<button class="btn btn-icon btn-red" onclick="window._posDeleteScene(\''+s.id+'\')" title="Delete">&#10005;</button>'
+        + '</span></div>';
+    }).join('');
+  };
+
+  window._posShowSceneForm = function(d) {
+    $('posSceneFormWrap').classList.remove('hidden');
+    $('posSceneEditId').value = d?d.id:'';
+    $('posSceneName').value = d?d.name:'';
+    if (d && d.promptId) $('posScenePromptId').value = d.promptId;
+    if (d && d.characterId) $('posSceneCharId').value = d.characterId;
+    if (d && d.costumeId) $('posSceneCostumeId').value = d.costumeId;
+    if (d && d.environmentId) $('posSceneEnvId').value = d.environmentId;
+    $('posSceneShotDesc').value = d?d.shotDescription:'';
+    $('posSceneCamAngle').value = d?d.cameraAngle:'';
+    $('posSceneCamMove').value = d?d.cameraMovement:'';
+    $('posSceneDuration').value = d?d.duration:5;
+    $('posSceneOrder').value = d?(d.orderIndex||0):0;
+    $('posSceneTags').value = d?(d.tags||[]).join(', '):'';
+    $('posSceneNotes').value = d?d.notes:'';
+  };
+  window._posCancelSceneForm = function() { $('posSceneFormWrap').classList.add('hidden'); };
+
+  window._posSaveScene = async function() {
+    const editId = $('posSceneEditId').value;
+    const body = {
+      name: $('posSceneName').value, promptId: $('posScenePromptId').value,
+      characterId: $('posSceneCharId').value, costumeId: $('posSceneCostumeId').value,
+      environmentId: $('posSceneEnvId').value, shotDescription: $('posSceneShotDesc').value,
+      cameraAngle: $('posSceneCamAngle').value, cameraMovement: $('posSceneCamMove').value,
+      duration: parseInt($('posSceneDuration').value)||5, orderIndex: parseInt($('posSceneOrder').value)||0,
+      tags: posParseTags($('posSceneTags').value), notes: $('posSceneNotes').value,
+    };
+    let result;
+    if (editId) { result = await posApiPut('/api/pos/scenes/'+editId, body); }
+    else { result = await apiPost('/api/pos/scenes', body); }
+    if (result.error) { alert('Error: '+result.error); return; }
+    $('posSceneFormWrap').classList.add('hidden');
+    window._posLoadScenes();
+  };
+
+  window._posEditScene = async function(id) {
+    const data = await apiGet('/api/pos/scenes/'+id);
+    if (data.error) { alert('Not found'); return; }
+    window._posShowSceneForm(data);
+  };
+
+  window._posDeleteScene = async function(id) {
+    if (!confirm('Delete this scene?')) return;
+    await posApiDelete('/api/pos/scenes/'+id);
+    window._posLoadScenes();
+  };
+
+  // ---- OUTPUT / DASHBOARD ----
+  window._posLoadOutput = async function() {
+    // Dashboard stats
+    const dash = await apiGet('/api/pos/dashboard');
+    const el = $('posDashboard');
+    if (dash.counts) {
+      const c = dash.counts;
+      el.innerHTML = [
+        {v:c.prompts,l:'Prompts'},{v:c.characters,l:'Characters'},{v:c.costumes,l:'Costumes'},
+        {v:c.environments,l:'Envs'},{v:c.scenes,l:'Scenes'},
+        {v:c.styleLocks,l:'Style Locks'},{v:c.worldRules,l:'World Rules'},
+        {v:dash.lockedPrompts||0,l:'Locked'},
+      ].map(s=>'<div class="pos-stat-card"><div class="stat-val">'+s.v+'</div><div class="stat-label">'+s.l+'</div></div>').join('');
+    }
+    // Populate scene selector
+    const sData = await apiGet('/api/pos/scenes');
+    const sel = $('posOutputSceneSelect');
+    const scenes = sData.scenes || [];
+    sel.innerHTML = '<option value="">-- Choose a Scene --</option>' + scenes.map(s=>'<option value="'+s.id+'">#'+s.orderIndex+' '+escHtml(s.name)+'</option>').join('');
+
+    // Load style locks & world rules
+    const slData = await apiGet('/api/pos/style-locks');
+    const slList = $('posStyleLocksList');
+    const locks = slData.styleLocks || [];
+    slList.innerHTML = locks.map((l,i)=>'<div style="display:flex;gap:8px;margin-bottom:4px;align-items:center;"><input type="text" class="pos-sl-input" value="'+escHtml(l.rule||'')+'" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px;color:var(--text);font-family:inherit;font-size:12px;"><button class="btn btn-icon btn-red" onclick="this.parentElement.remove()">&#10005;</button></div>').join('');
+
+    const wrData = await apiGet('/api/pos/world-rules');
+    const wrList = $('posWorldRulesList');
+    const rules = wrData.worldRules || [];
+    wrList.innerHTML = rules.map((r,i)=>'<div style="display:flex;gap:8px;margin-bottom:4px;align-items:center;"><input type="text" class="pos-wr-input" value="'+escHtml(r.rule||'')+'" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px;color:var(--text);font-family:inherit;font-size:12px;"><button class="btn btn-icon btn-red" onclick="this.parentElement.remove()">&#10005;</button></div>').join('');
+  };
+
+  window._posAddStyleLock = function() {
+    const list = $('posStyleLocksList');
+    const div = document.createElement('div');
+    div.style.cssText = 'display:flex;gap:8px;margin-bottom:4px;align-items:center;';
+    div.innerHTML = '<input type="text" class="pos-sl-input" placeholder="e.g. Always use cinematic lighting" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px;color:var(--text);font-family:inherit;font-size:12px;"><button class="btn btn-icon btn-red" onclick="this.parentElement.remove()">&#10005;</button>';
+    list.appendChild(div);
+  };
+
+  window._posSaveStyleLocks = async function() {
+    const inputs = document.querySelectorAll('.pos-sl-input');
+    const locks = [];
+    inputs.forEach(inp => { if (inp.value.trim()) locks.push({rule:inp.value.trim()}); });
+    await apiPost('/api/pos/style-locks', {styleLocks:locks});
+    alert('Style locks saved.');
+  };
+
+  window._posAddWorldRule = function() {
+    const list = $('posWorldRulesList');
+    const div = document.createElement('div');
+    div.style.cssText = 'display:flex;gap:8px;margin-bottom:4px;align-items:center;';
+    div.innerHTML = '<input type="text" class="pos-wr-input" placeholder="e.g. All scenes take place in the same city" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px;color:var(--text);font-family:inherit;font-size:12px;"><button class="btn btn-icon btn-red" onclick="this.parentElement.remove()">&#10005;</button>';
+    list.appendChild(div);
+  };
+
+  window._posSaveWorldRules = async function() {
+    const inputs = document.querySelectorAll('.pos-wr-input');
+    const rules = [];
+    inputs.forEach(inp => { if (inp.value.trim()) rules.push({rule:inp.value.trim()}); });
+    await apiPost('/api/pos/world-rules', {worldRules:rules});
+    alert('World rules saved.');
+  };
+
+  // ---- ASSEMBLY ----
+  let _posLastAssembly = null;
+
+  window._posAssemblePreview = async function() {
+    const sid = $('posOutputSceneSelect').value;
+    if (!sid) { alert('Select a scene first.'); return; }
+    const data = await apiGet('/api/pos/scenes/'+sid+'/assemble');
+    _posLastAssembly = data;
+    const el = $('posAssemblyResult');
+    let html = '';
+    if (data.sections && data.sections.length) {
+      html += data.sections.map(s =>
+        '<div class="pos-assembly-section"><div class="section-label">'+escHtml(s.label)+'</div><div class="section-text">'+posHighlightVars(s.text)+'</div></div>'
+      ).join('');
+      html += '<div style="margin-top:12px;"><div style="font-size:10px;color:var(--text-dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">Final Assembled Prompt</div>';
+      html += '<div class="pos-raw-prompt">'+posHighlightVars(data.text||'')+'</div></div>';
+    } else {
+      html += '<div class="pos-empty">No content assembled.</div>';
+    }
+    if (data.warnings && data.warnings.length) {
+      html += '<div style="margin-top:12px;">';
+      data.warnings.forEach(w => { html += '<div class="pos-warning '+w.level+'">'+escHtml(w.message)+'</div>'; });
+      html += '</div>';
+    }
+    el.innerHTML = html;
+    $('posValidationResult').innerHTML = '';
+  };
+
+  window._posValidateScene = async function() {
+    const sid = $('posOutputSceneSelect').value;
+    if (!sid) { alert('Select a scene first.'); return; }
+    const data = await apiGet('/api/pos/scenes/'+sid+'/validate');
+    const el = $('posValidationResult');
+    const vals = data.validations || [];
+    el.innerHTML = vals.map(v => '<div class="pos-warning '+v.level+'">'+escHtml(v.message)+'</div>').join('');
+  };
+
+  window._posExportText = async function() {
+    const sid = $('posOutputSceneSelect').value;
+    if (!sid) { alert('Select a scene first.'); return; }
+    const data = await apiPost('/api/pos/scenes/'+sid+'/export/text', {});
+    if (data.text) {
+      const blob = new Blob([data.text], {type:'text/plain'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'scene_'+sid+'.txt'; a.click();
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  window._posExportJson = async function() {
+    const sid = $('posOutputSceneSelect').value;
+    if (!sid) { alert('Select a scene first.'); return; }
+    const data = await apiPost('/api/pos/scenes/'+sid+'/export/json', {});
+    if (data.data) {
+      const blob = new Blob([JSON.stringify(data.data, null, 2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'scene_'+sid+'.json'; a.click();
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  // ---- USE IN VIDEO (Integration) ----
+  window._posUseInVideo = async function() {
+    const sid = $('posOutputSceneSelect').value;
+    if (!sid) { alert('Select a scene first.'); return; }
+    // Assemble if not done yet
+    if (!_posLastAssembly || _posLastAssembly.sceneId !== sid) {
+      _posLastAssembly = await apiGet('/api/pos/scenes/'+sid+'/assemble');
+    }
+    const text = _posLastAssembly.text || '';
+    if (!text) { alert('No assembled prompt text to use.'); return; }
+    // Switch to manual mode and create a scene with this prompt
+    window._setMode('manual');
+    // Wait for manual mode to load, then auto-create a scene
+    setTimeout(async () => {
+      const result = await apiPost('/api/manual/scene', { prompt: text, notes: 'From Prompt OS scene: ' + (_posLastAssembly.sceneName||sid) });
+      if (result.ok || result.id) {
+        loadManualScenes();
+        alert('Scene created in Manual Mode with the assembled prompt!');
+      } else {
+        alert('Could not create scene: ' + (result.error||'unknown error'));
+      }
+    }, 500);
   };
 
   // ===================== INIT =====================

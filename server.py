@@ -72,6 +72,12 @@ from lib.prompt_assistant import (
     extract_palette,
 )
 from lib.storyboard_generator import generate_storyboard
+from lib.prompt_os import PromptOS
+
+# Prompt OS singleton
+_prompt_os = PromptOS()
+PROMPT_OS_DATA_DIR = os.path.join(OUTPUT_DIR, "prompt_os")
+os.makedirs(PROMPT_OS_DATA_DIR, exist_ok=True)
 
 PORT = 3849
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1360,6 +1366,85 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/project/reset":
             self._handle_project_reset()
 
+        # ──── Prompt OS GET routes ────
+        elif path == "/api/pos/dashboard":
+            self._send_json(_prompt_os.get_dashboard())
+
+        elif path == "/api/pos/prompts":
+            qs = urllib.parse.parse_qs(parsed.query)
+            category = qs.get("category", [None])[0]
+            self._send_json({"prompts": _prompt_os.get_prompts(category)})
+
+        elif re.match(r'^/api/pos/prompts/([^/]+)$', path):
+            m = re.match(r'^/api/pos/prompts/([^/]+)$', path)
+            rec = _prompt_os.get_prompt(m.group(1))
+            if rec:
+                self._send_json(rec)
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif path == "/api/pos/characters":
+            self._send_json({"characters": _prompt_os.get_characters()})
+
+        elif re.match(r'^/api/pos/characters/([^/]+)$', path):
+            m = re.match(r'^/api/pos/characters/([^/]+)$', path)
+            rec = _prompt_os.get_character(m.group(1))
+            if rec:
+                self._send_json(rec)
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif path == "/api/pos/costumes":
+            qs = urllib.parse.parse_qs(parsed.query)
+            char_id = qs.get("characterId", [None])[0]
+            self._send_json({"costumes": _prompt_os.get_costumes(char_id)})
+
+        elif re.match(r'^/api/pos/costumes/([^/]+)$', path):
+            m = re.match(r'^/api/pos/costumes/([^/]+)$', path)
+            rec = _prompt_os.get_costume(m.group(1))
+            if rec:
+                self._send_json(rec)
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif path == "/api/pos/environments":
+            self._send_json({"environments": _prompt_os.get_environments()})
+
+        elif re.match(r'^/api/pos/environments/([^/]+)$', path):
+            m = re.match(r'^/api/pos/environments/([^/]+)$', path)
+            rec = _prompt_os.get_environment(m.group(1))
+            if rec:
+                self._send_json(rec)
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif path == "/api/pos/scenes":
+            self._send_json({"scenes": _prompt_os.get_scenes()})
+
+        elif re.match(r'^/api/pos/scenes/([^/]+)/assemble$', path):
+            m = re.match(r'^/api/pos/scenes/([^/]+)/assemble$', path)
+            result = _prompt_os.assemble_prompt(m.group(1))
+            self._send_json(result)
+
+        elif re.match(r'^/api/pos/scenes/([^/]+)/validate$', path):
+            m = re.match(r'^/api/pos/scenes/([^/]+)/validate$', path)
+            result = _prompt_os.validate_assembly(m.group(1))
+            self._send_json({"validations": result})
+
+        elif re.match(r'^/api/pos/scenes/([^/]+)$', path):
+            m = re.match(r'^/api/pos/scenes/([^/]+)$', path)
+            rec = _prompt_os.get_scene(m.group(1))
+            if rec:
+                self._send_json(rec)
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif path == "/api/pos/style-locks":
+            self._send_json({"styleLocks": _prompt_os.get_style_locks()})
+
+        elif path == "/api/pos/world-rules":
+            self._send_json({"worldRules": _prompt_os.get_world_rules()})
+
         else:
             self.send_error(404)
 
@@ -1660,6 +1745,52 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/embed-code":
             self._handle_embed_code()
 
+        # ──── Prompt OS POST routes ────
+        elif path == "/api/pos/prompts":
+            body = json.loads(self._read_body())
+            rec = _prompt_os.create_prompt(body)
+            self._send_json({"ok": True, "prompt": rec})
+
+        elif path == "/api/pos/characters":
+            body = json.loads(self._read_body())
+            rec = _prompt_os.create_character(body)
+            self._send_json({"ok": True, "character": rec})
+
+        elif path == "/api/pos/costumes":
+            body = json.loads(self._read_body())
+            rec = _prompt_os.create_costume(body)
+            self._send_json({"ok": True, "costume": rec})
+
+        elif path == "/api/pos/environments":
+            body = json.loads(self._read_body())
+            rec = _prompt_os.create_environment(body)
+            self._send_json({"ok": True, "environment": rec})
+
+        elif path == "/api/pos/scenes":
+            body = json.loads(self._read_body())
+            rec = _prompt_os.create_scene(body)
+            self._send_json({"ok": True, "scene": rec})
+
+        elif re.match(r'^/api/pos/scenes/([^/]+)/export/text$', path):
+            m = re.match(r'^/api/pos/scenes/([^/]+)/export/text$', path)
+            text = _prompt_os.export_scene_text(m.group(1))
+            self._send_json({"ok": True, "text": text})
+
+        elif re.match(r'^/api/pos/scenes/([^/]+)/export/json$', path):
+            m = re.match(r'^/api/pos/scenes/([^/]+)/export/json$', path)
+            data = _prompt_os.export_scene_json(m.group(1))
+            self._send_json({"ok": True, "data": data})
+
+        elif path == "/api/pos/style-locks":
+            body = json.loads(self._read_body())
+            locks = _prompt_os.set_style_locks(body.get("styleLocks", []))
+            self._send_json({"ok": True, "styleLocks": locks})
+
+        elif path == "/api/pos/world-rules":
+            body = json.loads(self._read_body())
+            rules = _prompt_os.set_world_rules(body.get("worldRules", []))
+            self._send_json({"ok": True, "worldRules": rules})
+
         else:
             self.send_error(404)
 
@@ -1670,6 +1801,55 @@ class Handler(BaseHTTPRequestHandler):
         if re.match(r'^/api/manual/scene/([^/]+)$', path):
             m = re.match(r'^/api/manual/scene/([^/]+)$', path)
             self._handle_manual_update_scene(m.group(1))
+
+        # ──── Prompt OS PUT routes ────
+        elif re.match(r'^/api/pos/prompts/([^/]+)$', path):
+            m = re.match(r'^/api/pos/prompts/([^/]+)$', path)
+            body = json.loads(self._read_body())
+            rec = _prompt_os.update_prompt(m.group(1), body)
+            if rec and "error" in rec:
+                self._send_json(rec, 403)
+            elif rec:
+                self._send_json({"ok": True, "prompt": rec})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif re.match(r'^/api/pos/characters/([^/]+)$', path):
+            m = re.match(r'^/api/pos/characters/([^/]+)$', path)
+            body = json.loads(self._read_body())
+            rec = _prompt_os.update_character(m.group(1), body)
+            if rec:
+                self._send_json({"ok": True, "character": rec})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif re.match(r'^/api/pos/costumes/([^/]+)$', path):
+            m = re.match(r'^/api/pos/costumes/([^/]+)$', path)
+            body = json.loads(self._read_body())
+            rec = _prompt_os.update_costume(m.group(1), body)
+            if rec:
+                self._send_json({"ok": True, "costume": rec})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif re.match(r'^/api/pos/environments/([^/]+)$', path):
+            m = re.match(r'^/api/pos/environments/([^/]+)$', path)
+            body = json.loads(self._read_body())
+            rec = _prompt_os.update_environment(m.group(1), body)
+            if rec:
+                self._send_json({"ok": True, "environment": rec})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif re.match(r'^/api/pos/scenes/([^/]+)$', path):
+            m = re.match(r'^/api/pos/scenes/([^/]+)$', path)
+            body = json.loads(self._read_body())
+            rec = _prompt_os.update_scene(m.group(1), body)
+            if rec:
+                self._send_json({"ok": True, "scene": rec})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
         else:
             self.send_error(404)
 
@@ -1683,6 +1863,43 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/api/references/"):
             name = urllib.parse.unquote(path[len("/api/references/"):])
             self._handle_delete_reference(name)
+
+        # ──── Prompt OS DELETE routes ────
+        elif re.match(r'^/api/pos/prompts/([^/]+)$', path):
+            m = re.match(r'^/api/pos/prompts/([^/]+)$', path)
+            if _prompt_os.delete_prompt(m.group(1)):
+                self._send_json({"ok": True})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif re.match(r'^/api/pos/characters/([^/]+)$', path):
+            m = re.match(r'^/api/pos/characters/([^/]+)$', path)
+            if _prompt_os.delete_character(m.group(1)):
+                self._send_json({"ok": True})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif re.match(r'^/api/pos/costumes/([^/]+)$', path):
+            m = re.match(r'^/api/pos/costumes/([^/]+)$', path)
+            if _prompt_os.delete_costume(m.group(1)):
+                self._send_json({"ok": True})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif re.match(r'^/api/pos/environments/([^/]+)$', path):
+            m = re.match(r'^/api/pos/environments/([^/]+)$', path)
+            if _prompt_os.delete_environment(m.group(1)):
+                self._send_json({"ok": True})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif re.match(r'^/api/pos/scenes/([^/]+)$', path):
+            m = re.match(r'^/api/pos/scenes/([^/]+)$', path)
+            if _prompt_os.delete_scene(m.group(1)):
+                self._send_json({"ok": True})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
         else:
             self.send_error(404)
 
