@@ -1164,6 +1164,8 @@
     border: 1px solid var(--border);
   }
 /* ---- Lyrics Sync ---- */  .lyrics-textarea {    width: 100%; background: var(--bg); border: 1px solid var(--border);    border-radius: 4px; padding: 12px 14px; color: var(--text);    font-family: inherit; font-size: 12px; resize: vertical;    min-height: 100px; line-height: 1.6;  }  .lyrics-textarea:focus { outline: none; border-color: var(--cyan); }  .lyrics-textarea::placeholder { color: var(--text-dim); }  .lyrics-mode-toggle { display: flex; gap: 0; margin-bottom: 12px; }  .lyrics-mode-btn {    padding: 6px 16px; font-family: inherit; font-size: 10px;    letter-spacing: 2px; text-transform: uppercase;    border: 1px solid var(--border); background: transparent;    color: var(--text-dim); cursor: pointer; transition: all 0.3s;  }  .lyrics-mode-btn:first-child { border-radius: 4px 0 0 4px; }  .lyrics-mode-btn:last-child { border-radius: 0 4px 4px 0; }  .lyrics-mode-btn.active { background: rgba(0,212,255,0.1); border-color: var(--cyan); color: var(--cyan); }  .lyrics-timestamps { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 200px; overflow-y: auto; }  .lyrics-ts-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }  .lyrics-ts-row .ts-line { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }  .lyrics-ts-input {    width: 70px; background: var(--bg); border: 1px solid var(--border);    border-radius: 3px; padding: 4px 6px; color: var(--amber);    font-family: inherit; font-size: 11px; text-align: right;  }  .lyrics-ts-input:focus { outline: none; border-color: var(--cyan); }  /* ---- Style Lock ---- */  .style-lock-bar {    display: flex; align-items: center; gap: 10px; margin-top: 10px;    padding: 10px 14px; background: var(--bg);    border: 1px solid var(--border); border-radius: 4px;  }  .style-lock-toggle { position: relative; width: 36px; height: 20px; cursor: pointer; }  .style-lock-toggle input { display: none; }  .style-lock-toggle .slider {    position: absolute; inset: 0; background: var(--border);    border-radius: 10px; transition: all 0.3s;  }  .style-lock-toggle .slider::after {    content: ""; position: absolute; width: 16px; height: 16px;    border-radius: 50%; background: var(--text-dim);    top: 2px; left: 2px; transition: all 0.3s;  }  .style-lock-toggle input:checked + .slider { background: var(--cyan-dim); }  .style-lock-toggle input:checked + .slider::after { background: var(--cyan); transform: translateX(16px); }  .style-lock-input {    flex: 1; background: transparent; border: none;    color: var(--cyan); font-family: inherit; font-size: 11px; letter-spacing: 1px;  }  .style-lock-input:focus { outline: none; }  .style-lock-input::placeholder { color: var(--text-dim); }  .style-lock-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; white-space: nowrap; }  /* ---- Aspect Ratio / Batch Export ---- */  .aspect-select {    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;    padding: 6px 10px; color: var(--text); font-family: inherit; font-size: 11px;    cursor: pointer; appearance: none; -webkit-appearance: none;    padding-right: 24px;  }  .aspect-select:focus { outline: none; border-color: var(--cyan); }  .aspect-select option { background: var(--surface); color: var(--text); }  .export-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }  .export-item {    display: flex; align-items: center; justify-content: space-between;    padding: 8px 12px; background: var(--bg);    border: 1px solid var(--border); border-radius: 4px; font-size: 11px;  }  .export-item .export-name { color: var(--cyan); letter-spacing: 1px; }  .export-item .export-size { color: var(--text-dim); }
+  /* ---- New Feature Styles ---- */
+  .btn-gen-photo, .btn-upscale { transition: all 0.2s; }
 </style>
 </head>
 <body>
@@ -1258,6 +1260,9 @@
         Tip: select a preset above to auto-fill, or type your own. Click "Enhance" to add cinematic keywords.
         Presets can be combined with custom text. Each scene prompt will be varied automatically based on song energy.
       </div>
+      <div style="margin-top:8px;">
+        <button class="btn btn-small btn-amber" onclick="window._suggestGenre()" title="Auto-suggest style based on BPM and energy from audio analysis">Auto-Suggest from Audio</button>
+      </div>
     </div>
   </div>
 
@@ -1334,6 +1339,25 @@
         <button class="btn btn-small btn-amber" id="batchExportBtn" onclick="window._batchExport()">Export All Formats</button>
       </div>
       <div class="export-list" id="exportList"></div>
+      <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px;">
+        <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:2px;margin-bottom:8px;">Post-Production</div>
+        <div class="btn-row" style="justify-content:flex-start;gap:8px;">
+          <button class="btn btn-small" onclick="window._applyBeatSync('auto')">Beat Sync</button>
+          <button class="btn btn-small" onclick="window._uploadWatermark()">Upload Watermark</button>
+          <button class="btn btn-small btn-amber" onclick="window._applyWatermark('auto')">Apply Watermark</button>
+          <button class="btn btn-small btn-magenta" onclick="window._addCredits('auto')">Add Credits</button>
+          <button class="btn btn-small" onclick="window._extractThumbnail('auto')">Thumbnail</button>
+        </div>
+        <div style="margin-top:8px;">
+          <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:2px;margin-bottom:8px;">Social Export</div>
+          <div class="btn-row" style="justify-content:flex-start;gap:8px;">
+            <button class="btn btn-small" onclick="window._socialExport('youtube','auto')">YouTube</button>
+            <button class="btn btn-small btn-magenta" onclick="window._socialExport('tiktok','auto')">TikTok</button>
+            <button class="btn btn-small btn-amber" onclick="window._socialExport('instagram','auto')">Instagram</button>
+            <button class="btn btn-small" onclick="window._socialExport('twitter','auto')">Twitter/X</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1482,6 +1506,57 @@
           <button class="btn btn-small btn-amber" onclick="window._batchExport()">Export All Formats</button>
         </div>
         <div class="export-list" id="manualExportList"></div>
+      </div>
+    </div>
+
+    <!-- Multi-Track Audio Panel -->
+    <div class="panel">
+      <div class="panel-header"><span class="dot dot-magenta"></span> Multi-Track Audio</div>
+      <div class="panel-body">
+        <div class="hint" style="margin-bottom:10px;">
+          Upload separate vocal and instrumental tracks. Set mix levels per track.
+        </div>
+        <div class="btn-row" style="justify-content:flex-start;">
+          <button class="btn btn-small" onclick="window._uploadAudioTracks()">Upload Vocal + Instrumental</button>
+          <button class="btn btn-small btn-amber" onclick="window._mixAudioTracks()">Mix Audio</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Post-Production Panel -->
+    <div class="panel">
+      <div class="panel-header"><span class="dot"></span> Post-Production</div>
+      <div class="panel-body">
+        <div class="hint" style="margin-bottom:10px;">
+          Apply finishing touches to your final video after stitching.
+        </div>
+        <div class="btn-row" style="justify-content:flex-start;gap:8px;">
+          <button class="btn btn-small" onclick="window._applyBeatSync('manual')" title="Add beat-synced flash cuts on detected beats">Beat Sync</button>
+          <button class="btn btn-small" onclick="window._uploadWatermark()" title="Upload a PNG watermark logo">Upload Watermark</button>
+          <button class="btn btn-small btn-amber" onclick="window._applyWatermark('manual')" title="Apply uploaded watermark to final video">Apply Watermark</button>
+          <button class="btn btn-small btn-magenta" onclick="window._addCredits('manual')" title="Add scrolling credits roll to end of video">Add Credits</button>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-small" onclick="window._extractThumbnail('manual')" title="Extract a frame as thumbnail">Extract Thumbnail</button>
+          <button class="btn btn-small btn-amber" onclick="window._generateThumbnail()" title="Generate a custom thumbnail with AI">AI Thumbnail</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Social Platform Export Panel -->
+    <div class="panel">
+      <div class="panel-header"><span class="dot dot-magenta"></span> Share / Social Export</div>
+      <div class="panel-body">
+        <div class="hint" style="margin-bottom:10px;">
+          Export your video optimized for each social platform. Auto-trims and reformats.
+        </div>
+        <div class="btn-row" style="justify-content:flex-start;gap:8px;">
+          <button class="btn btn-small" onclick="window._socialExport('youtube','manual')">YouTube (16:9)</button>
+          <button class="btn btn-small btn-magenta" onclick="window._socialExport('tiktok','manual')">TikTok (9:16)</button>
+          <button class="btn btn-small btn-amber" onclick="window._socialExport('instagram','manual')">Instagram Reels</button>
+          <button class="btn btn-small" onclick="window._socialExport('twitter','manual')">Twitter/X</button>
+        </div>
+        <div class="export-list" id="socialExportList" style="margin-top:12px;"></div>
       </div>
     </div>
 
@@ -2156,6 +2231,7 @@
   const OVERLAY_POSITIONS = ['top','center','bottom'];
   const OVERLAY_SIZES = ['small','medium','large'];
   const OVERLAY_COLORS = ['white','cyan','orange'];
+  const CAMERA_PRESETS = ['static','pan_left','pan_right','zoom_in','zoom_out','orbit','tracking'];
 
   // ---- Manual audio upload ----
   manualUploadZone.addEventListener('click', () => manualFileInput.click());
@@ -2337,6 +2413,12 @@
                 </div>
                 <input type="file" class="msc-photo-input" id="msc-photo-input-${s.id}" accept="image/*"
                        onchange="window._manualUploadPhoto('${s.id}', this.files[0])">
+                <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">
+                  ${(s.photo_urls || []).map((url, pi) => '<img src="' + url + '&t=' + Date.now() + '" style="width:36px;height:36px;object-fit:cover;border-radius:3px;border:1px solid var(--border);" alt="Mood ' + (pi+1) + '">').join('')}
+                  ${(s.photo_urls || []).length < 4 ? '<button class="btn btn-small" style="padding:2px 6px;font-size:9px;" onclick="document.getElementById(\'msc-photos-input-' + s.id + '\').click()" title="Add mood board photos (up to 4)">+</button>' : ''}
+                </div>
+                <input type="file" class="msc-photo-input" id="msc-photos-input-${s.id}" accept="image/*" multiple
+                       onchange="window._manualUploadMoodPhotos('${s.id}', this.files)">
               </div>
               <div class="msc-fields" style="flex:1;">
                 <textarea class="msc-prompt-input" id="msc-prompt-${s.id}" placeholder="Describe what this scene should look like... The photo and prompt together influence generation."
@@ -2352,6 +2434,13 @@
               <span class="msc-label" style="margin-left:8px;">Speed:</span>
               <select class="msc-select" onchange="window._manualUpdateScene('${s.id}', {speed: parseFloat(this.value)})">
                 ${speedOptions}
+              </select>
+              <span class="msc-label" style="margin-left:8px;">Camera:</span>
+              <select class="msc-select" onchange="window._manualUpdateScene('${s.id}', {camera_movement: this.value})">
+                ${CAMERA_PRESETS.map(cp => {
+                  const sel = (cp === (s.camera_movement || 'zoom_in')) ? 'selected' : '';
+                  return '<option value="' + cp + '" ' + sel + '>' + cp.replace(/_/g, ' ') + '</option>';
+                }).join('')}
               </select>
             </div>
             <div class="msc-controls-row">
@@ -2379,6 +2468,7 @@
             <div class="msc-actions">
               <button class="btn btn-small" onclick="window._manualGenerateScene('${s.id}')">Generate Clip</button>
               ${hasPhoto ? `<button class="btn-gen-photo" onclick="window._generateFromPhoto('${s.id}')" title="Generate video from photo using styled image + Ken Burns">Generate from Photo</button>` : ''}
+              ${hasPhoto ? `<button class="btn btn-small btn-amber" onclick="window._autoDescribePhoto('${s.id}')" title="AI describes photo for prompt">Auto Describe</button>` : ''}
               <button class="btn btn-small btn-amber" onclick="window._manualSplitScene('${s.id}')">Split</button>
               ${hasClip ? `<button class="btn btn-small btn-amber" onclick="window._manualPreviewClip('${s.id}')">Preview</button>` : ''}
               ${hasClip ? `<button class="btn-upscale" onclick="window._upscaleScene('${s.id}', this)" title="Upscale clip 2x with lanczos">2x</button>` : ''}
@@ -3389,6 +3479,308 @@
       }
     } catch (e) { /* ignore */ }
   })();
+
+  // ===================== FEATURE 1: AUTO-DESCRIBE PHOTO =====================
+
+  window._autoDescribePhoto = async function(sceneId) {
+    var statusEl = document.getElementById('msc-status-' + sceneId);
+    if (statusEl) statusEl.textContent = 'Describing photo...';
+    try {
+      var resp = await fetch('/api/manual/scene/' + sceneId + '/describe-photo', { method: 'POST' });
+      var data = await resp.json();
+      if (data.ok && data.description) {
+        var promptEl = document.getElementById('msc-prompt-' + sceneId);
+        if (promptEl) {
+          promptEl.value = data.description;
+          window._manualUpdateScene(sceneId, { prompt: data.description });
+        }
+        if (statusEl) statusEl.textContent = 'Described!';
+      } else {
+        if (statusEl) statusEl.textContent = 'Error: ' + (data.error || 'failed');
+      }
+    } catch (e) {
+      if (statusEl) statusEl.textContent = 'Error: ' + e.message;
+    }
+  };
+
+  // ===================== FEATURE 8: MULTI-PHOTO MOOD BOARD =====================
+
+  window._manualUploadMoodPhotos = async function(sceneId, files) {
+    if (!files || files.length === 0) return;
+    var statusEl = document.getElementById('msc-status-' + sceneId);
+    if (statusEl) statusEl.textContent = 'Uploading mood photos...';
+
+    var formData = new FormData();
+    for (var i = 0; i < Math.min(files.length, 4); i++) {
+      formData.append('photo_' + i, files[i], files[i].name);
+    }
+
+    try {
+      var resp = await fetch('/api/manual/scene/' + sceneId + '/photos', {
+        method: 'POST',
+        body: formData,
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        if (statusEl) statusEl.textContent = data.photos_added + ' photos added';
+        await loadManualScenes();
+      } else {
+        if (statusEl) statusEl.textContent = 'Error: ' + (data.error || 'failed');
+      }
+    } catch (e) {
+      if (statusEl) statusEl.textContent = 'Error: ' + e.message;
+    }
+  };
+
+  // ===================== FEATURE 3: BEAT-SYNC HARD CUTS =====================
+
+  window._applyBeatSync = async function(target) {
+    target = target || 'manual';
+    if (!confirm('Apply beat-synced cuts to the final video? This modifies the video in-place.')) return;
+    try {
+      var resp = await fetch('/api/beat-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: target }),
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        alert('Beat-sync cuts applied! ' + data.beats_used + ' beats processed.');
+      } else {
+        alert('Error: ' + (data.error || 'failed'));
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  // ===================== FEATURE 4: WATERMARK =====================
+
+  window._uploadWatermark = async function() {
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png';
+    input.onchange = async function() {
+      if (!input.files[0]) return;
+      var formData = new FormData();
+      formData.append('file', input.files[0]);
+      try {
+        var resp = await fetch('/api/watermark/upload', { method: 'POST', body: formData });
+        var data = await resp.json();
+        if (data.ok) alert('Watermark uploaded!');
+        else alert('Error: ' + (data.error || 'failed'));
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
+    };
+    input.click();
+  };
+
+  window._applyWatermark = async function(target) {
+    target = target || 'manual';
+    var position = prompt('Position? (top_left, top_right, bottom_left, bottom_right)', 'bottom_right');
+    var opacity = prompt('Opacity? (10-100)', '50');
+    if (!position || !opacity) return;
+    try {
+      var resp = await fetch('/api/watermark/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ position: position, opacity: parseInt(opacity), target: target }),
+      });
+      var data = await resp.json();
+      if (data.ok) alert('Watermark applied!');
+      else alert('Error: ' + (data.error || 'failed'));
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  // ===================== FEATURE 5: CREDITS ROLL =====================
+
+  window._addCredits = async function(target) {
+    target = target || 'manual';
+    var title = prompt('Song title:', '');
+    var artist = prompt('Artist name:', '');
+    var extra = prompt('Extra credits text (optional):', '');
+    try {
+      var resp = await fetch('/api/credits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title || '', artist: artist || '', extra_text: extra || '', target: target }),
+      });
+      var data = await resp.json();
+      if (data.ok) alert('Credits roll added to end of video!');
+      else alert('Error: ' + (data.error || 'failed'));
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  // ===================== FEATURE 6: THUMBNAIL GENERATOR =====================
+
+  window._extractThumbnail = async function(target) {
+    target = target || 'manual';
+    var ts = prompt('Timestamp in seconds (-1 for auto):', '-1');
+    try {
+      var resp = await fetch('/api/thumbnail', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timestamp: parseFloat(ts || '-1'), target: target }),
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        window.open('/api/thumbnail?t=' + Date.now(), '_blank');
+      } else {
+        alert('Error: ' + (data.error || 'failed'));
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  window._generateThumbnail = async function() {
+    var thumbPrompt = prompt('Describe the thumbnail you want:', '');
+    if (!thumbPrompt) return;
+    try {
+      var resp = await fetch('/api/thumbnail/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: thumbPrompt }),
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        window.open('/api/thumbnail?t=' + Date.now(), '_blank');
+      } else {
+        alert('Error: ' + (data.error || 'failed'));
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  // ===================== FEATURE 7: GENRE SUGGESTION =====================
+
+  window._suggestGenre = async function() {
+    try {
+      var analysis = gen_state_cache && gen_state_cache.analysis;
+      var bpm = 120, energy = 0.5;
+      if (analysis) {
+        bpm = analysis.bpm || 120;
+        var sections = analysis.sections || [];
+        if (sections.length) {
+          energy = sections.reduce(function(sum, s) { return sum + (s.energy || 0.5); }, 0) / sections.length;
+        }
+      }
+      var resp = await fetch('/api/genre-suggest?bpm=' + bpm + '&energy=' + energy);
+      var data = await resp.json();
+      if (data.ok) {
+        var msg = 'Detected: ' + data.genre + ' (' + data.bpm_range + ')\\n\\n' +
+                  'Suggested style: ' + data.style + '\\n\\nApply this style?';
+        if (confirm(msg)) {
+          styleInput.value = data.style;
+        }
+      }
+    } catch (e) {
+      alert('Genre suggestion failed: ' + e.message);
+    }
+  };
+
+  var gen_state_cache = null;
+
+  // ===================== FEATURE 9: MULTI-TRACK AUDIO =====================
+
+  window._uploadAudioTracks = async function() {
+    var vocalInput = document.createElement('input');
+    vocalInput.type = 'file';
+    vocalInput.accept = 'audio/*';
+    vocalInput.onchange = function() {
+      if (!vocalInput.files[0]) return;
+      var instrInput = document.createElement('input');
+      instrInput.type = 'file';
+      instrInput.accept = 'audio/*';
+      instrInput.onchange = async function() {
+        if (!instrInput.files[0]) return;
+        var formData = new FormData();
+        formData.append('vocal', vocalInput.files[0], vocalInput.files[0].name);
+        formData.append('instrumental', instrInput.files[0], instrInput.files[0].name);
+        try {
+          var resp = await fetch('/api/audio/upload-tracks', { method: 'POST', body: formData });
+          var data = await resp.json();
+          if (data.ok) {
+            alert('Audio tracks uploaded! Use Mix Audio to combine them.');
+          } else {
+            alert('Error: ' + (data.error || 'failed'));
+          }
+        } catch (e) {
+          alert('Error: ' + e.message);
+        }
+      };
+      alert('Now select the INSTRUMENTAL track...');
+      instrInput.click();
+    };
+    alert('First select the VOCAL track...');
+    vocalInput.click();
+  };
+
+  window._mixAudioTracks = async function() {
+    var vocalLevel = prompt('Vocal level (0-100):', '50');
+    var instrLevel = prompt('Instrumental level (0-100):', '50');
+    if (vocalLevel === null || instrLevel === null) return;
+    try {
+      var resp = await fetch('/api/audio/mix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vocal_level: parseInt(vocalLevel), instrumental_level: parseInt(instrLevel) }),
+      });
+      var data = await resp.json();
+      if (data.ok) alert('Audio mixed! The combined track is now set as the audio source.');
+      else alert('Error: ' + (data.error || 'failed'));
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  // ===================== FEATURE 10: SOCIAL EXPORT =====================
+
+  window._socialExport = async function(platform, target) {
+    target = target || 'manual';
+    try {
+      var resp = await fetch('/api/social-export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform: platform, target: target }),
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        alert('Exported for ' + platform + ' (' + data.size_mb + ' MB)');
+        window._loadSocialExports();
+      } else {
+        alert('Error: ' + (data.error || 'failed'));
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  window._loadSocialExports = async function() {
+    try {
+      var resp = await fetch('/api/social-exports');
+      var data = await resp.json();
+      var container = document.getElementById('socialExportList');
+      if (!container) return;
+      if (!data.exports || !data.exports.length) {
+        container.innerHTML = '<div style="font-size:11px;color:var(--text-dim);">No exports yet.</div>';
+        return;
+      }
+      container.innerHTML = data.exports.map(function(e) {
+        return '<div class="export-item">' +
+          '<span class="export-name">' + e.filename + '</span>' +
+          '<span class="export-size">' + e.size_mb + ' MB</span>' +
+          '<a class="btn btn-small" href="' + e.url + '" download>Download</a>' +
+          '</div>';
+      }).join('');
+    } catch (e) { /* ignore */ }
+  };
 
 })();
 </script>

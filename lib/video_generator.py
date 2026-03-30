@@ -2,8 +2,11 @@
 Video generator using the Grok (xAI) API.
 Handles video generation requests, async polling, downloads,
 and falls back to image generation + Ken Burns if video fails.
+Supports photo+text style transfer via Grok image API with base64.
+Supports camera movement presets for Ken Burns animations.
 """
 
+import base64
 import os
 import sys
 import time
@@ -16,6 +19,58 @@ API_BASE = "https://api.x.ai/v1"
 POLL_INTERVAL = 5       # seconds between status checks
 POLL_TIMEOUT = 300      # max seconds to wait for a single video
 MAX_CONCURRENT = 3      # max parallel video generations
+
+# ---- Camera movement presets for Ken Burns ----
+# Each preset maps to an ffmpeg crop animation expression
+# Format: (crop_x_expr, crop_y_expr) applied on a 3840x2160 -> 1920x1080 crop
+CAMERA_PRESETS = {
+    "static": {
+        "desc": "No camera movement",
+        "crop_x": "'960'",
+        "crop_y": "'540'",
+    },
+    "pan_left": {
+        "desc": "Camera slowly panning left",
+        "crop_x": f"'1920-1920*min(t/{{dur}},1)'",
+        "crop_y": "'540'",
+    },
+    "pan_right": {
+        "desc": "Camera slowly panning right",
+        "crop_x": f"'1920*min(t/{{dur}},1)'",
+        "crop_y": "'540'",
+    },
+    "zoom_in": {
+        "desc": "Camera slowly zooming in",
+        "crop_x": f"'960-960*min(t/{{dur}},1)'",
+        "crop_y": f"'540-540*min(t/{{dur}},1)'",
+    },
+    "zoom_out": {
+        "desc": "Camera slowly zooming out from center",
+        "crop_x": f"'960*min(t/{{dur}},1)'",
+        "crop_y": f"'540*min(t/{{dur}},1)'",
+    },
+    "orbit": {
+        "desc": "Camera orbiting around subject",
+        "crop_x": f"'960+480*sin(2*PI*t/{{dur}})'",
+        "crop_y": f"'540+270*cos(2*PI*t/{{dur}})'",
+    },
+    "tracking": {
+        "desc": "Camera tracking diagonally",
+        "crop_x": f"'1920*min(t/{{dur}},1)'",
+        "crop_y": f"'1080*min(t/{{dur}},1)'",
+    },
+}
+
+# Camera movement prompt suffixes for AI generation
+CAMERA_PROMPT_SUFFIXES = {
+    "static": "",
+    "pan_left": ", camera slowly panning left",
+    "pan_right": ", camera slowly panning right",
+    "zoom_in": ", camera slowly zooming in",
+    "zoom_out": ", camera slowly zooming out",
+    "orbit": ", camera orbiting around subject",
+    "tracking": ", camera tracking shot following subject",
+}
 
 
 def _get_api_key() -> str:
@@ -107,14 +162,127 @@ def _generate_image(prompt: str) -> str:
     return images[0]["url"]
 
 
-def _ken_burns(image_path: str, output_path: str, duration: float = 8.0):
-    """Create a Ken Burns (slow zoom) video from a still image using ffmpeg."""
+def _generate_image_from_photo(prompt: str, photo_path: str) -> str:
+    """
+    Generate a styled image via Grok image API with a source photo.
+    Sends the photo as base64 data URI for style transfer.
+    Returns the styled image URL.
+    """
+    # Read photo and convert to base64 data URI
+    with open(photo_path, "rb") as f:
+        photo_bytes = f.read()
+
+    # Detect MIME type from extension
+    ext = os.path.splitext(photo_path)[1].lower()
+    mime_map = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }
+    mime = mime_map.get(ext, "image/jpeg")
+    b64_data = base64.b64encode(photo_bytes).decode("ascii")
+    data_uri = f"data:{mime};base64,{b64_data}"
+
+    # Call Grok image API with image parameter for style transfer
+    resp = requests.post(
+        f"{API_BASE}/images/generations",
+        headers=_headers(),
+        json={
+            "model": "grok-imagine-image",
+            "prompt": prompt,
+            "image": data_uri,
+            "n": 1,
+        },
+        timeout=120,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    images = data.get("data", [])
+    if not images:
+        raise RuntimeError("No image returned from photo style transfer API")
+    return images[0]["url"]
+
+
+def describe_photo(photo_path: str) -> str:
+    """
+    Send a photo to the Grok vision API and get a detailed description
+    suitable for use as a video generation prompt.
+    Returns the description string.
+    """
+    # Read photo and convert to base64
+    with open(photo_path, "rb") as f:
+        photo_bytes = f.read()
+
+    ext = os.path.splitext(photo_path)[1].lower()
+    mime_map = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }
+    mime = mime_map.get(ext, "image/jpeg")
+    b64_data = base64.b64encode(photo_bytes).decode("ascii")
+    data_uri = f"data:{mime};base64,{b64_data}"
+
+    # Use Grok chat completions with vision
+    resp = requests.post(
+        f"{API_BASE}/chat/completions",
+        headers=_headers(),
+        json={
+            "model": "grok-2-vision-latest",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_uri},
+                        },
+                        {
+                            "type": "text",
+                            "text": (
+                                "Describe this image in vivid detail for use as a video generation prompt. "
+                                "Focus on: visual style, color palette, lighting, mood, subjects, environment, "
+                                "and atmosphere. Keep the description under 100 words, as a comma-separated list "
+                                "of visual descriptors. Do not use complete sentences."
+                            ),
+                        },
+                    ],
+                }
+            ],
+            "max_tokens": 200,
+        },
+        timeout=60,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    choices = data.get("choices", [])
+    if choices:
+        return choices[0]["message"]["content"].strip()
+    raise RuntimeError("No description returned from vision API")
+
+
+def _ken_burns(image_path: str, output_path: str, duration: float = 8.0,
+               camera: str = "zoom_in"):
+    """Create a Ken Burns (slow zoom/pan) video from a still image using ffmpeg.
+
+    Args:
+        image_path: path to source image
+        output_path: path for output video
+        duration: clip duration in seconds
+        camera: camera movement preset name
+    """
+    preset = CAMERA_PRESETS.get(camera, CAMERA_PRESETS["zoom_in"])
+    crop_x = preset["crop_x"].replace("{dur}", str(duration))
+    crop_y = preset["crop_y"].replace("{dur}", str(duration))
+
     cmd = [
         "ffmpeg", "-y",
         "-loop", "1", "-i", image_path,
         "-vf", (
-            f"scale=3840:2160,crop=1920:1080:"
-            f"'960-960*min(t/{duration},1)':'540-540*min(t/{duration},1)'"
+            f"scale=3840:2160,crop=1920:1080:{crop_x}:{crop_y}"
         ),
         "-t", str(duration),
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
@@ -133,6 +301,7 @@ def generate_scene(scene: dict, index: int, output_dir: str,
 
     Args:
         scene: dict with at least {prompt, duration}
+               optional: camera_movement (preset name)
         index: scene index (for naming)
         output_dir: directory to save clips
         progress_cb: optional callable(index, status_str)
@@ -144,6 +313,11 @@ def generate_scene(scene: dict, index: int, output_dir: str,
     clip_path = os.path.join(output_dir, f"clip_{index:03d}.mp4")
     prompt = scene["prompt"]
     duration = scene.get("duration", 8)
+    camera = scene.get("camera_movement", "zoom_in")
+
+    # Append camera movement to prompt for AI generation
+    camera_suffix = CAMERA_PROMPT_SUFFIXES.get(camera, "")
+    gen_prompt = prompt + camera_suffix if camera_suffix else prompt
 
     def _report(msg):
         if progress_cb:
@@ -156,7 +330,7 @@ def generate_scene(scene: dict, index: int, output_dir: str,
     # Try video generation first
     try:
         _report("submitting video request...")
-        request_id = _submit_video(prompt)
+        request_id = _submit_video(gen_prompt)
         _report(f"polling (id={request_id[:12]}...)")
         video_info = _poll_video(request_id)
         _report("downloading clip...")
@@ -167,12 +341,12 @@ def generate_scene(scene: dict, index: int, output_dir: str,
     except Exception as e:
         _report(f"video failed ({e}), falling back to image...")
 
-    # Fallback: image + Ken Burns
+    # Fallback: image + Ken Burns with camera preset
     try:
-        img_url = _generate_image(prompt)
+        img_url = _generate_image(gen_prompt)
         img_path = os.path.join(output_dir, f"img_{index:03d}.png")
         _download(img_url, img_path)
-        _ken_burns(img_path, clip_path, duration)
+        _ken_burns(img_path, clip_path, duration, camera=camera)
         _record("image")
         _report("done (image fallback)")
         return clip_path
@@ -182,14 +356,16 @@ def generate_scene(scene: dict, index: int, output_dir: str,
 
 
 def generate_from_photo(photo_path: str, prompt: str, duration: float,
-                        output_path: str, progress_cb=None) -> str:
+                        output_path: str, progress_cb=None,
+                        camera: str = "zoom_in") -> str:
     """
     Generate a video clip from a reference photo + text prompt.
+    Uses TRUE photo-to-video with style transfer via Grok image API.
 
     Pipeline:
-      1. Call Grok image API (grok-imagine-image) with the prompt
-         (referencing the photo's visual style)
-      2. Create a Ken Burns (zoom/pan) video from the resulting image
+      1. Read the photo, convert to base64 data URI
+      2. Send to Grok image API with prompt + base64 image for style transfer
+      3. Create Ken Burns video from the styled image with camera preset
 
     Args:
         photo_path: path to the uploaded reference photo
@@ -197,6 +373,7 @@ def generate_from_photo(photo_path: str, prompt: str, duration: float,
         duration: clip duration in seconds
         output_path: where to save the resulting video
         progress_cb: optional callable(status_str)
+        camera: camera movement preset name
 
     Returns:
         path to the generated video clip
@@ -207,27 +384,37 @@ def generate_from_photo(photo_path: str, prompt: str, duration: float,
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    # Build a prompt that references the photo style
-    photo_desc = os.path.splitext(os.path.basename(photo_path))[0].replace("_", " ").replace("-", " ")
-    styled_prompt = f"{prompt}, inspired by and matching the visual style of the reference image ({photo_desc})"
-
-    _report("generating styled image from photo + prompt...")
+    # Attempt 1: True style transfer with base64 photo
+    _report("sending photo to Grok for style transfer (base64)...")
     try:
-        img_url = _generate_image(styled_prompt)
-    except Exception as e:
-        _report(f"image generation failed ({e}), using original photo with Ken Burns...")
-        # Fall back to using the original photo directly
-        _ken_burns(photo_path, output_path, duration)
-        _report("done (original photo + Ken Burns)")
+        img_url = _generate_image_from_photo(prompt, photo_path)
+        img_path = output_path.replace(".mp4", "_styled.png")
+        _report("downloading styled image...")
+        _download(img_url, img_path)
+        _report("creating Ken Burns video from styled image...")
+        _ken_burns(img_path, output_path, duration, camera=camera)
+        _report("done (photo style transfer + Ken Burns)")
         return output_path
+    except Exception as e:
+        _report(f"style transfer failed ({e}), trying text-only generation...")
 
-    img_path = output_path.replace(".mp4", "_styled.png")
-    _report("downloading styled image...")
-    _download(img_url, img_path)
+    # Attempt 2: Generate image using text prompt referencing the photo
+    try:
+        photo_desc = os.path.splitext(os.path.basename(photo_path))[0].replace("_", " ").replace("-", " ")
+        styled_prompt = f"{prompt}, inspired by and matching the visual style of the reference image ({photo_desc})"
+        img_url = _generate_image(styled_prompt)
+        img_path = output_path.replace(".mp4", "_styled.png")
+        _report("downloading generated image...")
+        _download(img_url, img_path)
+        _ken_burns(img_path, output_path, duration, camera=camera)
+        _report("done (text-only generation + Ken Burns)")
+        return output_path
+    except Exception as e2:
+        _report(f"text generation failed ({e2}), using original photo with Ken Burns...")
 
-    _report("creating Ken Burns video from styled image...")
-    _ken_burns(img_path, output_path, duration)
-    _report("done (photo-to-video pipeline)")
+    # Attempt 3: Fall back to original photo directly
+    _ken_burns(photo_path, output_path, duration, camera=camera)
+    _report("done (original photo + Ken Burns)")
     return output_path
 
 

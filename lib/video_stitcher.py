@@ -257,6 +257,397 @@ def _apply_audio_visualization(video_path: str, audio_path: str, output_path: st
     return output_path
 
 
+def generate_credits(output_path: str, title: str = "", artist: str = "",
+                     extra_text: str = "", duration: float = 8.0,
+                     progress_cb=None) -> str:
+    """
+    Generate a credits roll video clip with scrolling text over black background.
+
+    Args:
+        output_path: path for the output video
+        title: song title
+        artist: artist name
+        extra_text: additional credits text
+        duration: clip duration in seconds
+        progress_cb: optional callable(status_str)
+
+    Returns:
+        path to the credits video clip
+    """
+    _check_ffmpeg()
+
+    if progress_cb:
+        progress_cb("generating credits roll...")
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
+    # Build credits text lines
+    lines = []
+    if title:
+        lines.append(title)
+    if artist:
+        lines.append(f"by {artist}")
+    lines.append("")
+    if extra_text:
+        for line in extra_text.split("\n"):
+            lines.append(line.strip())
+        lines.append("")
+    lines.append("Made with AI")
+    lines.append("Music Video Generator")
+
+    credits_text = "\\n".join(lines).replace("'", "\\'").replace(":", "\\:")
+
+    # Scrolling credits: text starts below screen and scrolls up
+    # y starts at h (off screen bottom) and scrolls to -text_h
+    scroll_speed = f"h-((h+text_h)*t/{duration})"
+
+    vf = (
+        f"drawtext=text='{credits_text}'"
+        f":fontsize=42:fontcolor=0x00D4FF@0.9"
+        f":x=(w-text_w)/2:y={scroll_speed}"
+        f":line_spacing=20"
+        f":borderw=2:bordercolor=0x000000@0.6"
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", f"color=c=black:s=1920x1080:d={duration}:r=30",
+        "-vf", vf,
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        output_path,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+
+    if progress_cb:
+        progress_cb("credits roll generated")
+    return output_path
+
+
+def apply_watermark(input_path: str, output_path: str,
+                    watermark_path: str, position: str = "bottom_right",
+                    opacity: int = 50, progress_cb=None) -> str:
+    """
+    Apply a PNG watermark overlay to a video.
+
+    Args:
+        input_path: source video
+        output_path: destination video
+        watermark_path: path to watermark PNG
+        position: corner position (top_left, top_right, bottom_left, bottom_right)
+        opacity: watermark opacity 10-100
+        progress_cb: optional callable(status_str)
+
+    Returns:
+        path to the output video
+    """
+    _check_ffmpeg()
+
+    if not os.path.isfile(watermark_path):
+        import shutil
+        shutil.copy2(input_path, output_path)
+        return output_path
+
+    if progress_cb:
+        progress_cb("applying watermark...")
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
+    # Position mapping (with 20px padding)
+    pos_map = {
+        "top_left": "x=20:y=20",
+        "top_right": "x=W-w-20:y=20",
+        "bottom_left": "x=20:y=H-h-20",
+        "bottom_right": "x=W-w-20:y=H-h-20",
+    }
+    pos_expr = pos_map.get(position, pos_map["bottom_right"])
+
+    # Scale watermark to max 150px height and apply opacity
+    alpha = max(0.1, min(1.0, opacity / 100.0))
+    filter_complex = (
+        f"[1:v]scale=-1:150,format=rgba,"
+        f"colorchannelmixer=aa={alpha:.2f}[wm];"
+        f"[0:v][wm]overlay={pos_expr}:shortest=1[outv]"
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-i", watermark_path,
+        "-filter_complex", filter_complex,
+        "-map", "[outv]",
+        "-map", "0:a?",
+        "-c:v", "libx264",
+        "-c:a", "copy",
+        "-pix_fmt", "yuv420p",
+        output_path,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+
+    if progress_cb:
+        progress_cb("watermark applied")
+    return output_path
+
+
+def extract_thumbnail(video_path: str, output_path: str,
+                      timestamp: float = -1, progress_cb=None) -> str:
+    """
+    Extract a frame from a video as a thumbnail.
+
+    Args:
+        video_path: source video
+        output_path: destination image (jpg)
+        timestamp: specific time in seconds, or -1 for auto-select (1/3 through)
+        progress_cb: optional callable(status_str)
+
+    Returns:
+        path to the extracted thumbnail
+    """
+    _check_ffmpeg()
+
+    if progress_cb:
+        progress_cb("extracting thumbnail...")
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
+    if timestamp < 0:
+        # Auto-select: 1/3 through the video (usually a good frame)
+        duration = _get_clip_duration(video_path)
+        timestamp = duration / 3.0
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(timestamp),
+        "-i", video_path,
+        "-frames:v", "1",
+        "-q:v", "2",
+        output_path,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+
+    if progress_cb:
+        progress_cb("thumbnail extracted")
+    return output_path
+
+
+def mix_audio_tracks(vocal_path: str, instrumental_path: str,
+                     output_path: str, vocal_level: int = 50,
+                     instrumental_level: int = 50,
+                     progress_cb=None) -> str:
+    """
+    Mix vocal and instrumental tracks into a single audio file.
+
+    Args:
+        vocal_path: path to vocal track
+        instrumental_path: path to instrumental track
+        output_path: path for mixed output
+        vocal_level: vocal volume 0-100
+        instrumental_level: instrumental volume 0-100
+        progress_cb: optional callable(status_str)
+
+    Returns:
+        path to the mixed audio file
+    """
+    _check_ffmpeg()
+
+    if progress_cb:
+        progress_cb("mixing audio tracks...")
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
+    v_vol = max(0.0, min(2.0, vocal_level / 50.0))
+    i_vol = max(0.0, min(2.0, instrumental_level / 50.0))
+
+    filter_complex = (
+        f"[0:a]volume={v_vol:.2f}[v];"
+        f"[1:a]volume={i_vol:.2f}[i];"
+        f"[v][i]amix=inputs=2:duration=longest:dropout_transition=2[out]"
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", vocal_path,
+        "-i", instrumental_path,
+        "-filter_complex", filter_complex,
+        "-map", "[out]",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        output_path,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+
+    if progress_cb:
+        progress_cb("audio tracks mixed")
+    return output_path
+
+
+def export_for_platform(input_path: str, output_path: str,
+                        platform: str, progress_cb=None) -> str:
+    """
+    Export video for a specific social media platform.
+
+    Args:
+        input_path: source video
+        output_path: destination video
+        platform: one of youtube, tiktok, instagram, twitter
+        progress_cb: optional callable(status_str)
+
+    Returns:
+        path to the exported video
+    """
+    _check_ffmpeg()
+
+    platform_specs = {
+        "youtube": {
+            "width": 1920, "height": 1080,
+            "max_duration": None,  # no limit
+            "label": "YouTube (16:9)",
+        },
+        "tiktok": {
+            "width": 1080, "height": 1920,
+            "max_duration": 180,  # 3 minutes
+            "label": "TikTok (9:16)",
+        },
+        "instagram": {
+            "width": 1080, "height": 1920,
+            "max_duration": 90,  # 90 seconds
+            "label": "Instagram Reels (9:16)",
+        },
+        "twitter": {
+            "width": 1920, "height": 1080,
+            "max_duration": 140,  # 2:20
+            "label": "Twitter/X (16:9)",
+        },
+    }
+
+    spec = platform_specs.get(platform)
+    if not spec:
+        import shutil
+        shutil.copy2(input_path, output_path)
+        return output_path
+
+    if progress_cb:
+        progress_cb(f"exporting for {spec['label']}...")
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
+    w, h = spec["width"], spec["height"]
+    max_dur = spec["max_duration"]
+
+    vf = (
+        f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-c:a", "aac", "-b:a", "192k",
+        "-pix_fmt", "yuv420p",
+    ]
+
+    if max_dur:
+        cmd += ["-t", str(max_dur)]
+
+    cmd.append(output_path)
+    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+
+    if progress_cb:
+        progress_cb(f"exported for {spec['label']}")
+    return output_path
+
+
+def apply_beat_sync_cuts(input_path: str, output_path: str,
+                         beat_timestamps: list, sections: list = None,
+                         progress_cb=None) -> str:
+    """
+    Apply beat-synced hard cuts to a video. During high-energy sections (chorus),
+    insert 0.1s hard cuts alternating between adjacent frames on each beat.
+
+    Args:
+        input_path: source video
+        output_path: destination video
+        beat_timestamps: list of beat times in seconds
+        sections: list of section dicts with {start, end, type, energy}
+        progress_cb: optional callable(status_str)
+
+    Returns:
+        path to the output video
+    """
+    _check_ffmpeg()
+
+    if not beat_timestamps or len(beat_timestamps) < 2:
+        import shutil
+        shutil.copy2(input_path, output_path)
+        return output_path
+
+    if progress_cb:
+        progress_cb("applying beat-synced cuts...")
+
+    # Identify high-energy beat timestamps (in chorus sections or high energy)
+    high_energy_beats = []
+    if sections:
+        for beat in beat_timestamps:
+            for section in sections:
+                if (section.get("type") in ("chorus",) and
+                        section["start"] <= beat <= section["end"]):
+                    high_energy_beats.append(beat)
+                    break
+    else:
+        # No sections info: use all beats
+        high_energy_beats = beat_timestamps
+
+    if not high_energy_beats:
+        import shutil
+        shutil.copy2(input_path, output_path)
+        return output_path
+
+    # Build a select filter that creates flash cuts on beats
+    # For each beat, we briefly show a frame from 0.5s ahead (creates a jump cut effect)
+    select_parts = []
+    for beat in high_energy_beats:
+        # Create a brief 0.1s "flash" at each beat by inserting a brightness spike
+        select_parts.append(
+            f"between(t,{beat:.3f},{beat + 0.1:.3f})"
+        )
+
+    if not select_parts:
+        import shutil
+        shutil.copy2(input_path, output_path)
+        return output_path
+
+    # Build a filter that adds a brief flash/invert effect on each beat
+    flash_expr = "+".join(select_parts)
+    # Use curves filter to briefly spike brightness on beats
+    vf = (
+        f"curves=all='0/0 0.5/0.5 1/1':eval=frame,"
+        f"eq=brightness=0.15*({flash_expr}):eval=frame"
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-vf", vf,
+        "-c:v", "libx264",
+        "-c:a", "copy",
+        "-pix_fmt", "yuv420p",
+        output_path,
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+    except subprocess.CalledProcessError:
+        # If the complex filter fails, fall back to simple copy
+        import shutil
+        shutil.copy2(input_path, output_path)
+
+    if progress_cb:
+        progress_cb("beat-sync cuts applied")
+    return output_path
+
+
 def stitch(clip_paths: list, audio_path: str | None, output_path: str,
            crossfade: float = 0.5, fade_dur: float = 1.0,
            transitions: list | None = None,

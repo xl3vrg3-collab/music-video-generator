@@ -41,15 +41,20 @@ except ImportError:
 
 from lib.audio_analyzer import analyze
 from lib.scene_planner import plan_scenes, TRANSITION_TYPES
-from lib.video_generator import generate_scene, generate_all, generate_from_photo
+from lib.video_generator import (
+    generate_scene, generate_all, generate_from_photo,
+    describe_photo, CAMERA_PRESETS, CAMERA_PROMPT_SUFFIXES,
+)
 from lib.video_stitcher import (
     stitch, apply_lyrics_overlay, apply_aspect_ratio, split_clip,
     ASPECT_PRESETS, _get_clip_duration,
     SPEED_OPTIONS, COLOR_GRADE_PRESETS, AUDIO_VIZ_STYLES,
+    generate_credits, apply_watermark, extract_thumbnail,
+    mix_audio_tracks, export_for_platform, apply_beat_sync_cuts,
 )
 from lib.prompt_assistant import (
     STYLE_PRESETS, get_preset, enhance_prompt, suggest_from_song_name,
-    get_preset_names, suggest_style,
+    get_preset_names, suggest_style, suggest_genre_from_bpm,
 )
 from lib.storyboard_generator import generate_storyboard
 
@@ -68,6 +73,10 @@ PROJECTS_DIR = os.path.join(OUTPUT_DIR, "projects")
 COST_TRACKER_PATH = os.path.join(OUTPUT_DIR, "cost_tracker.json")
 STORYBOARD_DIR = os.path.join(OUTPUT_DIR, "storyboards")
 PREVIEWS_DIR = os.path.join(OUTPUT_DIR, "previews")
+WATERMARK_PATH = os.path.join(OUTPUT_DIR, "watermark.png")
+THUMBNAIL_PATH = os.path.join(OUTPUT_DIR, "thumbnail.jpg")
+AUDIO_TRACKS_DIR = os.path.join(UPLOADS_DIR, "audio_tracks")
+SOCIAL_EXPORTS_DIR = os.path.join(OUTPUT_DIR, "social_exports")
 
 # Cost defaults
 COST_PER_VIDEO_GEN = 0.15
@@ -83,6 +92,8 @@ os.makedirs(EXPORTS_DIR, exist_ok=True)
 os.makedirs(PROJECTS_DIR, exist_ok=True)
 os.makedirs(STORYBOARD_DIR, exist_ok=True)
 os.makedirs(PREVIEWS_DIR, exist_ok=True)
+os.makedirs(AUDIO_TRACKS_DIR, exist_ok=True)
+os.makedirs(SOCIAL_EXPORTS_DIR, exist_ok=True)
 
 # ---- Global generation state ----
 gen_state = {
@@ -495,8 +506,10 @@ def _run_manual_generate_from_photo(scene_id: str):
         clip_path = os.path.join(MANUAL_CLIPS_DIR, f"photo_clip_{scene_id}.mp4")
         prompt = scene.get("prompt", "cinematic scene")
         duration = scene.get("duration", 8)
+        camera = scene.get("camera_movement", "zoom_in")
 
         generate_from_photo(photo_path, prompt, duration, clip_path,
+                            camera=camera,
                             progress_cb=on_progress)
         _record_cost(str(scene_id), "image")
 
@@ -974,13 +987,56 @@ class Handler(BaseHTTPRequestHandler):
             fname = os.path.basename(path[len("/api/previews/"):])
             self._send_file(os.path.join(PREVIEWS_DIR, fname))
 
+        elif path == "/api/camera-presets":
+            presets = []
+            for name, info in CAMERA_PRESETS.items():
+                presets.append({"name": name, "description": info["desc"]})
+            self._send_json({"presets": presets})
+
+        elif path == "/api/genre-suggest":
+            # GET with query params: ?bpm=120&energy=0.5
+            qs = urllib.parse.parse_qs(parsed.query)
+            bpm = float(qs.get("bpm", [120])[0])
+            energy = float(qs.get("energy", [0.5])[0])
+            suggestion = suggest_genre_from_bpm(bpm, energy)
+            self._send_json({"ok": True, **suggestion})
+
+        elif path == "/api/thumbnail":
+            if os.path.isfile(THUMBNAIL_PATH):
+                self._send_file(THUMBNAIL_PATH)
+            else:
+                self.send_error(404, "No thumbnail available")
+
+        elif path == "/api/watermark":
+            if os.path.isfile(WATERMARK_PATH):
+                self._send_file(WATERMARK_PATH)
+            else:
+                self.send_error(404, "No watermark uploaded")
+
+        elif path.startswith("/api/social-exports/"):
+            fname = os.path.basename(path[len("/api/social-exports/"):])
+            self._send_file(os.path.join(SOCIAL_EXPORTS_DIR, fname))
+
+        elif path == "/api/social-exports":
+            exports = []
+            if os.path.isdir(SOCIAL_EXPORTS_DIR):
+                for fname in sorted(os.listdir(SOCIAL_EXPORTS_DIR)):
+                    fpath = os.path.join(SOCIAL_EXPORTS_DIR, fname)
+                    if os.path.isfile(fpath) and fname.endswith(".mp4"):
+                        size_mb = os.path.getsize(fpath) / (1024 * 1024)
+                        exports.append({
+                            "filename": fname,
+                            "url": f"/api/social-exports/{fname}",
+                            "size_mb": round(size_mb, 1),
+                        })
+            self._send_json({"exports": exports})
+
         else:
             self.send_error(404)
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/")
-
         if path == "/api/upload":
             self._handle_upload()
 
@@ -1073,6 +1129,51 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/api/manual/preview-all":
             self._handle_preview_all()
+
+        # Feature 1: Auto-describe photo
+        elif re.match(r'^/api/manual/scene/([^/]+)/describe-photo$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/describe-photo$', path)
+            self._handle_describe_photo(m.group(1))
+
+        # Feature 4: Watermark upload
+        elif path == "/api/watermark/upload":
+            self._handle_watermark_upload()
+
+        # Feature 4: Apply watermark
+        elif path == "/api/watermark/apply":
+            self._handle_watermark_apply()
+
+        # Feature 5: Credits roll
+        elif path == "/api/credits":
+            self._handle_credits()
+
+        # Feature 6: Thumbnail
+        elif path == "/api/thumbnail":
+            self._handle_thumbnail()
+
+        elif path == "/api/thumbnail/generate":
+            self._handle_thumbnail_generate()
+
+        # Feature 8: Multi-photo upload
+        elif re.match(r'^/api/manual/scene/([^/]+)/photos$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/photos$', path)
+            self._handle_multi_photo_upload(m.group(1))
+
+        # Feature 9: Multi-track audio upload
+        elif path == "/api/audio/upload-tracks":
+            self._handle_upload_audio_tracks()
+
+        # Feature 9: Mix audio tracks
+        elif path == "/api/audio/mix":
+            self._handle_mix_audio()
+
+        # Feature 10: Social platform export
+        elif path == "/api/social-export":
+            self._handle_social_export()
+
+        # Feature 3: Beat-sync cuts
+        elif path == "/api/beat-sync":
+            self._handle_beat_sync()
 
         else:
             self.send_error(404)
@@ -1361,6 +1462,13 @@ class Handler(BaseHTTPRequestHandler):
                 entry["photo_url"] = f"/api/manual/scene-photo/{s['id']}"
             else:
                 entry["photo_url"] = None
+            # Multi-photo mood board URLs
+            photo_paths = s.get("photo_paths", [])
+            entry["photo_urls"] = []
+            for pi, pp in enumerate(photo_paths):
+                if pp and os.path.isfile(pp):
+                    entry["photo_urls"].append(f"/api/manual/scene-photo/{s['id']}?idx={pi}")
+            entry["camera_movement"] = s.get("camera_movement", "zoom_in")
             scenes_out.append(entry)
         self._send_json({
             "scenes": scenes_out,
@@ -1383,7 +1491,9 @@ class Handler(BaseHTTPRequestHandler):
             "speed": 1.0,
             "overlay": None,
             "color_grade": None,
+            "camera_movement": "zoom_in",
             "photo_path": None,
+            "photo_paths": [],  # multi-photo mood board (up to 4)
             "clip_path": None,
             "has_clip": False,
         }
@@ -1451,6 +1561,8 @@ class Handler(BaseHTTPRequestHandler):
                     s["overlay"] = params["overlay"]
                 if "color_grade" in params:
                     s["color_grade"] = params["color_grade"]
+                if "camera_movement" in params:
+                    s["camera_movement"] = params["camera_movement"]
                 _save_manual_plan(plan)
                 self._send_json({"ok": True, "scene": s})
                 return
@@ -1521,11 +1633,22 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"error": "Scene not found"}, 404)
 
     def _handle_get_scene_photo(self, scene_id: str):
-        """Serve a scene photo."""
+        """Serve a scene photo. Supports ?idx=N for multi-photo mood board."""
+        parsed = urllib.parse.urlparse(self.path)
+        qs = urllib.parse.parse_qs(parsed.query)
+        idx = qs.get("idx", [None])[0]
+
         plan = _load_manual_plan()
         for s in plan["scenes"]:
-            if s["id"] == scene_id and s.get("photo_path"):
-                if os.path.isfile(s["photo_path"]):
+            if s["id"] == scene_id:
+                if idx is not None:
+                    # Multi-photo: serve from photo_paths array
+                    photo_paths = s.get("photo_paths", [])
+                    pi = int(idx)
+                    if 0 <= pi < len(photo_paths) and os.path.isfile(photo_paths[pi]):
+                        self._send_file(photo_paths[pi])
+                        return
+                elif s.get("photo_path") and os.path.isfile(s["photo_path"]):
                     self._send_file(s["photo_path"])
                     return
         self.send_error(404, "Photo not found")
@@ -2314,6 +2437,445 @@ class Handler(BaseHTTPRequestHandler):
             with open(SCENE_PLAN_PATH, "w") as f:
                 json.dump(plan, f, indent=2)
         self._send_json({"ok": True, "style_lock": style_lock, "enabled": enabled})
+
+    # ---- Feature 1: Auto-describe photo ----
+
+    def _handle_describe_photo(self, scene_id: str):
+        """Use Grok vision to auto-describe a scene's photo for use as prompt."""
+        plan = _load_manual_plan()
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                photo_path = s.get("photo_path", "")
+                if not photo_path or not os.path.isfile(photo_path):
+                    self._send_json({"error": "Scene has no photo uploaded"}, 400)
+                    return
+                try:
+                    description = describe_photo(photo_path)
+                    self._send_json({"ok": True, "description": description})
+                except Exception as e:
+                    self._send_json({"error": f"Photo description failed: {e}"}, 500)
+                return
+        self._send_json({"error": "Scene not found"}, 404)
+
+    # ---- Feature 3: Beat-sync hard cuts ----
+
+    def _handle_beat_sync(self):
+        """Apply beat-synced hard cuts to the final video."""
+        with gen_lock:
+            if gen_state["running"]:
+                self._send_json({"error": "Generation already in progress"}, 409)
+                return
+
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            params = {}
+
+        target = params.get("target", "manual")
+
+        # Find video and analysis data
+        if target == "manual":
+            plan = _load_manual_plan()
+            video_path = plan.get("output_path", os.path.join(OUTPUT_DIR, "manual_final_video.mp4"))
+        else:
+            plan = _load_scene_plan()
+            if not plan:
+                self._send_json({"error": "No scene plan found"}, 404)
+                return
+            video_path = plan.get("output_path", os.path.join(OUTPUT_DIR, "final_video.mp4"))
+
+        if not os.path.isfile(video_path):
+            self._send_json({"error": "Final video not found. Stitch first."}, 400)
+            return
+
+        # Get beat timestamps from analysis or params
+        beats = params.get("beats", [])
+        sections = params.get("sections", [])
+
+        if not beats:
+            # Try to get from stored analysis
+            analysis = gen_state.get("analysis")
+            if analysis:
+                beats = analysis.get("beats", [])
+                sections = analysis.get("sections", [])
+            else:
+                # Try to analyze the audio
+                song_path = plan.get("song_path")
+                if song_path and os.path.isfile(song_path):
+                    try:
+                        analysis = analyze(song_path)
+                        beats = analysis.get("beats", [])
+                        sections = analysis.get("sections", [])
+                    except Exception:
+                        pass
+
+        if not beats:
+            self._send_json({"error": "No beat data available. Upload and analyze audio first."}, 400)
+            return
+
+        try:
+            temp_out = video_path + ".beatsync_tmp.mp4"
+            apply_beat_sync_cuts(video_path, temp_out, beats, sections)
+            os.replace(temp_out, video_path)
+            self._send_json({"ok": True, "message": "Beat-sync cuts applied", "beats_used": len(beats)})
+        except Exception as e:
+            self._send_json({"error": f"Beat-sync failed: {e}"}, 500)
+
+    # ---- Feature 4: Watermark upload and apply ----
+
+    def _handle_watermark_upload(self):
+        """Upload a PNG watermark file."""
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._send_json({"error": "Expected multipart/form-data"}, 400)
+            return
+
+        parts_ct = content_type.split("boundary=")
+        if len(parts_ct) < 2:
+            self._send_json({"error": "No boundary"}, 400)
+            return
+        boundary = parts_ct[1].strip().encode()
+        body = self._read_body()
+        parts = self._parse_multipart(body, boundary)
+
+        file_data = None
+        for part in parts:
+            if part["name"] == "file" or part["filename"]:
+                file_data = part["data"]
+                break
+
+        if file_data is None:
+            self._send_json({"error": "No file found"}, 400)
+            return
+
+        with open(WATERMARK_PATH, "wb") as f:
+            f.write(file_data)
+        self._send_json({"ok": True, "path": WATERMARK_PATH})
+
+    def _handle_watermark_apply(self):
+        """Apply watermark to the final video."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            params = {}
+
+        if not os.path.isfile(WATERMARK_PATH):
+            self._send_json({"error": "No watermark uploaded. Upload first via /api/watermark/upload"}, 400)
+            return
+
+        position = params.get("position", "bottom_right")
+        opacity = params.get("opacity", 50)
+        target = params.get("target", "manual")
+
+        if target == "manual":
+            video_path = os.path.join(OUTPUT_DIR, "manual_final_video.mp4")
+        else:
+            video_path = os.path.join(OUTPUT_DIR, "final_video.mp4")
+
+        if not os.path.isfile(video_path):
+            self._send_json({"error": "Final video not found. Stitch first."}, 400)
+            return
+
+        try:
+            temp_out = video_path + ".watermark_tmp.mp4"
+            apply_watermark(video_path, temp_out, WATERMARK_PATH, position, opacity)
+            os.replace(temp_out, video_path)
+            self._send_json({"ok": True, "message": "Watermark applied"})
+        except Exception as e:
+            self._send_json({"error": f"Watermark failed: {e}"}, 500)
+
+    # ---- Feature 5: Credits roll ----
+
+    def _handle_credits(self):
+        """Generate and append credits roll to the final video."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        title = params.get("title", "")
+        artist = params.get("artist", "")
+        extra_text = params.get("extra_text", "")
+        target = params.get("target", "manual")
+
+        if target == "manual":
+            video_path = os.path.join(OUTPUT_DIR, "manual_final_video.mp4")
+        else:
+            video_path = os.path.join(OUTPUT_DIR, "final_video.mp4")
+
+        if not os.path.isfile(video_path):
+            self._send_json({"error": "Final video not found. Stitch first."}, 400)
+            return
+
+        try:
+            # Generate credits clip
+            credits_path = os.path.join(OUTPUT_DIR, "credits_roll.mp4")
+            generate_credits(credits_path, title, artist, extra_text)
+
+            # Concatenate credits to the end of the video
+            concat_list = os.path.join(OUTPUT_DIR, "_credits_concat.txt")
+            with open(concat_list, "w") as f:
+                f.write(f"file '{video_path}'\n")
+                f.write(f"file '{credits_path}'\n")
+
+            temp_out = video_path + ".credits_tmp.mp4"
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0",
+                "-i", concat_list,
+                "-c", "copy",
+                temp_out,
+            ]
+            subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+            os.replace(temp_out, video_path)
+
+            # Clean up
+            if os.path.isfile(concat_list):
+                os.remove(concat_list)
+            if os.path.isfile(credits_path):
+                os.remove(credits_path)
+
+            self._send_json({"ok": True, "message": "Credits roll added"})
+        except Exception as e:
+            self._send_json({"error": f"Credits generation failed: {e}"}, 500)
+
+    # ---- Feature 6: Thumbnail generator ----
+
+    def _handle_thumbnail(self):
+        """Extract thumbnail from final video at a specific timestamp."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            params = {}
+
+        timestamp = params.get("timestamp", -1)
+        target = params.get("target", "manual")
+
+        if target == "manual":
+            video_path = os.path.join(OUTPUT_DIR, "manual_final_video.mp4")
+        else:
+            video_path = os.path.join(OUTPUT_DIR, "final_video.mp4")
+
+        if not os.path.isfile(video_path):
+            self._send_json({"error": "Final video not found."}, 400)
+            return
+
+        try:
+            extract_thumbnail(video_path, THUMBNAIL_PATH, timestamp)
+            self._send_json({
+                "ok": True,
+                "url": "/api/thumbnail",
+                "message": "Thumbnail extracted",
+            })
+        except Exception as e:
+            self._send_json({"error": f"Thumbnail extraction failed: {e}"}, 500)
+
+    def _handle_thumbnail_generate(self):
+        """Generate a custom thumbnail via Grok image API."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        prompt = params.get("prompt", "")
+        if not prompt:
+            self._send_json({"error": "No prompt provided"}, 400)
+            return
+
+        try:
+            from lib.video_generator import _generate_image, _download
+            img_url = _generate_image(prompt)
+            _download(img_url, THUMBNAIL_PATH)
+            self._send_json({
+                "ok": True,
+                "url": "/api/thumbnail",
+                "message": "Custom thumbnail generated",
+            })
+        except Exception as e:
+            self._send_json({"error": f"Thumbnail generation failed: {e}"}, 500)
+
+    # ---- Feature 8: Multi-photo mood board ----
+
+    def _handle_multi_photo_upload(self, scene_id: str):
+        """Upload multiple reference photos for a scene's mood board (up to 4)."""
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._send_json({"error": "Expected multipart/form-data"}, 400)
+            return
+
+        parts_ct = content_type.split("boundary=")
+        if len(parts_ct) < 2:
+            self._send_json({"error": "No boundary"}, 400)
+            return
+        boundary = parts_ct[1].strip().encode()
+        body = self._read_body()
+        parts = self._parse_multipart(body, boundary)
+
+        plan = _load_manual_plan()
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                # Initialize photo_paths if needed
+                if "photo_paths" not in s:
+                    s["photo_paths"] = []
+
+                photos_added = 0
+                for part in parts:
+                    if part["filename"] and len(s["photo_paths"]) < 4:
+                        ext = os.path.splitext(part["filename"])[1] or ".jpg"
+                        idx = len(s["photo_paths"])
+                        photo_path = os.path.join(SCENE_PHOTOS_DIR, f"{scene_id}_mb{idx}{ext}")
+                        with open(photo_path, "wb") as f:
+                            f.write(part["data"])
+                        s["photo_paths"].append(photo_path)
+                        photos_added += 1
+
+                        # Also set primary photo if not set
+                        if not s.get("photo_path"):
+                            s["photo_path"] = photo_path
+
+                _save_manual_plan(plan)
+                photo_urls = []
+                for pi, pp in enumerate(s["photo_paths"]):
+                    if os.path.isfile(pp):
+                        photo_urls.append(f"/api/manual/scene-photo/{scene_id}?idx={pi}")
+                self._send_json({
+                    "ok": True,
+                    "photos_added": photos_added,
+                    "total_photos": len(s["photo_paths"]),
+                    "photo_urls": photo_urls,
+                })
+                return
+
+        self._send_json({"error": "Scene not found"}, 404)
+
+    # ---- Feature 9: Multi-track audio ----
+
+    def _handle_upload_audio_tracks(self):
+        """Upload separate vocal and instrumental audio tracks."""
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._send_json({"error": "Expected multipart/form-data"}, 400)
+            return
+
+        parts_ct = content_type.split("boundary=")
+        if len(parts_ct) < 2:
+            self._send_json({"error": "No boundary"}, 400)
+            return
+        boundary = parts_ct[1].strip().encode()
+        body = self._read_body()
+        parts = self._parse_multipart(body, boundary)
+
+        vocal_path = None
+        instrumental_path = None
+
+        for part in parts:
+            if part["name"] == "vocal" and part["filename"]:
+                ext = os.path.splitext(part["filename"])[1] or ".mp3"
+                vocal_path = os.path.join(AUDIO_TRACKS_DIR, f"vocal{ext}")
+                with open(vocal_path, "wb") as f:
+                    f.write(part["data"])
+            elif part["name"] == "instrumental" and part["filename"]:
+                ext = os.path.splitext(part["filename"])[1] or ".mp3"
+                instrumental_path = os.path.join(AUDIO_TRACKS_DIR, f"instrumental{ext}")
+                with open(instrumental_path, "wb") as f:
+                    f.write(part["data"])
+
+        result = {"ok": True}
+        if vocal_path:
+            result["vocal"] = vocal_path
+        if instrumental_path:
+            result["instrumental"] = instrumental_path
+
+        self._send_json(result)
+
+    def _handle_mix_audio(self):
+        """Mix vocal and instrumental tracks with custom levels."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            params = {}
+
+        vocal_level = params.get("vocal_level", 50)
+        instrumental_level = params.get("instrumental_level", 50)
+
+        # Find track files
+        vocal_path = None
+        instrumental_path = None
+        for fname in os.listdir(AUDIO_TRACKS_DIR):
+            fpath = os.path.join(AUDIO_TRACKS_DIR, fname)
+            if fname.startswith("vocal"):
+                vocal_path = fpath
+            elif fname.startswith("instrumental"):
+                instrumental_path = fpath
+
+        if not vocal_path or not instrumental_path:
+            self._send_json({"error": "Both vocal and instrumental tracks required. Upload first."}, 400)
+            return
+
+        try:
+            mixed_path = os.path.join(UPLOADS_DIR, "mixed_audio.mp3")
+            mix_audio_tracks(vocal_path, instrumental_path, mixed_path,
+                             vocal_level, instrumental_level)
+
+            # Update the manual plan to use the mixed audio
+            plan = _load_manual_plan()
+            plan["song_path"] = mixed_path
+            _save_manual_plan(plan)
+
+            self._send_json({
+                "ok": True,
+                "message": "Audio tracks mixed",
+                "path": mixed_path,
+                "vocal_level": vocal_level,
+                "instrumental_level": instrumental_level,
+            })
+        except Exception as e:
+            self._send_json({"error": f"Audio mixing failed: {e}"}, 500)
+
+    # ---- Feature 10: Social platform export ----
+
+    def _handle_social_export(self):
+        """Export video for a specific social platform."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        platform = params.get("platform", "youtube")
+        target = params.get("target", "manual")
+
+        if target == "manual":
+            video_path = os.path.join(OUTPUT_DIR, "manual_final_video.mp4")
+        else:
+            video_path = os.path.join(OUTPUT_DIR, "final_video.mp4")
+
+        if not os.path.isfile(video_path):
+            self._send_json({"error": "Final video not found."}, 400)
+            return
+
+        out_path = os.path.join(SOCIAL_EXPORTS_DIR, f"{platform}_export.mp4")
+
+        try:
+            export_for_platform(video_path, out_path, platform)
+            size_mb = os.path.getsize(out_path) / (1024 * 1024)
+            self._send_json({
+                "ok": True,
+                "platform": platform,
+                "url": f"/api/social-exports/{platform}_export.mp4",
+                "size_mb": round(size_mb, 1),
+            })
+        except Exception as e:
+            self._send_json({"error": f"Export failed: {e}"}, 500)
 
 
 def main():

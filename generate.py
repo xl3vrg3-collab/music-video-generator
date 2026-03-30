@@ -26,6 +26,7 @@ from lib.video_generator import generate_scene, generate_all
 from lib.video_stitcher import stitch
 from lib.prompt_assistant import (
     STYLE_PRESETS, get_preset, enhance_prompt, suggest_from_song_name,
+    suggest_genre_from_bpm,
 )
 
 

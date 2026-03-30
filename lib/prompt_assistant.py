@@ -229,6 +229,79 @@ def enhance_prompt(user_prompt: str) -> str:
     return user_prompt
 
 
+def suggest_genre_from_bpm(bpm: float, energy: float = 0.5) -> dict:
+    """
+    Estimate genre and suggest matching visual style from BPM and energy.
+
+    Args:
+        bpm: beats per minute
+        energy: average energy level (0.0 - 1.0)
+
+    Returns:
+        dict with keys: genre, style, preset, bpm_range, description
+    """
+    if bpm >= 130:
+        # High BPM: EDM/electronic
+        if energy >= 0.6:
+            return {
+                "genre": "EDM / Electronic",
+                "style": "abstract geometric shapes, laser lights, pulsing neon, digital particles, "
+                         "futuristic dance floor, strobing colors, high energy visual effects",
+                "preset": "party",
+                "bpm_range": "high (130+)",
+                "description": "High-energy electronic visuals with lasers and abstract shapes",
+            }
+        else:
+            return {
+                "genre": "Trance / Ambient Electronic",
+                "style": "flowing light trails, cosmic nebula, ethereal particles, "
+                         "deep space visuals, hypnotic patterns, soft neon glow",
+                "preset": "space",
+                "bpm_range": "high (130+)",
+                "description": "Ethereal electronic visuals with cosmic and hypnotic patterns",
+            }
+    elif bpm >= 90:
+        # Mid BPM: hip-hop/pop
+        if energy >= 0.6:
+            return {
+                "genre": "Hip-Hop / Pop",
+                "style": "urban streetscape, stylish fashion, neon signs, luxury cars, "
+                         "city nightlife, dynamic camera movements, bold colors",
+                "preset": "urban",
+                "bpm_range": "mid (90-130)",
+                "description": "Urban street style with bold colors and city nightlife",
+            }
+        else:
+            return {
+                "genre": "R&B / Chill Pop",
+                "style": "soft golden hour lighting, intimate setting, warm tones, "
+                         "slow motion details, elegant and moody atmosphere",
+                "preset": "emotional",
+                "bpm_range": "mid (90-130)",
+                "description": "Warm intimate visuals with soft lighting and elegant mood",
+            }
+    else:
+        # Low BPM: ballad/ambient
+        if energy >= 0.5:
+            return {
+                "genre": "Rock Ballad / Folk",
+                "style": "sweeping landscape, golden hour, mountain vistas, "
+                         "flowing water, natural beauty, cinematic wide shots",
+                "preset": "nature",
+                "bpm_range": "low (60-90)",
+                "description": "Sweeping natural landscapes with cinematic wide shots",
+            }
+        else:
+            return {
+                "genre": "Ambient / Ballad",
+                "style": "soft focus, rain on window, gentle mist, emotional close-ups, "
+                         "candlelight, melancholic atmosphere, pastel tones",
+                "preset": "emotional",
+                "bpm_range": "low (60-90)",
+                "description": "Soft emotional visuals with gentle atmosphere and pastel tones",
+            }
+
+
 def suggest_from_song_name(name: str) -> str:
     """
     Extract keywords from a song title/filename to suggest a matching style preset.
