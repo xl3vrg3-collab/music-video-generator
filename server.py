@@ -1273,6 +1273,13 @@ class Handler(BaseHTTPRequestHandler):
             settings = _load_settings()
             self._send_json(settings)
 
+        elif path == "/api/engine-catalog":
+            catalog_path = os.path.join(OUTPUT_DIR, "engine_catalog.json")
+            if os.path.isfile(catalog_path):
+                self._send_file(catalog_path, "application/json")
+            else:
+                self._send_json({})
+
         elif path == "/api/prompt-history":
             self._handle_get_prompt_history()
 

@@ -364,7 +364,8 @@ RUNWAY_RATIO_MAP = {
 
 def _runway_submit_image_to_video(prompt: str, image_path: str,
                                    duration: int = 5,
-                                   ratio: str = "16:9") -> str:
+                                   ratio: str = "16:9",
+                                   model: str = "gen4.5") -> str:
     """
     Submit an image-to-video request to Runway Gen-3 Alpha Turbo.
 
@@ -410,7 +411,8 @@ def _runway_submit_image_to_video(prompt: str, image_path: str,
 
 
 def _runway_submit_text_to_video(prompt: str, duration: int = 5,
-                                  ratio: str = "16:9") -> str:
+                                  ratio: str = "16:9",
+                                  model: str = "gen4.5") -> str:
     """
     Submit a text-to-video request to Runway Gen-3 Alpha Turbo.
 
@@ -496,35 +498,41 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
                             progress_cb=None, cost_cb=None,
                             photo_path: str = None) -> str:
     """
-    Generate a video clip using Runway Gen-3 Alpha Turbo.
+    Generate a video clip using Runway API.
+    Supports all models: gen3a_turbo, gen4.5, kling3.0_pro/standard, veo3/3.1/3.1_fast
 
-    This is the recommended engine for scenes with character reference photos,
-    as Runway excels at image-to-video with motion while preserving the source image.
-
-    Args:
-        scene: dict with at least {prompt, duration}
-        output_dir: directory to save clips
-        index: scene index for naming
-        progress_cb: optional callable(index, status_str)
-        cost_cb: optional callable(scene_key, gen_type)
-        photo_path: optional photo path for image-to-video (THE key feature)
-
-    Returns:
-        path to the generated video clip
+    Photo+prompt = real video with motion (THE key feature for Runway/Kling/Veo).
     """
     clip_path = os.path.join(output_dir, f"clip_{index:03d}.mp4")
     prompt = scene["prompt"]
     duration = scene.get("duration", 8)
     camera = scene.get("camera_movement", "zoom_in")
 
-    # Add camera movement to prompt for Runway
+    # Get the specific model — scene can override the engine with a model name
+    runway_model = scene.get("runway_model", scene.get("engine", "gen4.5"))
+    # Map friendly engine names to Runway model IDs
+    MODEL_MAP = {
+        "runway": "gen4.5",
+        "gen4.5": "gen4.5",
+        "gen3a_turbo": "gen3a_turbo",
+        "kling_pro": "kling3.0_pro",
+        "kling3.0_pro": "kling3.0_pro",
+        "kling_standard": "kling3.0_standard",
+        "kling3.0_standard": "kling3.0_standard",
+        "veo3": "veo3",
+        "veo3.1": "veo3.1",
+        "veo3.1_fast": "veo3.1_fast",
+    }
+    model = MODEL_MAP.get(runway_model, "gen4.5")
+
     camera_suffix = CAMERA_PROMPT_SUFFIXES.get(camera, "")
     gen_prompt = prompt + camera_suffix if camera_suffix else prompt
+    gen_prompt = enhance_prompt_with_references(gen_prompt)
 
     has_photo = photo_path and os.path.isfile(photo_path)
 
     def _report(msg):
-        print(f"[RUNWAY][{index}] {msg}")
+        print(f"[RUNWAY/{model}][{index}] {msg}")
         if progress_cb:
             progress_cb(index, msg)
 
@@ -534,16 +542,14 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
 
     try:
         if has_photo:
-            # Image-to-video: THE reason we added Runway
-            _report(f"submitting image-to-video to Runway Gen-3 Alpha Turbo (photo: {os.path.basename(photo_path)})...")
+            _report(f"submitting image-to-video ({model}) with photo: {os.path.basename(photo_path)}...")
             task_id = _runway_submit_image_to_video(
-                gen_prompt, photo_path, duration=duration
+                gen_prompt, photo_path, duration=duration, model=model
             )
         else:
-            # Text-to-video fallback
-            _report("submitting text-to-video to Runway Gen-3 Alpha Turbo...")
+            _report(f"submitting text-to-video ({model})...")
             task_id = _runway_submit_text_to_video(
-                gen_prompt, duration=duration
+                gen_prompt, duration=duration, model=model
             )
 
         _report(f"polling Runway (task={task_id[:12]}...)")
