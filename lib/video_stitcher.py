@@ -126,12 +126,30 @@ def _get_xfade_name(transition: str) -> str | None:
     return mapping.get(transition)
 
 
-def _get_transition_duration(transition: str, base_crossfade: float) -> float:
-    """Get the xfade duration for a transition type."""
+def _get_transition_duration(transition: str, base_crossfade: float,
+                             clip_duration: float = 0) -> float:
+    """
+    Get the xfade duration for a transition type.
+
+    Area 4 item 7: Varies crossfade based on clip length when clip_duration > 0:
+        - Short clips (3-5s): 0.3s crossfade
+        - Medium clips (5-8s): 0.5s crossfade
+        - Long clips (8-15s): 0.8s crossfade
+    """
     if transition == "dissolve":
         return min(base_crossfade * 2.0, 2.0)  # slower dissolve
     if transition in ("hard_cut", "glitch", "fade_black"):
         return 0.0  # these don't use xfade
+
+    # Area 4 item 7: Vary crossfade based on clip length
+    if clip_duration > 0:
+        if clip_duration <= 5:
+            return 0.3
+        elif clip_duration <= 8:
+            return 0.5
+        else:
+            return 0.8
+
     return base_crossfade
 
 
@@ -1044,12 +1062,14 @@ def _stitch_with_crossfades(clips: list, audio: str | None, output: str,
     running_duration = durations[0]
 
     for i in range(1, n):
-        offset = max(0, running_duration - crossfade)
+        # Area 4 item 7: vary crossfade based on clip length
+        clip_crossfade = _get_transition_duration("crossfade", crossfade, clip_duration=durations[i])
+        offset = max(0, running_duration - clip_crossfade)
         in_label = f"[{i - 1}:v]" if i == 1 else "[xf]"
         out_label = "[xf]" if i < n - 1 else "[xfout]"
 
         filter_parts.append(
-            f"{in_label}[{i}:v]xfade=transition=fade:duration={crossfade}"
+            f"{in_label}[{i}:v]xfade=transition=fade:duration={clip_crossfade}"
             f":offset={offset:.3f}{out_label}"
         )
         running_duration = offset + durations[i]
@@ -1302,7 +1322,7 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
     for i in range(1, n):
         trans = transitions[i] if i < len(transitions) else "crossfade"
         xfade_name = _get_xfade_name(trans)
-        trans_dur = _get_transition_duration(trans, crossfade)
+        trans_dur = _get_transition_duration(trans, crossfade, clip_duration=durations[i])
 
         in_label = f"[{i - 1}:v]" if i == 1 else "[xf]"
         out_label = "[xf]" if i < n - 1 else "[xfout]"

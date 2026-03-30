@@ -41,6 +41,111 @@ ENGINE_OPENAI = "openai"
 ENGINE_RUNWAY = "runway"
 SUPPORTED_ENGINES = [ENGINE_GROK, ENGINE_LUMA, ENGINE_OPENAI, ENGINE_RUNWAY]
 
+# ---- Model duration options (Area 3) ----
+# Each model supports specific clip durations (seconds).
+# Values determined from API testing.
+MODEL_DURATION_OPTIONS = {
+    "gen4_5": [5, 10],
+    "gen3a_turbo": [5, 10],
+    "kling_pro": [5, 10],
+    "kling_standard": [5, 10],
+    "veo3": [5, 8],
+    "veo3_1": [5, 8],
+    "veo3_1_fast": [5, 8],
+    "grok": [8],
+    "luma": [5, 9],
+    "openai": [3, 4, 5, 6, 7, 8, 9, 10, 12, 15],  # Ken Burns, we control
+}
+
+# Smart defaults: best duration per model + section type
+MODEL_SECTION_DEFAULTS = {
+    "gen4_5":         {"intro": 10, "verse": 10, "chorus": 5, "bridge": 10, "outro": 10},
+    "gen3a_turbo":    {"intro": 10, "verse": 5, "chorus": 5, "bridge": 10, "outro": 10},
+    "kling_pro":      {"intro": 10, "verse": 10, "chorus": 5, "bridge": 10, "outro": 10},
+    "kling_standard": {"intro": 10, "verse": 5, "chorus": 5, "bridge": 10, "outro": 10},
+    "veo3":           {"intro": 8, "verse": 5, "chorus": 5, "bridge": 8, "outro": 8},
+    "veo3_1":         {"intro": 8, "verse": 5, "chorus": 5, "bridge": 8, "outro": 8},
+    "veo3_1_fast":    {"intro": 8, "verse": 5, "chorus": 5, "bridge": 8, "outro": 8},
+    "grok":           {"intro": 8, "verse": 8, "chorus": 8, "bridge": 8, "outro": 8},
+    "luma":           {"intro": 9, "verse": 5, "chorus": 5, "bridge": 9, "outro": 9},
+    "openai":         {"intro": 8, "verse": 6, "chorus": 4, "bridge": 8, "outro": 10},
+}
+
+
+def get_valid_duration(engine: str, requested_duration: int) -> int:
+    """
+    Snap a requested duration to the nearest valid duration for the given model.
+
+    Args:
+        engine: model/engine ID (e.g. "gen4_5", "grok", "luma")
+        requested_duration: desired duration in seconds
+
+    Returns:
+        nearest valid duration for that model
+    """
+    options = MODEL_DURATION_OPTIONS.get(engine)
+    if not options:
+        # Fallback: try common durations
+        options = [5, 10]
+    # Find the closest valid duration
+    return min(options, key=lambda d: abs(d - requested_duration))
+
+
+def get_smart_duration(engine: str, section_type: str) -> int:
+    """
+    Get the best default duration for a model + section type combo.
+
+    Args:
+        engine: model/engine ID
+        section_type: "intro", "verse", "chorus", "bridge", "outro"
+
+    Returns:
+        recommended duration in seconds
+    """
+    section_defaults = MODEL_SECTION_DEFAULTS.get(engine, {})
+    return section_defaults.get(section_type, get_valid_duration(engine, 8))
+
+
+# ---- Scene-to-scene continuity (Area 1) ----
+
+def _build_continuity_prompt(scene: dict, index: int) -> str:
+    """
+    Build a continuity suffix for a scene prompt based on previous scene context.
+    Only applies when continuity_mode is enabled and index > 0.
+
+    Reads the continuity_context from the scene dict (set by scene planner or UI).
+
+    Returns:
+        continuity suffix string to append to the prompt, or empty string.
+    """
+    if index == 0:
+        return ""
+
+    ctx = scene.get("continuity_context", {})
+    if not ctx:
+        return ""
+
+    parts = []
+    parts.append("Continuing from the previous scene. Maintain visual continuity: same color palette, same lighting, same time of day.")
+
+    if ctx.get("has_character"):
+        parts.append("The same character from the previous scene continues to appear.")
+
+    if ctx.get("key_elements"):
+        elements = ctx["key_elements"][:5]
+        parts.append(f"Maintain these visual elements: {', '.join(elements)}.")
+
+    if ctx.get("lighting"):
+        parts.append(f"Lighting: {ctx['lighting']}.")
+
+    if ctx.get("color_palette"):
+        parts.append(f"Color palette: {ctx['color_palette']}.")
+
+    if ctx.get("character_state"):
+        parts.append(f"Character: {ctx['character_state']}.")
+
+    return " ".join(parts)
+
 # ---- Camera movement presets for Ken Burns ----
 # Each preset maps to an ffmpeg crop animation expression
 # Format: (crop_x_expr, crop_y_expr) applied on a 3840x2160 -> 1920x1080 crop
@@ -267,6 +372,12 @@ def _luma_generate_scene(scene: dict, output_dir: str, index: int,
     # Add camera movement to prompt for Luma
     camera_suffix = CAMERA_PROMPT_SUFFIXES.get(camera, "")
     gen_prompt = prompt + camera_suffix if camera_suffix else prompt
+
+    # Area 1: Add continuity context if enabled
+    if scene.get("continuity_mode", True):
+        continuity = _build_continuity_prompt(scene, index)
+        if continuity:
+            gen_prompt = f"{gen_prompt}. {continuity}"
 
     def _report(msg):
         print(f"[LUMA][{index}] {msg}")
@@ -555,7 +666,23 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
     gen_prompt = prompt + camera_suffix if camera_suffix else prompt
     gen_prompt = enhance_prompt_with_references(gen_prompt)
 
+    # Area 1: Add continuity context if enabled
+    if scene.get("continuity_mode", True):
+        continuity = _build_continuity_prompt(scene, index)
+        if continuity:
+            gen_prompt = f"{gen_prompt}. {continuity}"
+
     has_photo = photo_path and os.path.isfile(photo_path)
+
+    # Area 1: Auto-attach character reference from previous scenes
+    # If continuity_context has a character_photo and no explicit photo provided,
+    # use it for consistent character appearance across scenes.
+    if not has_photo and scene.get("continuity_context", {}).get("character_photo"):
+        char_photo = scene["continuity_context"]["character_photo"]
+        if os.path.isfile(char_photo):
+            photo_path = char_photo
+            has_photo = True
+            print(f"[RUNWAY/{model}][{index}] Auto-attached character photo from continuity context")
 
     def _report(msg):
         print(f"[RUNWAY/{model}][{index}] {msg}")
@@ -689,6 +816,12 @@ def _openai_generate_scene(scene: dict, output_dir: str, index: int,
 
     camera_suffix = CAMERA_PROMPT_SUFFIXES.get(camera, "")
     gen_prompt = prompt + camera_suffix if camera_suffix else prompt
+
+    # Area 1: Add continuity context if enabled
+    if scene.get("continuity_mode", True):
+        continuity = _build_continuity_prompt(scene, index)
+        if continuity:
+            gen_prompt = f"{gen_prompt}. {continuity}"
 
     def _report(msg):
         print(f"[OPENAI][{index}] {msg}")
@@ -1099,8 +1232,15 @@ def generate_scene(scene: dict, index: int, output_dir: str,
             print(f"[generate_scene] Auto-attached character reference "
                   f"'{char_name}' -> {char_photo}")
 
+    # Area 3: Enforce valid duration for this engine
+    requested_dur = scene.get("duration", 8)
+    valid_dur = get_valid_duration(engine, requested_dur)
+    if valid_dur != requested_dur:
+        print(f"[generate_scene] Snapping duration {requested_dur}s -> {valid_dur}s for engine={engine}")
+        scene["duration"] = valid_dur
+
     print(f"[generate_scene] index={index}, engine={engine}, "
-          f"prompt={scene.get('prompt', '')[:80]}..., photo={photo_path}")
+          f"prompt={scene.get('prompt', '')[:80]}..., photo={photo_path}, duration={valid_dur}s")
 
     # All Runway-hosted models (use underscore versions from UI dropdown)
     RUNWAY_ENGINES = {
@@ -1147,6 +1287,12 @@ def _grok_generate_scene(scene: dict, output_dir: str, index: int,
     # Append camera movement to prompt for AI generation
     camera_suffix = CAMERA_PROMPT_SUFFIXES.get(camera, "")
     gen_prompt = prompt + camera_suffix if camera_suffix else prompt
+
+    # Area 1: Add continuity context if enabled
+    if scene.get("continuity_mode", True):
+        continuity = _build_continuity_prompt(scene, index)
+        if continuity:
+            gen_prompt = f"{gen_prompt}. {continuity}"
 
     has_photo = photo_path and os.path.isfile(photo_path)
     print(f"[GROK][{index}] prompt={gen_prompt[:80]}..., photo={has_photo}, camera={camera}")
@@ -1267,6 +1413,73 @@ def generate_from_photo(photo_path: str, prompt: str, duration: float,
     return output_path
 
 
+def _build_continuity_context_chain(scenes: list) -> list:
+    """
+    Build continuity_context for each scene based on previous scenes.
+    Returns modified scenes list with continuity_context set.
+
+    Area 1: Scene-to-scene continuity support.
+    """
+    import re as _re
+
+    for i, scene in enumerate(scenes):
+        if i == 0:
+            scene["continuity_context"] = {}
+            continue
+
+        prev = scenes[i - 1]
+        ctx = {}
+
+        # Extract visual elements from previous scene prompt
+        prev_prompt = prev.get("prompt", "")
+        # Key visual elements
+        visual_keywords = _re.findall(
+            r'\b(neon|city|rain|ocean|forest|desert|mountain|space|sky|fire|water|'
+            r'night|sunset|sunrise|fog|smoke|crystal|glass|metal|gold|silver|'
+            r'cyberpunk|synthwave|gothic|vintage|industrial|abstract|flowers|stars)\b',
+            prev_prompt.lower()
+        )
+        if visual_keywords:
+            ctx["key_elements"] = list(set(visual_keywords))
+
+        # Detect character presence
+        char_refs = _get_character_references()
+        prompt_lower = prev_prompt.lower()
+        for name, path in char_refs.items():
+            if name.lower() in prompt_lower:
+                ctx["has_character"] = True
+                ctx["character_photo"] = path
+                break
+
+        # Detect lighting/time of day from previous prompt
+        for tod in ["night", "sunset", "sunrise", "dawn", "dusk", "midday", "golden hour", "twilight"]:
+            if tod in prev_prompt.lower():
+                ctx["lighting"] = tod
+                break
+
+        # Detect color palette hints
+        colors_found = _re.findall(
+            r'\b(neon|warm|cold|blue|red|green|purple|orange|golden|silver|monochrome|pastel|vivid)\b',
+            prev_prompt.lower()
+        )
+        if colors_found:
+            ctx["color_palette"] = ", ".join(list(set(colors_found))[:4])
+
+        # Carry forward accumulated context
+        prev_ctx = prev.get("continuity_context", {})
+        if prev_ctx.get("key_elements"):
+            existing = ctx.get("key_elements", [])
+            merged = list(set(existing + prev_ctx["key_elements"]))[:8]
+            ctx["key_elements"] = merged
+        if not ctx.get("character_photo") and prev_ctx.get("character_photo"):
+            ctx["character_photo"] = prev_ctx["character_photo"]
+            ctx["has_character"] = prev_ctx.get("has_character", False)
+
+        scene["continuity_context"] = ctx
+
+    return scenes
+
+
 def generate_all(scenes: list, output_dir: str,
                  progress_cb=None, cost_cb=None) -> list:
     """
@@ -1284,6 +1497,11 @@ def generate_all(scenes: list, output_dir: str,
     """
     os.makedirs(output_dir, exist_ok=True)
     results = [None] * len(scenes)
+
+    # Area 1: Build continuity context chain across scenes
+    continuity_enabled = any(s.get("continuity_mode", True) for s in scenes)
+    if continuity_enabled:
+        scenes = _build_continuity_context_chain(scenes)
 
     with ThreadPoolExecutor(max_workers=MAX_CONCURRENT) as pool:
         futures = {}

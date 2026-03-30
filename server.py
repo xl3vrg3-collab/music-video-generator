@@ -55,6 +55,7 @@ from lib.video_generator import (
     get_available_engines, SUPPORTED_ENGINES, ENGINE_GROK,
     _load_settings as _load_gen_settings,
     _get_character_references, _resolve_character_references,
+    MODEL_DURATION_OPTIONS, get_valid_duration, get_smart_duration,
 )
 from lib.video_stitcher import (
     stitch, apply_lyrics_overlay, apply_aspect_ratio, split_clip,
@@ -592,12 +593,16 @@ def _run_manual_generate_scene(scene_id: str):
             scene_photo_path = scene["photo_path"]
             print(f"[_run_manual_generate_scene] Single photo found: {scene_photo_path}")
 
+        # Read continuity_mode from plan settings
+        plan_continuity = plan.get("continuity_mode", True)
+
         gen_scene = {
             "prompt": gen_prompt,
             "duration": scene.get("duration", 8),
             "camera_movement": scene.get("camera_movement", "zoom_in"),
             "engine": scene.get("engine", ""),
             "id": scene.get("id", ""),
+            "continuity_mode": plan_continuity,
         }
 
         print(f"[_run_manual_generate_scene] Calling generate_scene with photo_path={scene_photo_path}, engine={gen_scene['engine']}")
@@ -753,12 +758,14 @@ def _run_manual_generate_all():
             elif scene.get("photo_path") and os.path.isfile(scene["photo_path"]):
                 scene_photo_path = scene["photo_path"]
 
+            plan_continuity = plan.get("continuity_mode", True)
             gen_scene = {
                 "prompt": gen_prompt,
                 "duration": scene.get("duration", 8),
                 "camera_movement": scene.get("camera_movement", "zoom_in"),
                 "engine": scene.get("engine", ""),
                 "id": scene.get("id", ""),
+                "continuity_mode": plan_continuity,
             }
 
             try:
@@ -1282,6 +1289,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/engines":
             engines = get_available_engines()
             self._send_json({"engines": engines})
+
+        elif path == "/api/model-durations":
+            self._send_json({"durations": MODEL_DURATION_OPTIONS})
 
         elif path == "/api/settings":
             settings = _load_settings()
@@ -2198,6 +2208,8 @@ class Handler(BaseHTTPRequestHandler):
             "audio_viz": plan.get("audio_viz"),
             "style_lock": plan.get("style_lock", ""),
             "audio_crossfade": plan.get("audio_crossfade", 0.0),
+            "continuity_mode": plan.get("continuity_mode", True),
+            "natural_pacing": plan.get("natural_pacing", True),
         })
 
     def _handle_manual_create_scene(self):
@@ -2568,6 +2580,10 @@ class Handler(BaseHTTPRequestHandler):
                 plan["duck_level"] = max(0.0, min(1.0, float(params["duck_level"])))
             except (ValueError, TypeError):
                 plan["duck_level"] = 0.3
+        if "continuity_mode" in params:
+            plan["continuity_mode"] = bool(params["continuity_mode"])
+        if "natural_pacing" in params:
+            plan["natural_pacing"] = bool(params["natural_pacing"])
         _save_manual_plan(plan)
         self._send_json({"ok": True})
 

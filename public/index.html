@@ -1716,6 +1716,18 @@
               Beat Sync
             </label>
           </div>
+          <div class="stitch-setting-group">
+            <label class="stitch-checkbox-label">
+              <input type="checkbox" id="continuityModeCheckbox" checked onchange="continuityMode = this.checked; window._updateStitchSettings();">
+              Continuity
+            </label>
+          </div>
+          <div class="stitch-setting-group">
+            <label class="stitch-checkbox-label">
+              <input type="checkbox" id="naturalPacingCheckbox" checked onchange="naturalPacingMode = this.checked; window._updateStitchSettings();">
+              Natural Pacing
+            </label>
+          </div>
         </div>
       </div>
     </div>
@@ -3042,29 +3054,98 @@
     kling_pro:'#e06030', kling_standard:'#e06030',
     veo3:'#4285f4', veo3_1:'#4285f4', veo3_1_fast:'#4285f4',
   };
+  // Model duration limits (Area 3)
+  const MODEL_DURATION_OPTIONS = {
+    gen4_5: [5, 10],
+    gen3a_turbo: [5, 10],
+    kling_pro: [5, 10],
+    kling_standard: [5, 10],
+    veo3: [5, 8],
+    veo3_1: [5, 8],
+    veo3_1_fast: [5, 8],
+    grok: [8],
+    luma: [5, 9],
+    openai: [3, 4, 5, 6, 7, 8, 9, 10, 12, 15],
+  };
+
   const ENGINE_GROUPS = [
     { group:'─── xAI ───', models:[
-      {id:'grok', label:'Grok Video', cost:'$0.15', photo:false, speed:'30s'},
+      {id:'grok', label:'Grok Video', cost:'$0.15', photo:false, speed:'30s', durations:[8]},
     ]},
     { group:'─── Runway ───', models:[
-      {id:'gen4_5', label:'Gen 4.5 (Best Quality)', cost:'$0.10/5s', photo:true, speed:'3-4m'},
-      {id:'gen3a_turbo', label:'Gen 3 Turbo (Fast)', cost:'$0.05/5s', photo:true, speed:'1-2m'},
+      {id:'gen4_5', label:'Gen 4.5 (Best Quality)', cost:'$0.10/5s', photo:true, speed:'3-4m', durations:[5,10]},
+      {id:'gen3a_turbo', label:'Gen 3 Turbo (Fast)', cost:'$0.05/5s', photo:true, speed:'1-2m', durations:[5,10]},
     ]},
     { group:'─── Kling (via Runway) ───', models:[
-      {id:'kling_pro', label:'Kling 3.0 Pro', cost:'$0.08/5s', photo:true, speed:'2-3m'},
-      {id:'kling_standard', label:'Kling 3.0 Standard', cost:'$0.04/5s', photo:true, speed:'1-2m'},
+      {id:'kling_pro', label:'Kling 3.0 Pro', cost:'$0.08/5s', photo:true, speed:'2-3m', durations:[5,10]},
+      {id:'kling_standard', label:'Kling 3.0 Standard', cost:'$0.04/5s', photo:true, speed:'1-2m', durations:[5,10]},
     ]},
     { group:'─── Google Veo (via Runway) ───', models:[
-      {id:'veo3', label:'Veo 3', cost:'$0.15/5s', photo:true, speed:'3-5m'},
-      {id:'veo3_1', label:'Veo 3.1 (Latest)', cost:'$0.15/5s', photo:true, speed:'3-5m'},
-      {id:'veo3_1_fast', label:'Veo 3.1 Fast', cost:'$0.08/5s', photo:true, speed:'1-2m'},
+      {id:'veo3', label:'Veo 3', cost:'$0.15/5s', photo:true, speed:'3-5m', durations:[5,8]},
+      {id:'veo3_1', label:'Veo 3.1 (Latest)', cost:'$0.15/5s', photo:true, speed:'3-5m', durations:[5,8]},
+      {id:'veo3_1_fast', label:'Veo 3.1 Fast', cost:'$0.08/5s', photo:true, speed:'1-2m', durations:[5,8]},
     ]},
     { group:'─── Other ───', models:[
-      {id:'luma', label:'Luma Ray2', cost:'$0.50/5s', photo:true, speed:'45s'},
-      {id:'openai', label:'OpenAI GPT (Still Only)', cost:'$0.04', photo:true, speed:'10s'},
+      {id:'luma', label:'Luma Ray2', cost:'$0.50/5s', photo:true, speed:'45s', durations:[5,9]},
+      {id:'openai', label:'OpenAI GPT (Still Only)', cost:'$0.04', photo:true, speed:'10s', durations:[3,4,5,6,7,8,9,10,12,15]},
     ]},
   ];
   const CAMERA_ICONS = { static: '&#9632;', pan_left: '&#8592;', pan_right: '&#8594;', zoom_in: '&#8853;', zoom_out: '&#8854;', orbit: '&#10227;', tracking: '&#10132;' };
+
+  // ---- Duration helpers (Area 3) ----
+  function getModelDurations(engineId) {
+    if (!engineId) engineId = globalSettings.default_engine || 'grok';
+    return MODEL_DURATION_OPTIONS[engineId] || [5, 10];
+  }
+
+  function getMaxDuration(engineId) {
+    const durs = getModelDurations(engineId);
+    return Math.max(...durs);
+  }
+
+  function snapToValidDuration(engineId, duration) {
+    const durs = getModelDurations(engineId);
+    let closest = durs[0];
+    let minDiff = Math.abs(durs[0] - duration);
+    for (const d of durs) {
+      const diff = Math.abs(d - duration);
+      if (diff < minDiff) { minDiff = diff; closest = d; }
+    }
+    return closest;
+  }
+
+  // Build duration dropdown options for a given engine
+  function buildDurationOptions(engineId, currentDuration) {
+    const durs = getModelDurations(engineId);
+    const snapped = snapToValidDuration(engineId, currentDuration);
+    return durs.map(d => {
+      const sel = (d === snapped) ? 'selected' : '';
+      return `<option value="${d}" ${sel}>${d}s</option>`;
+    }).join('');
+  }
+
+  // When engine changes, update duration dropdown for that scene
+  window._onEngineChange = function(sceneId, newEngine) {
+    window._manualUpdateScene(sceneId, {engine: newEngine});
+    const durSelect = document.getElementById('msc-dur-select-' + sceneId);
+    if (durSelect) {
+      const effectiveEngine = newEngine || globalSettings.default_engine || 'grok';
+      const currentDur = parseInt(durSelect.value) || 8;
+      const snapped = snapToValidDuration(effectiveEngine, currentDur);
+      durSelect.innerHTML = buildDurationOptions(effectiveEngine, snapped);
+      if (snapped !== currentDur) {
+        window._manualUpdateScene(sceneId, {duration: snapped});
+      }
+      // Update max duration label
+      const maxLabel = document.getElementById('msc-dur-max-' + sceneId);
+      if (maxLabel) maxLabel.textContent = '(max ' + getMaxDuration(effectiveEngine) + 's)';
+    }
+  };
+
+  // Continuity mode state (Area 1)
+  let continuityMode = true;
+  // Natural pacing mode state (Area 4 item 8)
+  let naturalPacingMode = true;
 
   // ---- Manual audio upload ----
   manualUploadZone.addEventListener('click', () => manualFileInput.click());
@@ -3136,6 +3217,16 @@
         const acVal = $('audioCrossfadeVal');
         if (acSlider) acSlider.value = data.audio_crossfade;
         if (acVal) acVal.textContent = data.audio_crossfade + 's';
+      }
+      if (data.continuity_mode !== undefined) {
+        continuityMode = data.continuity_mode;
+        const cmCb = $('continuityModeCheckbox');
+        if (cmCb) cmCb.checked = continuityMode;
+      }
+      if (data.natural_pacing !== undefined) {
+        naturalPacingMode = data.natural_pacing;
+        const npCb = $('naturalPacingCheckbox');
+        if (npCb) npCb.checked = naturalPacingMode;
       }
       renderManualScenes();
       updateRenderEstimate();
@@ -3275,11 +3366,11 @@
               <div class="msc-controls-col">
                 <div class="msc-control-item">
                   <span class="msc-label">Dur:</span>
-                  <div class="slider-group" style="flex:1;">
-                    <input type="range" class="styled-slider amber-slider" min="2" max="20" step="1" value="${currentDuration}"
-                           oninput="this.nextElementSibling.textContent=this.value+'s'" onchange="window._manualUpdateScene('${s.id}', {duration: parseInt(this.value)})" style="flex:1;">
-                    <span class="slider-val amber">${currentDuration}s</span>
-                  </div>
+                  <select class="styled-select" id="msc-dur-select-${s.id}" style="flex:1;"
+                          onchange="window._manualUpdateScene('${s.id}', {duration: parseInt(this.value)})">
+                    ${buildDurationOptions(effectiveEngine, currentDuration)}
+                  </select>
+                  <span class="msc-grok-note" id="msc-dur-max-${s.id}" style="font-size:9px;white-space:nowrap;">(max ${getMaxDuration(effectiveEngine)}s)</span>
                 </div>
                 <div class="msc-control-item">
                   <span class="msc-label">Speed:</span>
@@ -3303,7 +3394,7 @@
                 </div>
                 <div class="msc-control-item">
                   <span class="msc-label">Engine:</span>
-                  <select class="styled-select" style="flex:1;" onchange="window._manualUpdateScene('${s.id}', {engine: this.value})">
+                  <select class="styled-select" style="flex:1;" onchange="window._onEngineChange('${s.id}', this.value)">
                     ${engineOptions}
                   </select>
                 </div>
@@ -3527,6 +3618,8 @@
       color_grade: colorGrade,
       audio_viz: vizEnabled ? vizStyle : null,
       audio_crossfade: audioCrossfade,
+      continuity_mode: continuityMode,
+      natural_pacing: naturalPacingMode,
     });
   };
 

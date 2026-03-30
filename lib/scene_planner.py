@@ -91,9 +91,58 @@ ENERGY_DESCRIPTORS = {
 
 QUALITY_SUFFIX = "cinematic, 4k, detailed, moody lighting, professional color grading"
 
+# ---- Natural clip duration ranges per section type (Area 2) ----
+SECTION_DURATION_RANGES = {
+    "intro":  (6, 8),    # establishing, slow
+    "verse":  (4, 6),    # moderate pacing
+    "chorus": (3, 5),    # fast cuts, high energy
+    "bridge": (6, 10),   # contemplative, slower
+    "outro":  (8, 10),   # closing, slow
+}
+
+
+def _pick_natural_duration(section_type: str, energy: float, beats: list | None = None,
+                            start: float = 0, end: float = 8) -> float:
+    """
+    Pick a natural clip duration based on section type and energy.
+
+    Args:
+        section_type: "intro", "verse", "chorus", "bridge", "outro"
+        energy: 0.0-1.0 energy level
+        beats: optional list of beat timestamps (seconds)
+        start: scene start time
+        end: scene end time
+
+    Returns:
+        duration in seconds, snapped to nearest beat if beats provided
+    """
+    lo, hi = SECTION_DURATION_RANGES.get(section_type, (4, 8))
+    # High energy -> shorter duration within the range
+    # Low energy -> longer duration within the range
+    t = 1.0 - min(max(energy, 0), 1.0)  # invert: high energy = low t
+    raw_dur = lo + t * (hi - lo)
+    raw_dur = round(raw_dur, 1)
+
+    # Clamp to actual section length
+    section_len = end - start
+    if raw_dur > section_len:
+        raw_dur = section_len
+
+    # Snap to nearest beat if beats are provided
+    if beats:
+        scene_end_target = start + raw_dur
+        # Find closest beat to the target end time
+        closest_beat = min(beats, key=lambda b: abs(b - scene_end_target))
+        # Only snap if the beat is reasonably close (within 1.5 seconds)
+        if abs(closest_beat - scene_end_target) < 1.5 and closest_beat > start + 2:
+            raw_dur = round(closest_beat - start, 3)
+
+    return max(raw_dur, 2.0)  # minimum 2 seconds
+
 
 def plan_scenes(analysis: dict, style: str, seed: int | None = None,
-                references: dict | None = None) -> list:
+                references: dict | None = None,
+                natural_pacing: bool = True) -> list:
     """
     Generate a scene list from audio analysis and user style prompt.
 
@@ -102,6 +151,7 @@ def plan_scenes(analysis: dict, style: str, seed: int | None = None,
         style: user-provided style description (e.g. "cyberpunk city neon rain")
         seed: optional random seed for reproducibility
         references: optional dict of {"name": "path/to/image.jpg"} for character/env references
+        natural_pacing: if True, vary clip durations based on section type and energy (Area 2)
 
     Returns:
         list of scene dicts: [{start_sec, end_sec, duration, prompt, section_type,
@@ -127,13 +177,20 @@ def plan_scenes(analysis: dict, style: str, seed: int | None = None,
             "transition": "crossfade",
         }]
 
+    beats = analysis.get("beats", None)
+
     scenes = []
     for i, section in enumerate(sections):
         start = section["start"]
         end = section["end"]
-        dur = round(end - start, 3)
         stype = section.get("type", "verse")
         energy = section.get("energy", 0.5)
+
+        # Area 2: Natural clip lengths based on section type and energy
+        if natural_pacing:
+            dur = _pick_natural_duration(stype, energy, beats=beats, start=start, end=end)
+        else:
+            dur = round(end - start, 3)
 
         prompt = _build_prompt(style, stype, energy)
         matched = _match_references(prompt, refs)
