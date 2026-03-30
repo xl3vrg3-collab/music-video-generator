@@ -2,3 +2,4 @@ requests
 numpy
 librosa
 python-dotenv
+Pillow

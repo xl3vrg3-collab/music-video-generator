@@ -127,7 +127,7 @@ def _ken_burns(image_path: str, output_path: str, duration: float = 8.0):
 # ---- Public API ----
 
 def generate_scene(scene: dict, index: int, output_dir: str,
-                   progress_cb=None) -> str:
+                   progress_cb=None, cost_cb=None) -> str:
     """
     Generate a single video clip for a scene.
 
@@ -136,6 +136,7 @@ def generate_scene(scene: dict, index: int, output_dir: str,
         index: scene index (for naming)
         output_dir: directory to save clips
         progress_cb: optional callable(index, status_str)
+        cost_cb: optional callable(scene_key, gen_type) to record cost
 
     Returns:
         path to the generated video clip
@@ -148,6 +149,10 @@ def generate_scene(scene: dict, index: int, output_dir: str,
         if progress_cb:
             progress_cb(index, msg)
 
+    def _record(gen_type):
+        if cost_cb:
+            cost_cb(str(scene.get("id", index)), gen_type)
+
     # Try video generation first
     try:
         _report("submitting video request...")
@@ -156,6 +161,7 @@ def generate_scene(scene: dict, index: int, output_dir: str,
         video_info = _poll_video(request_id)
         _report("downloading clip...")
         _download(video_info["url"], clip_path)
+        _record("video")
         _report("done")
         return clip_path
     except Exception as e:
@@ -167,6 +173,7 @@ def generate_scene(scene: dict, index: int, output_dir: str,
         img_path = os.path.join(output_dir, f"img_{index:03d}.png")
         _download(img_url, img_path)
         _ken_burns(img_path, clip_path, duration)
+        _record("image")
         _report("done (image fallback)")
         return clip_path
     except Exception as e2:
@@ -175,7 +182,7 @@ def generate_scene(scene: dict, index: int, output_dir: str,
 
 
 def generate_all(scenes: list, output_dir: str,
-                 progress_cb=None) -> list:
+                 progress_cb=None, cost_cb=None) -> list:
     """
     Generate video clips for all scenes with concurrency limit.
 
@@ -183,6 +190,7 @@ def generate_all(scenes: list, output_dir: str,
         scenes: list of scene dicts
         output_dir: directory to save clips
         progress_cb: optional callable(index, status_str)
+        cost_cb: optional callable(scene_key, gen_type) to record cost
 
     Returns:
         ordered list of clip file paths
@@ -193,7 +201,7 @@ def generate_all(scenes: list, output_dir: str,
     with ThreadPoolExecutor(max_workers=MAX_CONCURRENT) as pool:
         futures = {}
         for i, scene in enumerate(scenes):
-            fut = pool.submit(generate_scene, scene, i, output_dir, progress_cb)
+            fut = pool.submit(generate_scene, scene, i, output_dir, progress_cb, cost_cb)
             futures[fut] = i
 
         for fut in as_completed(futures):

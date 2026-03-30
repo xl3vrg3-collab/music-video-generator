@@ -793,16 +793,233 @@
     .msc-body { grid-template-columns: 1fr; }
     .msc-photo-preview { width: 100%; height: 120px; }
   }
+
+  /* ---- Text Overlay Editor ---- */
+  .msc-overlay-row {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    margin-top: 6px;
+  }
+  .msc-overlay-input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    color: var(--text);
+    font-family: inherit; font-size: 11px;
+    min-width: 120px;
+  }
+  .msc-overlay-input:focus { outline: none; border-color: var(--cyan); }
+  .msc-overlay-input::placeholder { color: var(--text-dim); }
+
+  /* ---- Stitch Settings Bar ---- */
+  .stitch-settings-bar {
+    display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+  }
+  .stitch-setting-group {
+    display: flex; gap: 6px; align-items: center;
+  }
+  .stitch-setting-group .msc-label {
+    white-space: nowrap;
+  }
+  .stitch-setting-group .msc-select {
+    min-width: 100px;
+  }
+  .stitch-checkbox-label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 10px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 1px;
+    cursor: pointer;
+  }
+  .stitch-checkbox-label input[type="checkbox"] {
+    accent-color: var(--cyan);
+  }
+
+  /* ---- Merge button ---- */
+  .msc-merge-btn {
+    background: transparent;
+    border: 1px solid var(--amber);
+    color: var(--amber);
+    font-family: inherit; font-size: 9px;
+    padding: 4px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    transition: all 0.2s;
+  }
+  .msc-merge-btn:hover {
+    background: rgba(255,170,0,0.15);
+  }
+
+  /* ---- Cost Tracker (top-right) ---- */
+  .cost-tracker {
+    position: fixed;
+    top: 16px; right: 20px;
+    z-index: 100;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 14px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    display: flex; align-items: center; gap: 8px;
+    box-shadow: 0 0 12px rgba(0,0,0,0.5);
+  }
+  .cost-tracker .cost-label {
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    font-size: 9px;
+  }
+  .cost-tracker .cost-value {
+    color: var(--green);
+    font-weight: 700;
+    font-size: 13px;
+  }
+  .cost-tracker .cost-value.over-budget {
+    color: var(--red);
+    animation: pulse-cost 1s ease-in-out infinite;
+  }
+  @keyframes pulse-cost {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  /* ---- Toolbar (Undo/Redo + Project + Storyboard) ---- */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+  .toolbar-group {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .toolbar-sep {
+    width: 1px;
+    height: 24px;
+    background: var(--border);
+    margin: 0 8px;
+  }
+  .btn-toolbar {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 6px 12px;
+    font-family: inherit; font-size: 10px;
+    letter-spacing: 2px; text-transform: uppercase;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-dim);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.2s;
+    gap: 5px;
+  }
+  .btn-toolbar:hover:not(:disabled) {
+    border-color: var(--cyan);
+    color: var(--cyan);
+    background: rgba(0,212,255,0.05);
+  }
+  .btn-toolbar:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+  .btn-toolbar.btn-tb-amber:hover:not(:disabled) {
+    border-color: var(--amber);
+    color: var(--amber);
+    background: rgba(255,170,0,0.05);
+  }
+  .btn-toolbar.btn-tb-magenta:hover:not(:disabled) {
+    border-color: var(--magenta);
+    color: var(--magenta);
+    background: rgba(255,45,123,0.05);
+  }
+  .btn-toolbar.btn-tb-green:hover:not(:disabled) {
+    border-color: var(--green);
+    color: var(--green);
+    background: rgba(0,255,136,0.05);
+  }
+
+  /* ---- Upscale button ---- */
+  .btn-upscale {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 4px 10px;
+    font-family: inherit; font-size: 9px;
+    letter-spacing: 1px; text-transform: uppercase;
+    border: 1px solid var(--amber);
+    background: transparent;
+    color: var(--amber);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 700;
+  }
+  .btn-upscale:hover {
+    background: rgba(255,170,0,0.12);
+    box-shadow: 0 0 8px rgba(255,170,0,0.3);
+  }
+  .btn-upscale:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  /* ---- Scene cost badge ---- */
+  .msc-cost-badge {
+    font-size: 9px;
+    color: var(--green);
+    letter-spacing: 1px;
+    padding: 2px 8px;
+    border: 1px solid rgba(0,255,136,0.2);
+    border-radius: 3px;
+    background: rgba(0,255,136,0.05);
+  }
+
+  /* ---- Project load file input ---- */
+  #projectLoadInput { display: none; }
+/* ---- Lyrics Sync ---- */  .lyrics-textarea {    width: 100%; background: var(--bg); border: 1px solid var(--border);    border-radius: 4px; padding: 12px 14px; color: var(--text);    font-family: inherit; font-size: 12px; resize: vertical;    min-height: 100px; line-height: 1.6;  }  .lyrics-textarea:focus { outline: none; border-color: var(--cyan); }  .lyrics-textarea::placeholder { color: var(--text-dim); }  .lyrics-mode-toggle { display: flex; gap: 0; margin-bottom: 12px; }  .lyrics-mode-btn {    padding: 6px 16px; font-family: inherit; font-size: 10px;    letter-spacing: 2px; text-transform: uppercase;    border: 1px solid var(--border); background: transparent;    color: var(--text-dim); cursor: pointer; transition: all 0.3s;  }  .lyrics-mode-btn:first-child { border-radius: 4px 0 0 4px; }  .lyrics-mode-btn:last-child { border-radius: 0 4px 4px 0; }  .lyrics-mode-btn.active { background: rgba(0,212,255,0.1); border-color: var(--cyan); color: var(--cyan); }  .lyrics-timestamps { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 200px; overflow-y: auto; }  .lyrics-ts-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }  .lyrics-ts-row .ts-line { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }  .lyrics-ts-input {    width: 70px; background: var(--bg); border: 1px solid var(--border);    border-radius: 3px; padding: 4px 6px; color: var(--amber);    font-family: inherit; font-size: 11px; text-align: right;  }  .lyrics-ts-input:focus { outline: none; border-color: var(--cyan); }  /* ---- Style Lock ---- */  .style-lock-bar {    display: flex; align-items: center; gap: 10px; margin-top: 10px;    padding: 10px 14px; background: var(--bg);    border: 1px solid var(--border); border-radius: 4px;  }  .style-lock-toggle { position: relative; width: 36px; height: 20px; cursor: pointer; }  .style-lock-toggle input { display: none; }  .style-lock-toggle .slider {    position: absolute; inset: 0; background: var(--border);    border-radius: 10px; transition: all 0.3s;  }  .style-lock-toggle .slider::after {    content: ""; position: absolute; width: 16px; height: 16px;    border-radius: 50%; background: var(--text-dim);    top: 2px; left: 2px; transition: all 0.3s;  }  .style-lock-toggle input:checked + .slider { background: var(--cyan-dim); }  .style-lock-toggle input:checked + .slider::after { background: var(--cyan); transform: translateX(16px); }  .style-lock-input {    flex: 1; background: transparent; border: none;    color: var(--cyan); font-family: inherit; font-size: 11px; letter-spacing: 1px;  }  .style-lock-input:focus { outline: none; }  .style-lock-input::placeholder { color: var(--text-dim); }  .style-lock-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; white-space: nowrap; }  /* ---- Aspect Ratio / Batch Export ---- */  .aspect-select {    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;    padding: 6px 10px; color: var(--text); font-family: inherit; font-size: 11px;    cursor: pointer; appearance: none; -webkit-appearance: none;    padding-right: 24px;  }  .aspect-select:focus { outline: none; border-color: var(--cyan); }  .aspect-select option { background: var(--surface); color: var(--text); }  .export-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }  .export-item {    display: flex; align-items: center; justify-content: space-between;    padding: 8px 12px; background: var(--bg);    border: 1px solid var(--border); border-radius: 4px; font-size: 11px;  }  .export-item .export-name { color: var(--cyan); letter-spacing: 1px; }  .export-item .export-size { color: var(--text-dim); }
 </style>
 </head>
 <body>
 <div class="glow-tl"></div>
 <div class="glow-br"></div>
 
+<!-- Cost Tracker (fixed top-right) -->
+<div class="cost-tracker" id="costTracker">
+  <span class="cost-label">API Cost</span>
+  <span class="cost-value" id="costValue">$0.00</span>
+</div>
+
+<!-- Hidden file input for project load -->
+<input type="file" id="projectLoadInput" accept=".json">
+
 <div class="container">
   <div class="header">
     <h1>Music Video Generator</h1>
     <div class="sub">Grok AI &middot; Video Synthesis Engine</div>
+  </div>
+
+  <!-- Toolbar: Undo/Redo, Project Save/Load, Storyboard -->
+  <div class="toolbar">
+    <div class="toolbar-group">
+      <button class="btn-toolbar" id="undoBtn" disabled title="Undo (Ctrl+Z)">Undo</button>
+      <button class="btn-toolbar" id="redoBtn" disabled title="Redo (Ctrl+Y)">Redo</button>
+    </div>
+    <div class="toolbar-sep"></div>
+    <div class="toolbar-group">
+      <button class="btn-toolbar btn-tb-green" id="saveProjectBtn" title="Save project to JSON">Save Project</button>
+      <button class="btn-toolbar btn-tb-amber" id="loadProjectBtn" title="Load project from JSON">Load Project</button>
+    </div>
+    <div class="toolbar-sep"></div>
+    <div class="toolbar-group">
+      <button class="btn-toolbar btn-tb-magenta" id="exportStoryboardBtn" title="Export storyboard as PNG">Export Storyboard</button>
+    </div>
   </div>
 
   <!-- Mode Toggle -->
@@ -904,12 +1121,57 @@
     </div>
   </div>
 
+  <!-- Lyrics Panel (Auto Mode) -->
+  <div class="panel hidden" id="autoLyricsPanel">
+    <div class="panel-header"><span class="dot"></span> Lyrics Sync</div>
+    <div class="panel-body">
+      <div class="lyrics-mode-toggle">
+        <button class="lyrics-mode-btn active" id="autoLyricsAutoBtn" onclick="window._setLyricsMode('auto','auto')">Auto Distribute</button>
+        <button class="lyrics-mode-btn" id="autoLyricsManualBtn" onclick="window._setLyricsMode('auto','manual')">Manual Timestamps</button>
+      </div>
+      <textarea class="lyrics-textarea" id="autoLyricsInput" placeholder="Paste lyrics here, one line per line..."></textarea>
+      <div class="lyrics-timestamps hidden" id="autoLyricsTimestamps"></div>
+      <div class="btn-row" style="margin-top:12px;">
+        <button class="btn btn-small" onclick="window._applyLyrics('auto')">Apply Lyrics Overlay</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Aspect Ratio + Batch Export Panel (Auto Mode) -->
+  <div class="panel hidden" id="autoExportPanel">
+    <div class="panel-header"><span class="dot"></span> Export Options</div>
+    <div class="panel-body">
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+        <div>
+          <span class="msc-label">Aspect Ratio: </span>
+          <select class="aspect-select" id="autoAspectSelect">
+            <option value="16:9" selected>16:9 (1920x1080)</option>
+            <option value="9:16">9:16 (1080x1920)</option>
+            <option value="1:1">1:1 (1080x1080)</option>
+            <option value="4:5">4:5 (1080x1350)</option>
+          </select>
+        </div>
+        <button class="btn btn-small btn-amber" id="batchExportBtn" onclick="window._batchExport()">Export All Formats</button>
+      </div>
+      <div class="export-list" id="exportList"></div>
+    </div>
+  </div>
+
   <!-- Scene Editor Panel -->
   <div class="panel hidden" id="sceneEditorPanel">
     <div class="panel-header"><span class="dot dot-magenta"></span> Scene Editor</div>
     <div class="panel-body">
       <div class="hint" style="margin-bottom:14px;">
         Click a scene to expand. Edit its prompt and regenerate individually. When satisfied, restitch the final video.
+      </div>
+      <!-- Style Lock (Auto Mode) -->
+      <div class="style-lock-bar" id="autoStyleLockBar">
+        <span class="style-lock-label">Style Lock</span>
+        <label class="style-lock-toggle">
+          <input type="checkbox" id="autoStyleLockToggle" onchange="window._toggleStyleLock('auto')">
+          <span class="slider"></span>
+        </label>
+        <input type="text" class="style-lock-input" id="autoStyleLockInput" placeholder="e.g. cyberpunk, neon rain, dark moody">
       </div>
       <div class="scene-editor-timeline" id="sceneEditorTimeline"></div>
       <div class="btn-row" style="margin-top:16px;">
@@ -953,11 +1215,92 @@
           </div>
         </div>
 
+        <div class="stitch-settings-bar">
+          <div class="stitch-setting-group">
+            <span class="msc-label">Color Grade:</span>
+            <select class="msc-select" id="globalColorGradeSelect" onchange="window._updateStitchSettings()">
+              <option value="none">None</option>
+              <option value="warm">Warm</option>
+              <option value="cold">Cold</option>
+              <option value="vintage">Vintage</option>
+              <option value="high_contrast">High Contrast</option>
+              <option value="noir">Noir</option>
+              <option value="cyberpunk">Cyberpunk</option>
+              <option value="sepia">Sepia</option>
+            </select>
+          </div>
+          <div class="stitch-setting-group">
+            <label class="stitch-checkbox-label">
+              <input type="checkbox" id="audioVizCheckbox" onchange="window._updateStitchSettings()">
+              Audio Visualization
+            </label>
+            <select class="msc-select" id="audioVizStyleSelect" onchange="window._updateStitchSettings()">
+              <option value="waveform">Waveform</option>
+              <option value="spectrum">Spectrum</option>
+              <option value="both">Both</option>
+            </select>
+          </div>
+        </div>
+
         <div class="manual-bottom-bar">
           <button class="btn" id="manualGenerateAllBtn">Generate All</button>
           <button class="btn btn-amber" id="manualStitchBtn">Stitch Video</button>
           <a class="btn btn-magenta hidden" id="manualDownloadBtn" href="#" download="music_video.mp4">Download</a>
         </div>
+      </div>
+    </div>
+
+    <!-- Style Lock (Manual Mode) -->
+    <div class="panel">
+      <div class="panel-header"><span class="dot"></span> Style Consistency Lock</div>
+      <div class="panel-body">
+        <div class="hint" style="margin-bottom:10px;">
+          Lock a style string that will be appended to all scene prompts for visual consistency.
+        </div>
+        <div class="style-lock-bar" id="manualStyleLockBar">
+          <span class="style-lock-label">Lock</span>
+          <label class="style-lock-toggle">
+            <input type="checkbox" id="manualStyleLockToggle" onchange="window._toggleStyleLock('manual')">
+            <span class="slider"></span>
+          </label>
+          <input type="text" class="style-lock-input" id="manualStyleLockInput" placeholder="e.g. cyberpunk, neon rain, dark moody, cinematic 4k">
+        </div>
+      </div>
+    </div>
+
+    <!-- Lyrics Panel (Manual Mode) -->
+    <div class="panel">
+      <div class="panel-header"><span class="dot"></span> Lyrics Sync</div>
+      <div class="panel-body">
+        <div class="lyrics-mode-toggle">
+          <button class="lyrics-mode-btn active" id="manualLyricsAutoBtn" onclick="window._setLyricsMode('manual','auto')">Auto Distribute</button>
+          <button class="lyrics-mode-btn" id="manualLyricsManualBtn" onclick="window._setLyricsMode('manual','manual')">Manual Timestamps</button>
+        </div>
+        <textarea class="lyrics-textarea" id="manualLyricsInput" placeholder="Paste lyrics here, one line per line..."></textarea>
+        <div class="lyrics-timestamps hidden" id="manualLyricsTimestamps"></div>
+        <div class="btn-row" style="margin-top:12px;">
+          <button class="btn btn-small" onclick="window._applyLyrics('manual')">Apply Lyrics Overlay</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Aspect Ratio + Batch Export (Manual Mode) -->
+    <div class="panel">
+      <div class="panel-header"><span class="dot"></span> Export Options</div>
+      <div class="panel-body">
+        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+          <div>
+            <span class="msc-label">Aspect Ratio: </span>
+            <select class="aspect-select" id="manualAspectSelect">
+              <option value="16:9" selected>16:9 (1920x1080)</option>
+              <option value="9:16">9:16 (1080x1920)</option>
+              <option value="1:1">1:1 (1080x1080)</option>
+              <option value="4:5">4:5 (1080x1350)</option>
+            </select>
+          </div>
+          <button class="btn btn-small btn-amber" onclick="window._batchExport()">Export All Formats</button>
+        </div>
+        <div class="export-list" id="manualExportList"></div>
       </div>
     </div>
 
@@ -1329,6 +1672,10 @@
       progressFill.style.width = '100%';
       // Load scene editor
       loadSceneEditor();
+      // Show lyrics and export panels
+      var alp = $('autoLyricsPanel'); if (alp) alp.classList.remove('hidden');
+      var aep = $('autoExportPanel'); if (aep) aep.classList.remove('hidden');
+      if (window._loadExports) window._loadExports();
     }
   }
 
@@ -1405,6 +1752,7 @@
             <textarea class="se-prompt-edit" id="se-prompt-${i}" rows="3">${escHtml(s.prompt || '')}</textarea>
             <div class="se-scene-actions">
               <button class="btn btn-small btn-magenta" onclick="window._regenScene(${i})">Regenerate</button>
+              <button class="btn btn-small btn-amber" onclick="window._splitAutoScene(${i})">Split</button>
               <span class="se-scene-status" id="se-status-${i}"></span>
             </div>
           </div>
@@ -1613,6 +1961,11 @@
 
   const MANUAL_TRANSITIONS = ['crossfade','hard_cut','fade_black','wipe_left','wipe_right','dissolve','zoom_in','glitch'];
   const MANUAL_DURATIONS = [4, 6, 8, 10, 12, 15];
+  const SPEED_OPTIONS = [0.25, 0.5, 1.0, 1.5, 2.0];
+  const COLOR_GRADES = ['none','warm','cold','vintage','high_contrast','noir','cyberpunk','sepia'];
+  const OVERLAY_POSITIONS = ['top','center','bottom'];
+  const OVERLAY_SIZES = ['small','medium','large'];
+  const OVERLAY_COLORS = ['white','cyan','orange'];
 
   // ---- Manual audio upload ----
   manualUploadZone.addEventListener('click', () => manualFileInput.click());
@@ -1662,6 +2015,24 @@
         manualUploadFilename.textContent = manualSongFilename;
         manualUploadFilename.classList.remove('hidden');
       }
+      // Restore stitch settings from saved plan
+      if (data.color_grade) {
+        const gradeEl = document.getElementById('globalColorGradeSelect');
+        if (gradeEl) gradeEl.value = data.color_grade;
+      }
+      if (data.audio_viz) {
+        const vizCb = document.getElementById('audioVizCheckbox');
+        const vizSel = document.getElementById('audioVizStyleSelect');
+        if (vizCb) vizCb.checked = true;
+        if (vizSel) vizSel.value = data.audio_viz;
+      }
+      // Restore style lock
+      if (data.style_lock) {
+        const slToggle = $('manualStyleLockToggle');
+        const slInput = $('manualStyleLockInput');
+        if (slToggle) slToggle.checked = true;
+        if (slInput) { slInput.value = data.style_lock; slInput.style.color = 'var(--cyan)'; }
+      }
       renderManualScenes();
     } catch (e) {
       manualScenes = [];
@@ -1692,6 +2063,32 @@
         return `<option value="${t}" ${sel}>${t.replace(/_/g, ' ')}</option>`;
       }).join('');
 
+      const speedOptions = SPEED_OPTIONS.map(sp => {
+        const sel = (sp === (s.speed || 1.0)) ? 'selected' : '';
+        const label = sp === 1.0 ? '1x (normal)' : sp + 'x';
+        return `<option value="${sp}" ${sel}>${label}</option>`;
+      }).join('');
+
+      const sceneGradeOptions = COLOR_GRADES.map(g => {
+        const sel = (g === (s.color_grade || 'none')) ? 'selected' : '';
+        return `<option value="${g}" ${sel}>${g.replace(/_/g, ' ')}</option>`;
+      }).join('');
+
+      const overlay = s.overlay || {};
+      const overlayText = overlay.text || '';
+      const overlayPosOptions = OVERLAY_POSITIONS.map(p => {
+        const sel = (p === (overlay.position || 'bottom')) ? 'selected' : '';
+        return `<option value="${p}" ${sel}>${p}</option>`;
+      }).join('');
+      const overlaySizeOptions = OVERLAY_SIZES.map(sz => {
+        const sel = (sz === (overlay.font_size || 'medium')) ? 'selected' : '';
+        return `<option value="${sz}" ${sel}>${sz}</option>`;
+      }).join('');
+      const overlayColorOptions = OVERLAY_COLORS.map(c => {
+        const sel = (c === (overlay.color || 'white')) ? 'selected' : '';
+        return `<option value="${c}" ${sel}>${c}</option>`;
+      }).join('');
+
       const photoHtml = hasPhoto
         ? `<img src="${s.photo_url}?t=${Date.now()}" alt="Scene photo">`
         : `<div class="msc-photo-placeholder">Click to<br>upload photo</div>`;
@@ -1699,6 +2096,8 @@
       const clipHtml = hasClip
         ? `<div class="msc-clip-preview"><video src="${s.clip_url}?t=${Date.now()}" controls preload="metadata"></video></div>`
         : '';
+
+      const isLast = i >= manualScenes.length - 1;
 
       html += `
         <div class="manual-scene-card ${stateClass}" data-scene-id="${s.id}" id="msc-${s.id}"
@@ -1712,6 +2111,7 @@
           <div class="msc-header">
             <span class="msc-drag-handle" title="Drag to reorder">&#8801;</span>
             <span class="msc-title">Scene ${i + 1}</span>
+            ${!isLast ? `<button class="msc-merge-btn" onclick="window._manualMergeScene('${s.id}')" title="Merge with next scene">Merge Next</button>` : ''}
             <button class="msc-delete-btn" onclick="window._manualDeleteScene('${s.id}')">Delete</button>
           </div>
           <div class="msc-body">
@@ -1734,10 +2134,39 @@
                 <select class="msc-select" onchange="window._manualUpdateScene('${s.id}', {transition: this.value})">
                   ${transOptions}
                 </select>
+                <span class="msc-label" style="margin-left:8px;">Speed:</span>
+                <select class="msc-select" onchange="window._manualUpdateScene('${s.id}', {speed: parseFloat(this.value)})">
+                  ${speedOptions}
+                </select>
+              </div>
+              <div class="msc-controls-row">
+                <span class="msc-label">Color:</span>
+                <select class="msc-select" onchange="window._manualUpdateScene('${s.id}', {color_grade: this.value})">
+                  ${sceneGradeOptions}
+                </select>
+              </div>
+              <div class="msc-overlay-row">
+                <span class="msc-label">Text:</span>
+                <input type="text" class="msc-overlay-input" id="msc-overlay-text-${s.id}"
+                       placeholder="Overlay text..."
+                       value="${escHtml(overlayText)}"
+                       onchange="window._updateOverlay('${s.id}')">
+                <select class="msc-select" id="msc-overlay-pos-${s.id}" onchange="window._updateOverlay('${s.id}')">
+                  ${overlayPosOptions}
+                </select>
+                <select class="msc-select" id="msc-overlay-size-${s.id}" onchange="window._updateOverlay('${s.id}')">
+                  ${overlaySizeOptions}
+                </select>
+                <select class="msc-select" id="msc-overlay-color-${s.id}" onchange="window._updateOverlay('${s.id}')">
+                  ${overlayColorOptions}
+                </select>
               </div>
               <div class="msc-actions">
                 <button class="btn btn-small" onclick="window._manualGenerateScene('${s.id}')">Generate Clip</button>
+                <button class="btn btn-small btn-amber" onclick="window._manualSplitScene('${s.id}')">Split</button>
                 ${hasClip ? `<button class="btn btn-small btn-amber" onclick="window._manualPreviewClip('${s.id}')">Preview</button>` : ''}
+                ${hasClip ? `<button class="btn-upscale" onclick="window._upscaleScene('${s.id}', this)" title="Upscale clip 2x with lanczos">2x</button>` : ''}
+                ${(window._sceneCosts && window._sceneCosts[s.id]) ? `<span class="msc-cost-badge">$` + window._sceneCosts[s.id].toFixed(2) + `</span>` : ''}
                 <span class="msc-status" id="msc-status-${s.id}"></span>
               </div>
             </div>
@@ -1864,6 +2293,49 @@
       video.scrollIntoView({ behavior: 'smooth', block: 'center' });
       video.play();
     }
+  };
+
+  // ---- Merge scene with next ----
+  window._manualMergeScene = async function(sceneId) {
+    if (!confirm('Merge this scene with the next one? This cannot be undone.')) return;
+    try {
+      const resp = await fetch('/api/manual/scene/' + sceneId + '/merge', { method: 'POST' });
+      const data = await resp.json();
+      if (data.ok) {
+        await loadManualScenes();
+      } else {
+        alert('Merge failed: ' + (data.error || 'unknown'));
+      }
+    } catch (e) {
+      alert('Merge failed: ' + e.message);
+    }
+  };
+
+  // ---- Update text overlay ----
+  window._updateOverlay = function(sceneId) {
+    const text = (document.getElementById('msc-overlay-text-' + sceneId) || {}).value || '';
+    const position = (document.getElementById('msc-overlay-pos-' + sceneId) || {}).value || 'bottom';
+    const font_size = (document.getElementById('msc-overlay-size-' + sceneId) || {}).value || 'medium';
+    const color = (document.getElementById('msc-overlay-color-' + sceneId) || {}).value || 'white';
+    const overlay = text ? { text: text, position: position, font_size: font_size, color: color } : null;
+    window._manualUpdateScene(sceneId, { overlay: overlay });
+  };
+
+  // ---- Update global stitch settings (color grade, audio viz) ----
+  window._updateStitchSettings = async function() {
+    const colorGrade = document.getElementById('globalColorGradeSelect').value;
+    const vizEnabled = document.getElementById('audioVizCheckbox').checked;
+    const vizStyle = document.getElementById('audioVizStyleSelect').value;
+    try {
+      await fetch('/api/manual/stitch-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          color_grade: colorGrade,
+          audio_viz: vizEnabled ? vizStyle : null,
+        }),
+      });
+    } catch (e) { /* ignore */ }
   };
 
   // ---- Generate all ----
@@ -2054,6 +2526,479 @@
     });
     dragSrcId = null;
   };
+
+  // ===================== FEATURE 11: UPSCALE =====================
+
+  window._upscaleScene = async function(sceneId, btn) {
+    if (!confirm('Upscale this clip 2x? This replaces the original file.')) return;
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+      const resp = await fetch(`/api/manual/scene/${sceneId}/upscale`, { method: 'POST' });
+      const data = await resp.json();
+      if (data.ok) {
+        btn.textContent = 'DONE';
+        btn.style.borderColor = 'var(--green)';
+        btn.style.color = 'var(--green)';
+        // Refresh to reload the video
+        setTimeout(() => loadManualScenes(), 500);
+      } else {
+        alert('Upscale failed: ' + (data.error || 'unknown'));
+        btn.textContent = '2x';
+        btn.disabled = false;
+      }
+    } catch (e) {
+      alert('Upscale error: ' + e.message);
+      btn.textContent = '2x';
+      btn.disabled = false;
+    }
+  };
+
+  // ===================== FEATURE 12: PROJECT SAVE/LOAD =====================
+
+  const saveProjectBtn = $('saveProjectBtn');
+  const loadProjectBtn = $('loadProjectBtn');
+  const projectLoadInput = $('projectLoadInput');
+
+  saveProjectBtn.addEventListener('click', async () => {
+    saveProjectBtn.disabled = true;
+    saveProjectBtn.textContent = 'SAVING...';
+    try {
+      const resp = await fetch('/api/project/save');
+      const data = await resp.json();
+      if (data.ok && data.project) {
+        // Download the project JSON file
+        const blob = new Blob([JSON.stringify(data.project, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = data.filename || 'project.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else {
+        alert('Save failed: ' + (data.error || 'unknown'));
+      }
+    } catch (e) {
+      alert('Save error: ' + e.message);
+    }
+    saveProjectBtn.disabled = false;
+    saveProjectBtn.textContent = 'SAVE PROJECT';
+  });
+
+  loadProjectBtn.addEventListener('click', () => projectLoadInput.click());
+  projectLoadInput.addEventListener('change', async () => {
+    const file = projectLoadInput.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const project = JSON.parse(text);
+      loadProjectBtn.disabled = true;
+      loadProjectBtn.textContent = 'LOADING...';
+      const resp = await fetch('/api/project/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(project),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        // Reload manual scenes and cost tracker
+        await loadManualScenes();
+        await refreshCost();
+        alert('Project loaded successfully!');
+      } else {
+        alert('Load failed: ' + (data.error || 'unknown'));
+      }
+    } catch (e) {
+      alert('Load error: ' + e.message);
+    }
+    loadProjectBtn.disabled = false;
+    loadProjectBtn.textContent = 'LOAD PROJECT';
+    projectLoadInput.value = '';
+  });
+
+  // ===================== FEATURE 13: UNDO/REDO =====================
+
+  const undoBtn = $('undoBtn');
+  const redoBtn = $('redoBtn');
+  const MAX_HISTORY = 50;
+  let historyStack = [];
+  let historyIndex = -1;
+  let historyPaused = false;
+
+  function captureState() {
+    // Capture the current state of manual scenes for undo/redo
+    return JSON.parse(JSON.stringify(manualScenes));
+  }
+
+  function pushHistory(label) {
+    if (historyPaused) return;
+    // Remove any redo entries beyond current index
+    historyStack = historyStack.slice(0, historyIndex + 1);
+    historyStack.push({ label, state: captureState() });
+    if (historyStack.length > MAX_HISTORY) {
+      historyStack.shift();
+    }
+    historyIndex = historyStack.length - 1;
+    updateUndoRedoButtons();
+  }
+
+  function updateUndoRedoButtons() {
+    undoBtn.disabled = historyIndex <= 0;
+    redoBtn.disabled = historyIndex >= historyStack.length - 1;
+  }
+
+  async function restoreState(state) {
+    historyPaused = true;
+    // Send the restored scenes to the server
+    const order = state.map(s => s.id);
+    try {
+      // Update each scene's fields
+      for (const s of state) {
+        await fetch(`/api/manual/scene/${s.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: s.prompt,
+            duration: s.duration,
+            transition: s.transition,
+          }),
+        });
+      }
+      // Reorder
+      await fetch('/api/manual/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order }),
+      });
+    } catch (e) { /* best effort */ }
+    manualScenes = state;
+    renderManualScenes();
+    historyPaused = false;
+  }
+
+  undoBtn.addEventListener('click', () => {
+    if (historyIndex > 0) {
+      historyIndex--;
+      restoreState(JSON.parse(JSON.stringify(historyStack[historyIndex].state)));
+      updateUndoRedoButtons();
+    }
+  });
+
+  redoBtn.addEventListener('click', () => {
+    if (historyIndex < historyStack.length - 1) {
+      historyIndex++;
+      restoreState(JSON.parse(JSON.stringify(historyStack[historyIndex].state)));
+      updateUndoRedoButtons();
+    }
+  });
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      undoBtn.click();
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+      e.preventDefault();
+      redoBtn.click();
+    }
+  });
+
+  // Hook into scene modifications to capture history
+  const _origManualUpdateScene = window._manualUpdateScene;
+  window._manualUpdateScene = async function(sceneId, fields) {
+    pushHistory('edit scene');
+    await _origManualUpdateScene(sceneId, fields);
+  };
+
+  const _origManualDeleteScene = window._manualDeleteScene;
+  window._manualDeleteScene = async function(sceneId) {
+    pushHistory('delete scene');
+    await _origManualDeleteScene(sceneId);
+  };
+
+  // Hook add scene to capture history
+  const _origAddClick = manualAddSceneBtn.onclick;
+  manualAddSceneBtn.addEventListener('click', () => {
+    // Push history after the scene is added (slight delay)
+    setTimeout(() => pushHistory('add scene'), 500);
+  }, true);
+
+  // Hook drag-drop reorder
+  const _origMscDrop = window._mscDrop;
+  window._mscDrop = async function(e, targetId) {
+    pushHistory('reorder scenes');
+    await _origMscDrop(e, targetId);
+  };
+
+  // Initialize history with current state
+  const _origLoadManualScenes = loadManualScenes;
+  loadManualScenes = async function() {
+    await _origLoadManualScenes();
+    if (historyStack.length === 0) {
+      pushHistory('initial state');
+    }
+  };
+
+  // ===================== FEATURE 14: EXPORT STORYBOARD =====================
+
+  const exportStoryboardBtn = $('exportStoryboardBtn');
+  exportStoryboardBtn.addEventListener('click', async () => {
+    exportStoryboardBtn.disabled = true;
+    exportStoryboardBtn.textContent = 'GENERATING...';
+    try {
+      const resp = await fetch('/api/storyboard', { method: 'POST' });
+      const data = await resp.json();
+      if (data.ok && data.url) {
+        // Download the storyboard PNG
+        const a = document.createElement('a');
+        a.href = data.url;
+        a.download = data.filename || 'storyboard.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } else {
+        alert('Storyboard failed: ' + (data.error || 'unknown'));
+      }
+    } catch (e) {
+      alert('Storyboard error: ' + e.message);
+    }
+    exportStoryboardBtn.disabled = false;
+    exportStoryboardBtn.textContent = 'EXPORT STORYBOARD';
+  });
+
+  // ===================== FEATURE 15: COST TRACKER =====================
+
+  const costValue = $('costValue');
+  window._sceneCosts = {};
+
+  async function refreshCost() {
+    try {
+      const resp = await fetch('/api/cost');
+      const data = await resp.json();
+      const total = data.total_cost || 0;
+      const budget = data.budget || 10;
+      costValue.textContent = '$' + total.toFixed(2);
+      if (total >= budget) {
+        costValue.classList.add('over-budget');
+        costValue.title = 'Over budget ($' + budget.toFixed(2) + ')!';
+      } else {
+        costValue.classList.remove('over-budget');
+        costValue.title = 'Budget: $' + budget.toFixed(2);
+      }
+      // Store scene costs for badge display
+      window._sceneCosts = data.scene_costs || {};
+    } catch (e) { /* ignore */ }
+  }
+
+  // Poll cost every 10 seconds and on load
+  refreshCost();
+  setInterval(refreshCost, 10000);
+
+  // ===================== LYRICS SYNC =====================
+
+  let lyricsMode = { auto: 'auto', manual: 'auto' };
+
+  window._setLyricsMode = function(target, mode) {
+    lyricsMode[target] = mode;
+    var prefix = target === 'auto' ? 'auto' : 'manual';
+    var autoBtn = $(prefix + 'LyricsAutoBtn');
+    var manBtn = $(prefix + 'LyricsManualBtn');
+    var tsDiv = $(prefix + 'LyricsTimestamps');
+    var textarea = $(prefix + 'LyricsInput');
+    if (mode === 'manual') {
+      autoBtn.classList.remove('active');
+      manBtn.classList.add('active');
+      tsDiv.classList.remove('hidden');
+      // Parse lines and show timestamp inputs
+      var lines = (textarea.value || '').split('\n').filter(function(l) { return l.trim(); });
+      var html = '';
+      lines.forEach(function(line, i) {
+        html += '<div class="lyrics-ts-row">';
+        html += '<input type="number" class="lyrics-ts-input" id="' + prefix + '-ts-' + i + '" value="' + (i * 4) + '" step="0.5" min="0">';
+        html += '<span class="ts-line">' + escHtml(line) + '</span>';
+        html += '</div>';
+      });
+      if (!lines.length) html = '<div style="color:var(--text-dim);font-size:11px;">Type lyrics first, then switch to manual timestamps.</div>';
+      tsDiv.innerHTML = html;
+    } else {
+      autoBtn.classList.add('active');
+      manBtn.classList.remove('active');
+      tsDiv.classList.add('hidden');
+    }
+  };
+
+  window._applyLyrics = async function(target) {
+    var prefix = target === 'auto' ? 'auto' : 'manual';
+    var textarea = $(prefix + 'LyricsInput');
+    var lyrics = (textarea.value || '').trim();
+    if (!lyrics) { alert('Please enter lyrics first.'); return; }
+
+    var payload = { lyrics: lyrics, target: target };
+
+    if (lyricsMode[target] === 'manual') {
+      var lines = lyrics.split('\n').filter(function(l) { return l.trim(); });
+      var timestamps = [];
+      for (var i = 0; i < lines.length; i++) {
+        var inp = $(prefix + '-ts-' + i);
+        timestamps.push(inp ? parseFloat(inp.value) || (i * 4) : i * 4);
+      }
+      payload.timestamps = timestamps;
+    }
+
+    try {
+      var resp = await fetch('/api/lyrics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        alert('Lyrics overlay is being applied (' + data.lines + ' lines). Check progress.');
+        startPolling();
+      } else {
+        alert('Error: ' + (data.error || 'failed'));
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  // ===================== STYLE LOCK =====================
+
+  window._toggleStyleLock = async function(target) {
+    var prefix = target === 'auto' ? 'auto' : 'manual';
+    var toggle = $(prefix + 'StyleLockToggle');
+    var input = $(prefix + 'StyleLockInput');
+    var enabled = toggle.checked;
+    var styleLock = (input.value || '').trim();
+
+    if (enabled && !styleLock) {
+      alert('Please enter style keywords to lock.');
+      toggle.checked = false;
+      return;
+    }
+
+    try {
+      await fetch('/api/style-lock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ style_lock: styleLock, enabled: enabled, target: target }),
+      });
+      if (enabled) {
+        input.style.color = 'var(--cyan)';
+        input.readOnly = false;
+      } else {
+        input.style.color = '';
+      }
+      // Refresh scenes to show updated prompts
+      if (target === 'auto') loadSceneEditor();
+      else loadManualScenes();
+    } catch (e) { /* ignore */ }
+  };
+
+  // ===================== ASPECT RATIO & BATCH EXPORT =====================
+
+  window._batchExport = async function() {
+    try {
+      var resp = await fetch('/api/batch-export', { method: 'POST' });
+      var data = await resp.json();
+      if (data.ok) {
+        alert('Batch export started. All 4 aspect ratios will be generated.');
+        startPolling();
+        // Poll for exports
+        var ep = setInterval(async function() {
+          try {
+            var pr = await fetch('/api/progress');
+            var pd = await pr.json();
+            if (pd.phase === 'done' || pd.phase === 'error') {
+              clearInterval(ep);
+              window._loadExports();
+            }
+          } catch (e) { /* ignore */ }
+        }, 3000);
+      } else {
+        alert('Error: ' + (data.error || 'failed'));
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  window._loadExports = async function() {
+    try {
+      var resp = await fetch('/api/exports');
+      var data = await resp.json();
+      var exports = data.exports || [];
+      var targets = ['exportList', 'manualExportList'];
+      targets.forEach(function(id) {
+        var el = $(id);
+        if (!el) return;
+        if (!exports.length) {
+          el.innerHTML = '<div style="color:var(--text-dim);font-size:11px;">No exports yet.</div>';
+          return;
+        }
+        el.innerHTML = exports.map(function(exp) {
+          var sizeMB = (exp.size / 1048576).toFixed(1);
+          return '<div class="export-item">' +
+            '<span class="export-name">' + escHtml(exp.filename) + '</span>' +
+            '<span class="export-size">' + sizeMB + ' MB</span>' +
+            '<a class="btn btn-small btn-magenta" href="' + exp.url + '" download style="padding:4px 10px;font-size:9px;">Download</a>' +
+            '</div>';
+        }).join('');
+      });
+    } catch (e) { /* ignore */ }
+  };
+
+  // Load exports on page load
+  window._loadExports();
+
+  // ===================== SCENE SPLITTING =====================
+
+  window._splitAutoScene = async function(index) {
+    if (!confirm('Split scene #' + index + ' into two halves?')) return;
+    try {
+      var resp = await fetch('/api/scenes/' + index + '/split', { method: 'POST' });
+      var data = await resp.json();
+      if (data.ok) {
+        alert('Scene split into 2 scenes. Total: ' + data.total_scenes);
+        await loadSceneEditor();
+      } else {
+        alert('Error: ' + (data.error || 'failed'));
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  window._manualSplitScene = async function(sceneId) {
+    if (!confirm('Split this scene into two halves?')) return;
+    try {
+      var resp = await fetch('/api/manual/scene/' + sceneId + '/split', { method: 'POST' });
+      var data = await resp.json();
+      if (data.ok) {
+        await loadManualScenes();
+      } else {
+        alert('Error: ' + (data.error || 'failed'));
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  // Also show lyrics/export panels if existing plan
+  (async function showExistingPanels() {
+    try {
+      var resp = await fetch('/api/scenes');
+      var data = await resp.json();
+      if (data.scenes && data.scenes.length) {
+        var alp = $('autoLyricsPanel'); if (alp) alp.classList.remove('hidden');
+        var aep = $('autoExportPanel'); if (aep) aep.classList.remove('hidden');
+      }
+    } catch (e) { /* ignore */ }
+  })();
 
 })();
 </script>

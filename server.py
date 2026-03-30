@@ -24,9 +24,11 @@ Endpoints:
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
+import uuid as _uuid
 import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -40,11 +42,16 @@ except ImportError:
 from lib.audio_analyzer import analyze
 from lib.scene_planner import plan_scenes, TRANSITION_TYPES
 from lib.video_generator import generate_scene, generate_all
-from lib.video_stitcher import stitch
+from lib.video_stitcher import (
+    stitch, apply_lyrics_overlay, apply_aspect_ratio, split_clip,
+    ASPECT_PRESETS, _get_clip_duration,
+    SPEED_OPTIONS, COLOR_GRADE_PRESETS, AUDIO_VIZ_STYLES,
+)
 from lib.prompt_assistant import (
     STYLE_PRESETS, get_preset, enhance_prompt, suggest_from_song_name,
     get_preset_names, suggest_style,
 )
+from lib.storyboard_generator import generate_storyboard
 
 PORT = 3849
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -56,12 +63,24 @@ SCENE_PLAN_PATH = os.path.join(OUTPUT_DIR, "scene_plan.json")
 MANUAL_PLAN_PATH = os.path.join(OUTPUT_DIR, "manual_scene_plan.json")
 MANUAL_CLIPS_DIR = os.path.join(OUTPUT_DIR, "manual_clips")
 SCENE_PHOTOS_DIR = os.path.join(UPLOADS_DIR, "scene_photos")
+EXPORTS_DIR = os.path.join(OUTPUT_DIR, "exports")
+PROJECTS_DIR = os.path.join(OUTPUT_DIR, "projects")
+COST_TRACKER_PATH = os.path.join(OUTPUT_DIR, "cost_tracker.json")
+STORYBOARD_DIR = os.path.join(OUTPUT_DIR, "storyboards")
+
+# Cost defaults
+COST_PER_VIDEO_GEN = 0.15
+COST_PER_IMAGE_GEN = 0.02
+DEFAULT_BUDGET = 10.00
 
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(REFERENCES_DIR, exist_ok=True)
 os.makedirs(MANUAL_CLIPS_DIR, exist_ok=True)
 os.makedirs(SCENE_PHOTOS_DIR, exist_ok=True)
+os.makedirs(EXPORTS_DIR, exist_ok=True)
+os.makedirs(PROJECTS_DIR, exist_ok=True)
+os.makedirs(STORYBOARD_DIR, exist_ok=True)
 
 # ---- Global generation state ----
 gen_state = {
@@ -163,7 +182,7 @@ def _run_generation(song_path: str, style: str):
                 if index < len(gen_state["progress"]):
                     gen_state["progress"][index]["status"] = status
 
-        clip_paths = generate_all(scenes, CLIPS_DIR, progress_cb=on_progress)
+        clip_paths = generate_all(scenes, CLIPS_DIR, progress_cb=on_progress, cost_cb=_record_cost)
 
         valid = [c for c in clip_paths if c]
         if not valid:
@@ -231,7 +250,7 @@ def _run_regen(scene_index: int, new_prompt: str):
                 if gen_state["progress"]:
                     gen_state["progress"][0]["status"] = status
 
-        clip_path = generate_scene(scene, scene_index, CLIPS_DIR, progress_cb=on_progress)
+        clip_path = generate_scene(scene, scene_index, CLIPS_DIR, progress_cb=on_progress, cost_cb=_record_cost)
         scene["clip_path"] = clip_path
         plan["scenes"][scene_index] = scene
 
@@ -282,9 +301,83 @@ def _run_restitch():
             gen_state["running"] = False
 
 
-# ---- Manual scene plan helpers ----
+# ---- Cost tracker helpers ----
 
-import uuid as _uuid
+def _load_cost_tracker() -> dict:
+    """Load or create the cost tracker."""
+    if os.path.isfile(COST_TRACKER_PATH):
+        try:
+            with open(COST_TRACKER_PATH, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {
+        "total_cost": 0.0,
+        "video_generations": 0,
+        "image_generations": 0,
+        "budget": DEFAULT_BUDGET,
+        "scene_costs": {},  # scene_id_or_index -> cost
+    }
+
+
+def _save_cost_tracker(tracker: dict):
+    with open(COST_TRACKER_PATH, "w") as f:
+        json.dump(tracker, f, indent=2)
+
+
+def _record_cost(scene_key: str, gen_type: str = "video"):
+    """Record a generation cost. gen_type: 'video' or 'image'."""
+    tracker = _load_cost_tracker()
+    if gen_type == "video":
+        cost = COST_PER_VIDEO_GEN
+        tracker["video_generations"] += 1
+    else:
+        cost = COST_PER_IMAGE_GEN
+        tracker["image_generations"] += 1
+    tracker["total_cost"] = round(tracker["total_cost"] + cost, 4)
+    tracker["scene_costs"][str(scene_key)] = round(
+        tracker["scene_costs"].get(str(scene_key), 0) + cost, 4
+    )
+    _save_cost_tracker(tracker)
+    return tracker
+
+
+# ---- Upscale helper ----
+
+def _subprocess_kwargs() -> dict:
+    """Extra kwargs for subprocess calls (hide window on Windows)."""
+    kw = {}
+    if sys.platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0
+        kw["startupinfo"] = si
+    return kw
+
+
+def _upscale_clip(clip_path: str) -> str:
+    """Upscale a video clip 2x using ffmpeg lanczos scaling. Replaces the original."""
+    if not os.path.isfile(clip_path):
+        raise FileNotFoundError(f"Clip not found: {clip_path}")
+    dirname = os.path.dirname(clip_path)
+    basename = os.path.basename(clip_path)
+    name, ext = os.path.splitext(basename)
+    temp_path = os.path.join(dirname, f"{name}_upscaled{ext}")
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", clip_path,
+        "-vf", "scale=iw*2:ih*2:flags=lanczos",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-c:a", "copy",
+        temp_path,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+    # Replace original with upscaled
+    os.replace(temp_path, clip_path)
+    return clip_path
+
+
+# ---- Manual scene plan helpers ----
 
 
 def _load_manual_plan() -> dict:
@@ -341,7 +434,7 @@ def _run_manual_generate_scene(scene_id: str):
         }
 
         clip_path = generate_scene(gen_scene, scene_idx, MANUAL_CLIPS_DIR,
-                                   progress_cb=on_progress)
+                                   progress_cb=on_progress, cost_cb=_record_cost)
         scene["clip_path"] = clip_path
         scene["has_clip"] = True
         plan["scenes"][scene_idx] = scene
@@ -397,7 +490,7 @@ def _run_manual_generate_all():
 
             try:
                 clip_path = generate_scene(gen_scene, scene_idx, MANUAL_CLIPS_DIR,
-                                           progress_cb=on_progress)
+                                           progress_cb=on_progress, cost_cb=_record_cost)
                 scene["clip_path"] = clip_path
                 scene["has_clip"] = True
             except Exception as e:
@@ -441,7 +534,21 @@ def _run_manual_stitch():
         output_path = os.path.join(OUTPUT_DIR, "manual_final_video.mp4")
         # song_path can be None if user didn't upload audio
         audio = song_path if song_path and os.path.isfile(song_path) else None
-        stitch(clip_paths, audio, output_path, transitions=transitions)
+
+        # Gather new stitch parameters
+        speeds = [s.get("speed", 1.0) for s in plan["scenes"]]
+        text_overlays = [s.get("overlay") for s in plan["scenes"]]
+        scene_color_grades = [s.get("color_grade") for s in plan["scenes"]]
+        global_color_grade = plan.get("color_grade", "none")
+        audio_viz = plan.get("audio_viz")
+
+        stitch(clip_paths, audio, output_path,
+               transitions=transitions,
+               speeds=speeds,
+               text_overlays=text_overlays,
+               color_grade=global_color_grade,
+               scene_color_grades=scene_color_grades,
+               audio_viz=audio_viz)
 
         plan["output_path"] = output_path
         _save_manual_plan(plan)
@@ -449,6 +556,108 @@ def _run_manual_stitch():
         with gen_lock:
             gen_state["phase"] = "done"
             gen_state["output_file"] = output_path
+            gen_state["running"] = False
+
+    except Exception as e:
+        with gen_lock:
+            gen_state["phase"] = "error"
+            gen_state["error"] = str(e)
+            gen_state["running"] = False
+
+
+# ---- Lyrics helpers ----
+
+def _run_lyrics_overlay(lyrics_data: list, target: str = "auto"):
+    """Background thread to apply lyrics overlay to the final video."""
+    try:
+        # Determine which final video to apply to
+        if target == "manual":
+            plan = _load_manual_plan()
+            video_path = plan.get("output_path", os.path.join(OUTPUT_DIR, "manual_final_video.mp4"))
+        else:
+            plan = _load_scene_plan()
+            if not plan:
+                with gen_lock:
+                    gen_state["phase"] = "error"
+                    gen_state["error"] = "No scene plan found"
+                    gen_state["running"] = False
+                return
+            video_path = plan.get("output_path", os.path.join(OUTPUT_DIR, "final_video.mp4"))
+
+        if not os.path.isfile(video_path):
+            with gen_lock:
+                gen_state["phase"] = "error"
+                gen_state["error"] = "Final video not found. Stitch first."
+                gen_state["running"] = False
+            return
+
+        with gen_lock:
+            gen_state["phase"] = "stitching"
+
+        # Apply overlay to a temp file then replace
+        temp_out = video_path + ".lyrics_tmp.mp4"
+        apply_lyrics_overlay(video_path, temp_out, lyrics_data)
+
+        # Replace original
+        os.replace(temp_out, video_path)
+
+        with gen_lock:
+            gen_state["phase"] = "done"
+            gen_state["output_file"] = video_path
+            gen_state["running"] = False
+
+    except Exception as e:
+        with gen_lock:
+            gen_state["phase"] = "error"
+            gen_state["error"] = str(e)
+            gen_state["running"] = False
+
+
+# ---- Batch export helpers ----
+
+def _run_batch_export():
+    """Background thread to export video in all 4 aspect ratios."""
+    try:
+        # Find the final video (auto or manual)
+        auto_path = os.path.join(OUTPUT_DIR, "final_video.mp4")
+        manual_path = os.path.join(OUTPUT_DIR, "manual_final_video.mp4")
+        source = None
+        if os.path.isfile(auto_path):
+            source = auto_path
+        elif os.path.isfile(manual_path):
+            source = manual_path
+
+        if not source:
+            with gen_lock:
+                gen_state["phase"] = "error"
+                gen_state["error"] = "No final video found. Generate and stitch first."
+                gen_state["running"] = False
+            return
+
+        with gen_lock:
+            gen_state["phase"] = "generating"
+            gen_state["total_scenes"] = len(ASPECT_PRESETS)
+            gen_state["progress"] = [
+                {"scene": i, "status": "pending", "prompt": f"Exporting {ar}"}
+                for i, ar in enumerate(ASPECT_PRESETS.keys())
+            ]
+
+        results = {}
+        for i, (ar, (w, h)) in enumerate(ASPECT_PRESETS.items()):
+            with gen_lock:
+                if i < len(gen_state["progress"]):
+                    gen_state["progress"][i]["status"] = f"exporting {ar}..."
+            safe_name = ar.replace(":", "x")
+            out_path = os.path.join(EXPORTS_DIR, f"final_{safe_name}.mp4")
+            apply_aspect_ratio(source, out_path, ar)
+            results[ar] = out_path
+            with gen_lock:
+                if i < len(gen_state["progress"]):
+                    gen_state["progress"][i]["status"] = "done"
+
+        with gen_lock:
+            gen_state["phase"] = "done"
+            gen_state["output_file"] = source
             gen_state["running"] = False
 
     except Exception as e:
@@ -609,10 +818,28 @@ class Handler(BaseHTTPRequestHandler):
             scene_id = path[len("/api/manual/scene-photo/"):]
             self._handle_get_scene_photo(scene_id)
 
+        elif path == "/api/exports":
+            self._handle_list_exports()
+
+        elif path.startswith("/api/exports/"):
+            filename = path[len("/api/exports/"):]
+            safe = os.path.basename(filename)
+            self._send_file(os.path.join(EXPORTS_DIR, safe))
+
         elif path.startswith("/output/"):
             rel = path[len("/output/"):]
             safe = os.path.normpath(rel)
             self._send_file(os.path.join(OUTPUT_DIR, safe))
+
+        elif path == "/api/project/save":
+            self._handle_project_save()
+
+        elif path == "/api/cost":
+            self._handle_get_cost()
+
+        elif path.startswith("/api/storyboard/"):
+            fname = os.path.basename(path[len("/api/storyboard/"):])
+            self._send_file(os.path.join(STORYBOARD_DIR, fname))
 
         else:
             self.send_error(404)
@@ -660,6 +887,13 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/manual/stitch":
             self._handle_manual_stitch()
 
+        elif re.match(r'^/api/manual/scene/([^/]+)/merge$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/merge$', path)
+            self._handle_manual_merge_scene(m.group(1))
+
+        elif path == "/api/manual/stitch-settings":
+            self._handle_manual_stitch_settings()
+
         elif path == "/api/manual/reorder":
             self._handle_manual_reorder()
 
@@ -669,6 +903,33 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/scenes/(\d+)/transition$', path):
             m = re.match(r'^/api/scenes/(\d+)/transition$', path)
             self._handle_update_scene_transition(int(m.group(1)))
+
+        elif path == "/api/lyrics":
+            self._handle_lyrics()
+
+        elif path == "/api/batch-export":
+            self._handle_batch_export()
+
+        elif re.match(r'^/api/manual/scene/([^/]+)/split$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/split$', path)
+            self._handle_manual_split_scene(m.group(1))
+
+        elif re.match(r'^/api/scenes/(\d+)/split$', path):
+            m = re.match(r'^/api/scenes/(\d+)/split$', path)
+            self._handle_auto_split_scene(int(m.group(1)))
+
+        elif path == "/api/style-lock":
+            self._handle_style_lock()
+
+        elif re.match(r'^/api/manual/scene/([^/]+)/upscale$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/upscale$', path)
+            self._handle_upscale_scene(m.group(1))
+
+        elif path == "/api/project/load":
+            self._handle_project_load()
+
+        elif path == "/api/storyboard":
+            self._handle_generate_storyboard()
 
         else:
             self.send_error(404)
@@ -961,6 +1222,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({
             "scenes": scenes_out,
             "song_path": plan.get("song_path"),
+            "color_grade": plan.get("color_grade", "none"),
+            "audio_viz": plan.get("audio_viz"),
+            "style_lock": plan.get("style_lock", ""),
         })
 
     def _handle_manual_create_scene(self):
@@ -973,6 +1237,9 @@ class Handler(BaseHTTPRequestHandler):
             "prompt": "",
             "duration": 8,
             "transition": "crossfade",
+            "speed": 1.0,
+            "overlay": None,
+            "color_grade": None,
             "photo_path": None,
             "clip_path": None,
             "has_clip": False,
@@ -1018,7 +1285,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "scene": scene})
 
     def _handle_manual_update_scene(self, scene_id: str):
-        """Update a manual scene's prompt, duration, or transition."""
+        """Update a manual scene's prompt, duration, transition, speed, overlay, or color_grade."""
         body = self._read_body()
         try:
             params = json.loads(body)
@@ -1035,6 +1302,12 @@ class Handler(BaseHTTPRequestHandler):
                     s["duration"] = params["duration"]
                 if "transition" in params:
                     s["transition"] = params["transition"]
+                if "speed" in params:
+                    s["speed"] = params["speed"]
+                if "overlay" in params:
+                    s["overlay"] = params["overlay"]
+                if "color_grade" in params:
+                    s["color_grade"] = params["color_grade"]
                 _save_manual_plan(plan)
                 self._send_json({"ok": True, "scene": s})
                 return
@@ -1165,6 +1438,96 @@ class Handler(BaseHTTPRequestHandler):
         thread = threading.Thread(target=_run_manual_stitch, daemon=True)
         thread.start()
         self._send_json({"ok": True, "message": "Stitching video"})
+
+    def _handle_manual_merge_scene(self, scene_id: str):
+        """Merge a scene with the next scene. Combines clips or prompts."""
+        plan = _load_manual_plan()
+        scenes = plan["scenes"]
+        src_idx = None
+        for i, s in enumerate(scenes):
+            if s["id"] == scene_id:
+                src_idx = i
+                break
+        if src_idx is None:
+            self._send_json({"error": "Scene not found"}, 404)
+            return
+        if src_idx >= len(scenes) - 1:
+            self._send_json({"error": "No next scene to merge with"}, 400)
+            return
+
+        current = scenes[src_idx]
+        nxt = scenes[src_idx + 1]
+
+        current_has_clip = current.get("clip_path") and os.path.isfile(current.get("clip_path", ""))
+        next_has_clip = nxt.get("clip_path") and os.path.isfile(nxt.get("clip_path", ""))
+
+        if current_has_clip and next_has_clip:
+            # Concatenate clips via ffmpeg
+            merged_clip = os.path.join(MANUAL_CLIPS_DIR, f"merged_{current['id']}.mp4")
+            concat_list = os.path.join(MANUAL_CLIPS_DIR, f"_merge_{current['id']}.txt")
+            with open(concat_list, "w") as f:
+                f.write(f"file '{current['clip_path']}'\n")
+                f.write(f"file '{nxt['clip_path']}'\n")
+            try:
+                import subprocess as _sp
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0",
+                    "-i", concat_list,
+                    "-c", "copy",
+                    merged_clip,
+                ]
+                _kw = {}
+                if sys.platform == "win32":
+                    si = _sp.STARTUPINFO()
+                    si.dwFlags |= _sp.STARTF_USESHOWWINDOW
+                    si.wShowWindow = 0
+                    _kw["startupinfo"] = si
+                _sp.run(cmd, check=True, capture_output=True, **_kw)
+                current["clip_path"] = merged_clip
+                current["has_clip"] = True
+            except Exception as e:
+                self._send_json({"error": f"Failed to merge clips: {e}"}, 500)
+                return
+            finally:
+                if os.path.isfile(concat_list):
+                    os.remove(concat_list)
+        else:
+            # Merge prompts
+            p1 = current.get("prompt", "")
+            p2 = nxt.get("prompt", "")
+            if p1 and p2:
+                current["prompt"] = p1 + " | " + p2
+            elif p2:
+                current["prompt"] = p2
+
+        # Merge durations
+        current["duration"] = current.get("duration", 8) + nxt.get("duration", 8)
+
+        # Remove next scene (clean up its files)
+        if nxt.get("photo_path") and os.path.isfile(nxt.get("photo_path", "")):
+            os.remove(nxt["photo_path"])
+
+        scenes.pop(src_idx + 1)
+        _save_manual_plan(plan)
+        self._send_json({"ok": True, "scene": current})
+
+    def _handle_manual_stitch_settings(self):
+        """Update global stitch settings (color_grade, audio_viz)."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        plan = _load_manual_plan()
+        if "color_grade" in params:
+            plan["color_grade"] = params["color_grade"]
+        if "audio_viz" in params:
+            plan["audio_viz"] = params["audio_viz"]
+        _save_manual_plan(plan)
+        self._send_json({"ok": True})
 
     def _handle_manual_reorder(self):
         """Reorder manual scenes and optionally set song path."""
@@ -1313,6 +1676,319 @@ class Handler(BaseHTTPRequestHandler):
             json.dump(plan, f, indent=2)
 
         self._send_json({"ok": True})
+
+    # ---- Feature 11: Upscale ----
+
+    def _handle_upscale_scene(self, scene_id: str):
+        """Upscale a manual scene's clip 2x using ffmpeg lanczos."""
+        plan = _load_manual_plan()
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                clip_path = s.get("clip_path", "")
+                if not clip_path or not os.path.isfile(clip_path):
+                    self._send_json({"error": "No clip to upscale"}, 400)
+                    return
+                try:
+                    _upscale_clip(clip_path)
+                    self._send_json({"ok": True, "message": "Clip upscaled 2x"})
+                except Exception as e:
+                    self._send_json({"error": f"Upscale failed: {e}"}, 500)
+                return
+        self._send_json({"error": "Scene not found"}, 404)
+
+    # ---- Feature 12: Project Save/Load ----
+
+    def _handle_project_save(self):
+        """Save entire project state to a JSON file."""
+        plan = _load_manual_plan()
+        auto_plan = _load_scene_plan()
+        tracker = _load_cost_tracker()
+
+        project = {
+            "version": 1,
+            "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "manual_plan": plan,
+            "auto_plan": auto_plan,
+            "cost_tracker": tracker,
+            "style": "",
+        }
+
+        clip_files = {}
+        for s in plan.get("scenes", []):
+            cp = s.get("clip_path", "")
+            if cp and os.path.isfile(cp):
+                clip_files[s["id"]] = os.path.basename(cp)
+        project["existing_clips"] = clip_files
+
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"project_{timestamp}.json"
+        filepath = os.path.join(PROJECTS_DIR, filename)
+        with open(filepath, "w") as f:
+            json.dump(project, f, indent=2)
+
+        self._send_json({
+            "ok": True,
+            "filename": filename,
+            "path": filepath,
+            "project": project,
+        })
+
+    def _handle_project_load(self):
+        """Load a project from uploaded JSON."""
+        body = self._read_body()
+        try:
+            project = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        if "manual_plan" in project and project["manual_plan"]:
+            _save_manual_plan(project["manual_plan"])
+
+        if "auto_plan" in project and project["auto_plan"]:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(project["auto_plan"], f, indent=2)
+
+        if "cost_tracker" in project and project["cost_tracker"]:
+            _save_cost_tracker(project["cost_tracker"])
+
+        self._send_json({"ok": True, "message": "Project loaded"})
+
+    # ---- Feature 14: Storyboard ----
+
+    def _handle_generate_storyboard(self):
+        """Generate a storyboard PNG from manual or auto scenes."""
+        plan = _load_manual_plan()
+        scenes = plan.get("scenes", [])
+        if not scenes:
+            auto = _load_scene_plan()
+            if auto:
+                scenes = auto.get("scenes", [])
+
+        if not scenes:
+            self._send_json({"error": "No scenes available for storyboard"}, 400)
+            return
+
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        output_path = os.path.join(STORYBOARD_DIR, f"storyboard_{timestamp}.png")
+
+        try:
+            generate_storyboard(scenes, output_path)
+            filename = os.path.basename(output_path)
+            self._send_json({
+                "ok": True,
+                "url": f"/api/storyboard/{filename}",
+                "filename": filename,
+            })
+        except Exception as e:
+            self._send_json({"error": f"Storyboard generation failed: {e}"}, 500)
+
+    # ---- Feature 15: Cost Tracker ----
+
+    def _handle_get_cost(self):
+        """Return current cost tracking data."""
+        tracker = _load_cost_tracker()
+        self._send_json(tracker)
+
+    # ---- Lyrics Sync ----
+
+    def _handle_lyrics(self):
+        """POST /api/lyrics - Apply lyrics overlay to final video."""
+        with gen_lock:
+            if gen_state["running"]:
+                self._send_json({"error": "Generation already in progress"}, 409)
+                return
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        lyrics_text = params.get("lyrics", "")
+        timestamps = params.get("timestamps", [])
+        duration = params.get("duration", None)
+        target = params.get("target", "auto")
+        if not lyrics_text.strip():
+            self._send_json({"error": "No lyrics provided"}, 400)
+            return
+        lines = [l.strip() for l in lyrics_text.strip().split("\n") if l.strip()]
+        lyrics_data = []
+        if timestamps and len(timestamps) >= len(lines):
+            for i, line in enumerate(lines):
+                st = float(timestamps[i])
+                en = float(timestamps[i + 1]) if i + 1 < len(timestamps) else st + 4.0
+                lyrics_data.append({"text": line, "start": st, "end": en})
+        else:
+            if not duration:
+                plan = _load_scene_plan() if target == "auto" else _load_manual_plan()
+                if plan and plan.get("scenes"):
+                    duration = max(s.get("end_sec", s.get("duration", 8)) for s in plan["scenes"])
+                else:
+                    duration = len(lines) * 4.0
+            seg = float(duration) / max(len(lines), 1)
+            for i, line in enumerate(lines):
+                lyrics_data.append({"text": line, "start": i * seg, "end": (i + 1) * seg})
+        # Store in plan
+        if target == "auto":
+            plan = _load_scene_plan()
+            if plan:
+                plan["lyrics"] = lyrics_data
+                with open(SCENE_PLAN_PATH, "w") as f:
+                    json.dump(plan, f, indent=2)
+        else:
+            plan = _load_manual_plan()
+            plan["lyrics"] = lyrics_data
+            _save_manual_plan(plan)
+        with gen_lock:
+            _reset_state()
+            gen_state["running"] = True
+            gen_state["phase"] = "starting"
+        thread = threading.Thread(target=_run_lyrics_overlay, args=(lyrics_data, target), daemon=True)
+        thread.start()
+        self._send_json({"ok": True, "message": "Applying lyrics overlay", "lines": len(lyrics_data)})
+
+    # ---- Batch Export ----
+
+    def _handle_batch_export(self):
+        """POST /api/batch-export - Export final video in all 4 aspect ratios."""
+        with gen_lock:
+            if gen_state["running"]:
+                self._send_json({"error": "Generation already in progress"}, 409)
+                return
+        with gen_lock:
+            _reset_state()
+            gen_state["running"] = True
+            gen_state["phase"] = "starting"
+        thread = threading.Thread(target=_run_batch_export, daemon=True)
+        thread.start()
+        self._send_json({"ok": True, "message": "Batch export started"})
+
+    def _handle_list_exports(self):
+        """GET /api/exports - List available export files."""
+        exports = []
+        if os.path.isdir(EXPORTS_DIR):
+            for fname in sorted(os.listdir(EXPORTS_DIR)):
+                fpath = os.path.join(EXPORTS_DIR, fname)
+                if os.path.isfile(fpath) and fname.endswith(".mp4"):
+                    exports.append({"filename": fname, "url": f"/api/exports/{fname}", "size": os.path.getsize(fpath)})
+        self._send_json({"exports": exports})
+
+    # ---- Scene Split ----
+
+    def _handle_manual_split_scene(self, scene_id: str):
+        """POST /api/manual/scene/:id/split - Split a manual scene into two halves."""
+        plan = _load_manual_plan()
+        scene = None
+        scene_idx = None
+        for i, s in enumerate(plan["scenes"]):
+            if s["id"] == scene_id:
+                scene = s
+                scene_idx = i
+                break
+        if scene is None:
+            self._send_json({"error": "Scene not found"}, 404)
+            return
+        new_id_a = str(_uuid.uuid4())[:8]
+        new_id_b = str(_uuid.uuid4())[:8]
+        orig_dur = scene.get("duration", 8)
+        half = max(2, round(orig_dur / 2))
+        scene_a = {"id": new_id_a, "prompt": scene.get("prompt", ""), "duration": half,
+                    "transition": scene.get("transition", "crossfade"),
+                    "photo_path": scene.get("photo_path"), "clip_path": None, "has_clip": False}
+        scene_b = {"id": new_id_b, "prompt": scene.get("prompt", ""), "duration": orig_dur - half,
+                    "transition": "crossfade", "photo_path": None, "clip_path": None, "has_clip": False}
+        if scene.get("clip_path") and os.path.isfile(scene["clip_path"]):
+            try:
+                p1, p2 = split_clip(scene["clip_path"], MANUAL_CLIPS_DIR, scene_id)
+                scene_a["clip_path"] = p1
+                scene_a["has_clip"] = True
+                scene_b["clip_path"] = p2
+                scene_b["has_clip"] = True
+            except Exception:
+                pass
+        plan["scenes"] = plan["scenes"][:scene_idx] + [scene_a, scene_b] + plan["scenes"][scene_idx + 1:]
+        _save_manual_plan(plan)
+        self._send_json({"ok": True, "scenes": [scene_a, scene_b]})
+
+    def _handle_auto_split_scene(self, index: int):
+        """POST /api/scenes/:index/split - Split an auto scene into two halves."""
+        plan = _load_scene_plan()
+        if not plan:
+            self._send_json({"error": "No scene plan found"}, 404)
+            return
+        scenes = plan["scenes"]
+        if index < 0 or index >= len(scenes):
+            self._send_json({"error": f"Scene index {index} out of range"}, 400)
+            return
+        scene = scenes[index]
+        start = scene.get("start_sec", 0)
+        end = scene.get("end_sec", start + scene.get("duration", 8))
+        mid = (start + end) / 2.0
+        sa = dict(scene)
+        sa["end_sec"] = round(mid, 3)
+        sa["duration"] = round(mid - start, 3)
+        sa["index"] = index
+        sb = dict(scene)
+        sb["start_sec"] = round(mid, 3)
+        sb["duration"] = round(end - mid, 3)
+        sb["index"] = index + 1
+        sb["transition"] = "crossfade"
+        sb["clip_path"] = None
+        if scene.get("clip_path") and os.path.isfile(scene["clip_path"]):
+            try:
+                p1, p2 = split_clip(scene["clip_path"], CLIPS_DIR, f"clip_{index:03d}")
+                sa["clip_path"] = p1
+                sb["clip_path"] = p2
+            except Exception:
+                sa["clip_path"] = scene.get("clip_path")
+        new_scenes = scenes[:index] + [sa, sb] + scenes[index + 1:]
+        for i, s in enumerate(new_scenes):
+            s["index"] = i
+        plan["scenes"] = new_scenes
+        with open(SCENE_PLAN_PATH, "w") as f:
+            json.dump(plan, f, indent=2)
+        self._send_json({"ok": True, "total_scenes": len(new_scenes)})
+
+    # ---- Style Consistency Lock ----
+
+    def _handle_style_lock(self):
+        """POST /api/style-lock - Lock style keywords across all scene prompts."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        style_lock = params.get("style_lock", "")
+        enabled = params.get("enabled", True)
+        target = params.get("target", "manual")
+        if target == "manual":
+            plan = _load_manual_plan()
+            if enabled and style_lock:
+                plan["style_lock"] = style_lock
+                for s in plan["scenes"]:
+                    prompt = s.get("prompt", "")
+                    if style_lock not in prompt:
+                        s["prompt"] = (prompt.rstrip(", ") + ", " + style_lock) if prompt else style_lock
+            else:
+                plan.pop("style_lock", None)
+            _save_manual_plan(plan)
+        else:
+            plan = _load_scene_plan()
+            if not plan:
+                self._send_json({"error": "No scene plan found"}, 404)
+                return
+            if enabled and style_lock:
+                plan["style_lock"] = style_lock
+                for s in plan["scenes"]:
+                    prompt = s.get("prompt", "")
+                    if style_lock not in prompt:
+                        s["prompt"] = (prompt.rstrip(", ") + ", " + style_lock) if prompt else style_lock
+            else:
+                plan.pop("style_lock", None)
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
+        self._send_json({"ok": True, "style_lock": style_lock, "enabled": enabled})
 
 
 def main():
