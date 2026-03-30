@@ -4723,6 +4723,60 @@ class Handler(BaseHTTPRequestHandler):
                 try: os.unlink(os.path.join(gifs_dir, f))
                 except: pass
             cleared.append("gifs")
+        # Clear uploaded songs
+        songs_in_uploads = [f for f in os.listdir(UPLOADS_DIR)
+                           if f.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac'))
+                           and os.path.isfile(os.path.join(UPLOADS_DIR, f))]
+        for f in songs_in_uploads:
+            try: os.unlink(os.path.join(UPLOADS_DIR, f))
+            except: pass
+        if songs_in_uploads:
+            cleared.append(f"songs ({len(songs_in_uploads)})")
+
+        # Clear cost tracker (reset to zero for new project)
+        cost_path = os.path.join(OUTPUT_DIR, "cost_tracker.json")
+        if os.path.isfile(cost_path):
+            os.unlink(cost_path)
+            cleared.append("cost_tracker")
+
+        # Reset settings (keep API keys in .env but reset engine/project settings)
+        settings_path = os.path.join(OUTPUT_DIR, "settings.json")
+        if os.path.isfile(settings_path):
+            os.unlink(settings_path)
+            cleared.append("settings")
+
+        # Clear references (project-specific character photos)
+        refs_dir = os.path.join(PROJECT_DIR, "references")
+        if os.path.isdir(refs_dir):
+            for f in os.listdir(refs_dir):
+                try: os.unlink(os.path.join(refs_dir, f))
+                except: pass
+            cleared.append("references")
+
+        # Clear storyboards
+        sb_dir = os.path.join(OUTPUT_DIR, "storyboards")
+        if os.path.isdir(sb_dir):
+            for f in os.listdir(sb_dir):
+                try: os.unlink(os.path.join(sb_dir, f))
+                except: pass
+            cleared.append("storyboards")
+
+        # Clear exports
+        exports_dir = os.path.join(OUTPUT_DIR, "exports")
+        if os.path.isdir(exports_dir):
+            for f in os.listdir(exports_dir):
+                try: os.unlink(os.path.join(exports_dir, f))
+                except: pass
+            cleared.append("exports")
+
+        # Clear frames
+        frames_dir = os.path.join(OUTPUT_DIR, "frames")
+        if os.path.isdir(frames_dir):
+            import shutil as sh2
+            sh2.rmtree(frames_dir, ignore_errors=True)
+            os.makedirs(frames_dir, exist_ok=True)
+            cleared.append("frames")
+
         # Reset generation state
         with gen_lock:
             gen_state["running"] = False
@@ -4733,8 +4787,8 @@ class Handler(BaseHTTPRequestHandler):
             gen_state["output_file"] = None
             gen_state["analysis"] = None
             gen_state["scenes"] = []
-        # DON'T clear: uploaded songs, references, settings, cost tracker, prompt history, templates
-        print(f"[RESET] Project reset. Cleared: {', '.join(cleared)}")
+
+        print(f"[RESET] Full project reset. Cleared: {', '.join(cleared)}")
         self._send_json({"ok": True, "cleared": cleared})
 
 
