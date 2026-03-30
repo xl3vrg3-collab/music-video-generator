@@ -1933,3 +1933,109 @@ def apply_audio_crossfade(clips: list, output_path: str, crossfade_sec: float = 
     try: os.unlink(list_path)
     except: pass
     return output_path
+
+
+# ---- Picture-in-Picture (Roadmap Item 14) ----
+
+def apply_pip(main_video: str, pip_video: str, output_path: str,
+              position: str = "bottom_right", size: float = 0.25) -> str:
+    """Overlay a small video on a corner of the main video.
+    position: top_left, top_right, bottom_left, bottom_right
+    size: fraction of main video width (0.1-0.5)
+    """
+    pos_map = {
+        "top_left": "10:10",
+        "top_right": "main_w-overlay_w-10:10",
+        "bottom_left": "10:main_h-overlay_h-10",
+        "bottom_right": "main_w-overlay_w-10:main_h-overlay_h-10",
+    }
+    pos = pos_map.get(position, pos_map["bottom_right"])
+    scale = f"scale=iw*{size}:ih*{size}"
+    
+    cmd = ["ffmpeg", "-y", "-i", main_video, "-i", pip_video,
+           "-filter_complex", f"[1:v]{scale}[pip];[0:v][pip]overlay={pos}",
+           "-c:v", "libx264", "-c:a", "copy", output_path]
+    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+    return output_path
+
+
+# ---- Split Screen (Roadmap Item 15) ----
+
+def split_screen(left_video: str, right_video: str, output_path: str,
+                 ratio: float = 0.5) -> str:
+    """Show two videos side-by-side. ratio = left video width fraction."""
+    lw = f"iw*{ratio}"
+    rw = f"iw*{1-ratio}"
+    
+    cmd = ["ffmpeg", "-y", "-i", left_video, "-i", right_video,
+           "-filter_complex",
+           f"[0:v]crop=iw*{ratio}:ih:0:0[left];"
+           f"[1:v]crop=iw*{1-ratio}:ih:iw*{ratio}:0[right];"
+           f"[left][right]hstack",
+           "-c:v", "libx264", "-shortest", output_path]
+    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+    return output_path
+
+
+# ---- Green Screen / Chroma Key (Roadmap Item 13) ----
+
+def apply_chroma_key(fg_video: str, bg_video: str, output_path: str,
+                     color: str = "green", similarity: float = 0.3) -> str:
+    """Remove a background color and composite over another video.
+    color: green, blue, or hex color (eg 00ff00)
+    """
+    color_map = {"green": "0x00FF00", "blue": "0x0000FF", "black": "0x000000"}
+    hex_color = color_map.get(color.lower(), color)
+    
+    cmd = ["ffmpeg", "-y", "-i", bg_video, "-i", fg_video,
+           "-filter_complex",
+           f"[1:v]chromakey={hex_color}:{similarity}:0.1[fg];[0:v][fg]overlay",
+           "-c:v", "libx264", "-shortest", output_path]
+    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+    return output_path
+
+
+# ---- Thumbnail Extract Best Frame (improved) ----
+
+def extract_best_thumbnail(video_path: str, output_path: str, n_candidates: int = 10) -> str:
+    """Extract the most visually interesting frame from a video.
+    Samples n_candidates frames and picks the one with highest contrast/color variance.
+    """
+    import tempfile
+    # Get duration
+    probe = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
+        capture_output=True, text=True, **_subprocess_kwargs()
+    )
+    try:
+        duration = float(json.loads(probe.stdout)["format"]["duration"])
+    except:
+        duration = 5.0
+    
+    best_path = None
+    best_score = -1
+    
+    for i in range(n_candidates):
+        t = duration * (i + 1) / (n_candidates + 1)
+        tmp = tempfile.mktemp(suffix=f"_frame{i}.jpg")
+        cmd = ["ffmpeg", "-y", "-ss", str(t), "-i", video_path,
+               "-vframes", "1", "-q:v", "2", tmp]
+        subprocess.run(cmd, capture_output=True, **_subprocess_kwargs())
+        
+        if os.path.isfile(tmp):
+            # Score by file size (more detail = larger file)
+            score = os.path.getsize(tmp)
+            if score > best_score:
+                if best_path:
+                    try: os.unlink(best_path)
+                    except: pass
+                best_score = score
+                best_path = tmp
+            else:
+                try: os.unlink(tmp)
+                except: pass
+    
+    if best_path:
+        import shutil
+        shutil.move(best_path, output_path)
+    return output_path
