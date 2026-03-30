@@ -348,7 +348,18 @@ def _runway_headers() -> dict:
         "Authorization": f"Bearer {_get_runway_api_key()}",
         "Content-Type": "application/json",
         "Accept": "application/json",
+        "X-Runway-Version": "2024-11-06",
     }
+
+# Runway uses pixel dimensions as ratio, not aspect ratio strings
+RUNWAY_RATIO_MAP = {
+    "16:9": "1280:720",
+    "9:16": "720:1280",
+    "1:1": "960:960",
+    "4:5": "832:1104",
+    "1280:720": "1280:720",
+    "720:1280": "720:1280",
+}
 
 
 def _runway_submit_image_to_video(prompt: str, image_path: str,
@@ -371,11 +382,11 @@ def _runway_submit_image_to_video(prompt: str, image_path: str,
     prompt_image = _photo_to_data_uri(image_path)
 
     payload = {
-        "model": "gen3a_turbo",
+        "model": "gen4.5",
         "promptImage": prompt_image,
         "promptText": f"Animate this scene: {prompt}. Maintain the visual elements from the image.",
         "duration": duration,
-        "ratio": ratio,
+        "ratio": RUNWAY_RATIO_MAP.get(ratio, "1280:720"),
     }
 
     print(f"[RUNWAY] Submitting image-to-video: prompt={prompt[:80]}..., "
@@ -414,10 +425,10 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
     duration = 10 if duration > 7 else 5  # Runway supports 5 or 10
 
     payload = {
-        "model": "gen3a_turbo",
+        "model": "gen4.5",
         "promptText": prompt,
         "duration": duration,
-        "ratio": ratio,
+        "ratio": RUNWAY_RATIO_MAP.get(ratio, "1280:720"),
     }
 
     print(f"[RUNWAY] Submitting text-to-video: prompt={prompt[:80]}..., "
