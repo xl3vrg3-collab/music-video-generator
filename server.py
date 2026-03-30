@@ -1347,6 +1347,9 @@ class Handler(BaseHTTPRequestHandler):
             filename = os.path.basename(path)
             self._send_file(os.path.join(OUTPUT_DIR, "gifs", filename), "image/gif")
 
+        elif path == "/api/project/reset":
+            self._handle_project_reset()
+
         else:
             self.send_error(404)
 
@@ -1597,10 +1600,6 @@ class Handler(BaseHTTPRequestHandler):
         # Roadmap: Auto-save
         elif path == "/api/project/autosave":
             self._handle_autosave()
-
-        # New/Reset project
-        elif path == "/api/project/reset":
-            self._handle_project_reset()
 
         # Roadmap: Style mixing
         elif path == "/api/mix-styles":
@@ -4394,20 +4393,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404, "Scene not found")
 
 
-def main():
-    server = HTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"\n  Music Video Generator")
-    print(f"  UI running at http://localhost:{PORT}")
-    print(f"  Press Ctrl+C to stop\n")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nShutting down.")
-        server.server_close()
-
-
-if __name__ == "__main__":
-    main()
 
 
     # ---- Roadmap Feature Handlers ----
@@ -4751,3 +4736,19 @@ if __name__ == "__main__":
         # DON'T clear: uploaded songs, references, settings, cost tracker, prompt history, templates
         print(f"[RESET] Project reset. Cleared: {', '.join(cleared)}")
         self._send_json({"ok": True, "cleared": cleared})
+
+
+def main():
+    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    print(f"\n  Music Video Generator")
+    print(f"  UI running at http://localhost:{PORT}")
+    print(f"  Press Ctrl+C to stop\n")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down.")
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

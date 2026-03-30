@@ -2356,7 +2356,7 @@
   window._resetProject = function() {
     if (!confirm('⚠ NEW PROJECT\n\nThis will delete ALL scenes, clips, photos, and videos.\n\nYour uploaded songs, references, settings, and prompt history will be kept.\n\nAre you sure?')) return;
     if (!confirm('This cannot be undone. Continue?')) return;
-    fetch('/api/project/reset', {method:'POST'})
+    fetch('/api/project/reset')
       .then(r => r.json())
       .then(data => {
         if (data.ok) {
