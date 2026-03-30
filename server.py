@@ -546,13 +546,23 @@ def _run_manual_generate_scene(scene_id: str):
 
         # Build the prompt - handle multi-photo compositing
         gen_prompt = scene["prompt"]
-        scene_photo_path = None  # The photo to send to the API for style transfer
-        photo_paths = scene.get("photo_paths", [])
-        valid_photos = [p for p in photo_paths if p and os.path.isfile(p)]
+        scene_photo_path = None
 
-        print(f"[_run_manual_generate_scene] scene_id={scene_id}, prompt={gen_prompt[:80]}...")
-        print(f"[_run_manual_generate_scene] photo_path={scene.get('photo_path')}, photo_paths={photo_paths}")
-        print(f"[_run_manual_generate_scene] valid_photos count={len(valid_photos)}")
+        # Check BOTH photo_path (single) and photo_paths (array)
+        single_photo = scene.get("photo_path", "")
+        photo_paths = scene.get("photo_paths", [])
+
+        # Build valid photos list from both sources
+        valid_photos = []
+        if single_photo and os.path.isfile(single_photo):
+            valid_photos.append(single_photo)
+        for p in photo_paths:
+            if p and os.path.isfile(p) and p not in valid_photos:
+                valid_photos.append(p)
+
+        print(f"[GEN] scene_id={scene_id}, prompt={gen_prompt[:80]}...")
+        print(f"[GEN] photo_path={single_photo}, photo_paths={photo_paths}")
+        print(f"[GEN] valid_photos={valid_photos}")
 
         if len(valid_photos) > 1:
             # Feature 5: Multiple photos - describe all and merge into prompt
@@ -4739,11 +4749,18 @@ class Handler(BaseHTTPRequestHandler):
             os.unlink(cost_path)
             cleared.append("cost_tracker")
 
-        # Reset settings (keep API keys in .env but reset engine/project settings)
+        # Reset settings but KEEP the default engine preference
         settings_path = os.path.join(OUTPUT_DIR, "settings.json")
         if os.path.isfile(settings_path):
-            os.unlink(settings_path)
-            cleared.append("settings")
+            try:
+                old_settings = json.loads(open(settings_path, encoding="utf-8").read())
+                kept_engine = old_settings.get("default_engine", "runway")
+            except:
+                kept_engine = "runway"
+            # Write fresh settings with just the engine preference
+            with open(settings_path, "w", encoding="utf-8") as f:
+                json.dump({"default_engine": kept_engine, "character_references": {}}, f, indent=2)
+            cleared.append(f"settings (kept engine={kept_engine})")
 
         # Clear references (project-specific character photos)
         refs_dir = os.path.join(PROJECT_DIR, "references")
