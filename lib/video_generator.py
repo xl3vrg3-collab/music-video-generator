@@ -385,7 +385,7 @@ def _runway_submit_image_to_video(prompt: str, image_path: str,
     payload = {
         "model": model,
         "promptImage": prompt_image,
-        "promptText": f"Animate this scene: {prompt}. Maintain the visual elements from the image.",
+        "promptText": prompt,
         "duration": duration,
         "ratio": RUNWAY_RATIO_MAP.get(ratio, "1280:720"),
     }
@@ -560,6 +560,26 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
 
     try:
         if has_photo:
+            # Describe the photo so Runway knows what to keep throughout the video
+            _report(f"analyzing photo to maintain consistency...")
+            try:
+                photo_desc = describe_photo(photo_path)
+                # Build a prompt that tells Runway to KEEP the photo content
+                gen_prompt = (
+                    f"The exact person/subject from this image: {photo_desc}. "
+                    f"Keep this exact subject visible and recognizable throughout the entire video. "
+                    f"Action: {gen_prompt}. "
+                    f"Do NOT change the subject's appearance. Do NOT introduce new people."
+                )
+                print(f"[RUNWAY/{model}][{index}] Enhanced prompt with photo description")
+            except Exception as desc_err:
+                print(f"[RUNWAY/{model}][{index}] Photo describe failed: {desc_err}, using original prompt")
+                gen_prompt = (
+                    f"Keep the exact subject from this starting image throughout the entire video. "
+                    f"{gen_prompt}. "
+                    f"Do NOT change the subject. Do NOT introduce new people or characters."
+                )
+
             _report(f"submitting image-to-video ({model}) with photo: {os.path.basename(photo_path)}...")
             task_id = _runway_submit_image_to_video(
                 gen_prompt, photo_path, duration=duration, model=model
