@@ -1054,29 +1054,14 @@ def _grok_generate_scene(scene: dict, output_dir: str, index: int,
         if cost_cb:
             cost_cb(str(scene.get("id", index)), gen_type)
 
-    # If scene has a photo, use photo+prompt pipeline (style transfer)
+    # ALWAYS try real video first (real motion is what users want)
+    # Photo pipeline (style transfer + Ken Burns) is only used via "Generate from Photo" button
+    # If photo exists, enhance the prompt with photo context for better video generation
     if has_photo:
-        print(f"[GROK][{index}] Photo detected at {photo_path}, using photo+prompt pipeline")
-        try:
-            _report("sending photo to Grok for style transfer...")
-            edit_strength = scene.get("edit_strength", 0.3)
-            img_url = _generate_image_from_photo(gen_prompt, photo_path, edit_strength)
-            print(f"[GROK][{index}] Got styled image URL: {img_url[:80]}...")
-            img_path = os.path.join(output_dir, f"img_{index:03d}_styled.png")
-            _report("downloading styled image...")
-            _download(img_url, img_path)
-            print(f"[GROK][{index}] Downloaded styled image to {img_path}")
-            _report("creating Ken Burns video from styled image...")
-            _ken_burns(img_path, clip_path, duration, camera=camera)
-            _record("image")
-            _report("done (photo style transfer + Ken Burns)")
-            print(f"[GROK][{index}] SUCCESS: photo+prompt clip at {clip_path}")
-            return clip_path
-        except Exception as e:
-            print(f"[GROK][{index}] Photo+prompt failed: {e}")
-            _report(f"photo style transfer failed ({e}), falling back to video...")
+        gen_prompt = f"{gen_prompt}, maintaining the visual style and subjects from the reference image"
+        print(f"[GROK][{index}] Photo exists but using VIDEO gen (not Ken Burns). Enhanced prompt.")
 
-    # Try video generation (text-only)
+    # Try video generation first (real motion)
     try:
         _report("submitting video request...")
         request_id = _submit_video(gen_prompt)
