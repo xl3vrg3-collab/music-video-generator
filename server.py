@@ -53,10 +53,15 @@ OUTPUT_DIR = os.path.join(PROJECT_DIR, "output")
 CLIPS_DIR = os.path.join(OUTPUT_DIR, "clips")
 REFERENCES_DIR = os.path.join(PROJECT_DIR, "references")
 SCENE_PLAN_PATH = os.path.join(OUTPUT_DIR, "scene_plan.json")
+MANUAL_PLAN_PATH = os.path.join(OUTPUT_DIR, "manual_scene_plan.json")
+MANUAL_CLIPS_DIR = os.path.join(OUTPUT_DIR, "manual_clips")
+SCENE_PHOTOS_DIR = os.path.join(UPLOADS_DIR, "scene_photos")
 
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(REFERENCES_DIR, exist_ok=True)
+os.makedirs(MANUAL_CLIPS_DIR, exist_ok=True)
+os.makedirs(SCENE_PHOTOS_DIR, exist_ok=True)
 
 # ---- Global generation state ----
 gen_state = {
@@ -277,6 +282,182 @@ def _run_restitch():
             gen_state["running"] = False
 
 
+# ---- Manual scene plan helpers ----
+
+import uuid as _uuid
+
+
+def _load_manual_plan() -> dict:
+    """Load or create the manual scene plan."""
+    if os.path.isfile(MANUAL_PLAN_PATH):
+        with open(MANUAL_PLAN_PATH, "r") as f:
+            return json.load(f)
+    return {"scenes": [], "song_path": None}
+
+
+def _save_manual_plan(plan: dict):
+    with open(MANUAL_PLAN_PATH, "w") as f:
+        json.dump(plan, f, indent=2)
+
+
+def _run_manual_generate_scene(scene_id: str):
+    """Background thread to generate a single manual scene."""
+    try:
+        plan = _load_manual_plan()
+        scene = None
+        scene_idx = None
+        for i, s in enumerate(plan["scenes"]):
+            if s["id"] == scene_id:
+                scene = s
+                scene_idx = i
+                break
+        if scene is None:
+            with gen_lock:
+                gen_state["phase"] = "error"
+                gen_state["error"] = f"Scene {scene_id} not found"
+                gen_state["running"] = False
+            return
+
+        with gen_lock:
+            gen_state["phase"] = "generating"
+            gen_state["total_scenes"] = 1
+            gen_state["progress"] = [
+                {"scene": scene_idx, "status": "starting...", "prompt": scene["prompt"]}
+            ]
+
+        def on_progress(index, status):
+            with gen_lock:
+                if gen_state["progress"]:
+                    gen_state["progress"][0]["status"] = status
+
+        # Build the prompt - if there's a photo, add reference context
+        gen_prompt = scene["prompt"]
+        if scene.get("photo_path") and os.path.isfile(scene["photo_path"]):
+            gen_prompt += ", matching the reference image style"
+
+        gen_scene = {
+            "prompt": gen_prompt,
+            "duration": scene.get("duration", 8),
+        }
+
+        clip_path = generate_scene(gen_scene, scene_idx, MANUAL_CLIPS_DIR,
+                                   progress_cb=on_progress)
+        scene["clip_path"] = clip_path
+        scene["has_clip"] = True
+        plan["scenes"][scene_idx] = scene
+        _save_manual_plan(plan)
+
+        with gen_lock:
+            gen_state["phase"] = "done"
+            gen_state["running"] = False
+
+    except Exception as e:
+        with gen_lock:
+            gen_state["phase"] = "error"
+            gen_state["error"] = str(e)
+            gen_state["running"] = False
+
+
+def _run_manual_generate_all():
+    """Background thread to generate all manual scenes without clips."""
+    try:
+        plan = _load_manual_plan()
+        scenes_to_gen = [(i, s) for i, s in enumerate(plan["scenes"])
+                         if not s.get("has_clip") or not s.get("clip_path")
+                         or not os.path.isfile(s.get("clip_path", ""))]
+
+        if not scenes_to_gen:
+            with gen_lock:
+                gen_state["phase"] = "done"
+                gen_state["running"] = False
+            return
+
+        with gen_lock:
+            gen_state["phase"] = "generating"
+            gen_state["total_scenes"] = len(scenes_to_gen)
+            gen_state["progress"] = [
+                {"scene": i, "status": "pending", "prompt": s["prompt"]}
+                for i, s in scenes_to_gen
+            ]
+
+        for prog_idx, (scene_idx, scene) in enumerate(scenes_to_gen):
+            def on_progress(index, status, _pi=prog_idx):
+                with gen_lock:
+                    if _pi < len(gen_state["progress"]):
+                        gen_state["progress"][_pi]["status"] = status
+
+            gen_prompt = scene["prompt"]
+            if scene.get("photo_path") and os.path.isfile(scene["photo_path"]):
+                gen_prompt += ", matching the reference image style"
+
+            gen_scene = {
+                "prompt": gen_prompt,
+                "duration": scene.get("duration", 8),
+            }
+
+            try:
+                clip_path = generate_scene(gen_scene, scene_idx, MANUAL_CLIPS_DIR,
+                                           progress_cb=on_progress)
+                scene["clip_path"] = clip_path
+                scene["has_clip"] = True
+            except Exception as e:
+                on_progress(scene_idx, f"FAILED: {e}")
+                scene["has_clip"] = False
+
+            plan["scenes"][scene_idx] = scene
+            _save_manual_plan(plan)
+
+        with gen_lock:
+            gen_state["phase"] = "done"
+            gen_state["running"] = False
+
+    except Exception as e:
+        with gen_lock:
+            gen_state["phase"] = "error"
+            gen_state["error"] = str(e)
+            gen_state["running"] = False
+
+
+def _run_manual_stitch():
+    """Background thread to stitch manual scenes."""
+    try:
+        plan = _load_manual_plan()
+        clip_paths = [s.get("clip_path") for s in plan["scenes"]]
+        transitions = [s.get("transition", "crossfade") for s in plan["scenes"]]
+        song_path = plan.get("song_path")
+
+        # Validate we have clips
+        valid = [c for c in clip_paths if c and os.path.isfile(c)]
+        if not valid:
+            with gen_lock:
+                gen_state["phase"] = "error"
+                gen_state["error"] = "No clips available to stitch"
+                gen_state["running"] = False
+            return
+
+        with gen_lock:
+            gen_state["phase"] = "stitching"
+
+        output_path = os.path.join(OUTPUT_DIR, "manual_final_video.mp4")
+        # song_path can be None if user didn't upload audio
+        audio = song_path if song_path and os.path.isfile(song_path) else None
+        stitch(clip_paths, audio, output_path, transitions=transitions)
+
+        plan["output_path"] = output_path
+        _save_manual_plan(plan)
+
+        with gen_lock:
+            gen_state["phase"] = "done"
+            gen_state["output_file"] = output_path
+            gen_state["running"] = False
+
+    except Exception as e:
+        with gen_lock:
+            gen_state["phase"] = "error"
+            gen_state["error"] = str(e)
+            gen_state["running"] = False
+
+
 # ---- HTTP handler ----
 
 class Handler(BaseHTTPRequestHandler):
@@ -402,7 +583,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/api/clips/"):
             filename = path[len("/api/clips/"):]
             safe = os.path.basename(filename)
-            self._send_file(os.path.join(CLIPS_DIR, safe))
+            # Try auto clips dir first, then manual clips dir
+            clip_file = os.path.join(CLIPS_DIR, safe)
+            if not os.path.isfile(clip_file):
+                clip_file = os.path.join(MANUAL_CLIPS_DIR, safe)
+            self._send_file(clip_file)
 
         elif path == "/api/references":
             self._handle_get_references()
@@ -416,6 +601,13 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/api/transitions":
             self._send_json({"transitions": TRANSITION_TYPES})
+
+        elif path == "/api/manual/scenes":
+            self._handle_manual_list_scenes()
+
+        elif path.startswith("/api/manual/scene-photo/"):
+            scene_id = path[len("/api/manual/scene-photo/"):]
+            self._handle_get_scene_photo(scene_id)
 
         elif path.startswith("/output/"):
             rel = path[len("/output/"):]
@@ -451,6 +643,26 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/suggest-style":
             self._handle_suggest_style()
 
+        elif path == "/api/manual/scene":
+            self._handle_manual_create_scene()
+
+        elif re.match(r'^/api/manual/scene/([^/]+)/photo$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/photo$', path)
+            self._handle_manual_upload_photo(m.group(1))
+
+        elif re.match(r'^/api/manual/scene/([^/]+)/generate$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/generate$', path)
+            self._handle_manual_generate_scene(m.group(1))
+
+        elif path == "/api/manual/generate-all":
+            self._handle_manual_generate_all()
+
+        elif path == "/api/manual/stitch":
+            self._handle_manual_stitch()
+
+        elif path == "/api/manual/reorder":
+            self._handle_manual_reorder()
+
         elif path == "/api/scenes/update-transitions":
             self._handle_update_transitions()
 
@@ -461,11 +673,24 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
+    def do_PUT(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path.rstrip("/")
+
+        if re.match(r'^/api/manual/scene/([^/]+)$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)$', path)
+            self._handle_manual_update_scene(m.group(1))
+        else:
+            self.send_error(404)
+
     def do_DELETE(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/")
 
-        if path.startswith("/api/references/"):
+        if re.match(r'^/api/manual/scene/([^/]+)$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)$', path)
+            self._handle_manual_delete_scene(m.group(1))
+        elif path.startswith("/api/references/"):
             name = urllib.parse.unquote(path[len("/api/references/"):])
             self._handle_delete_reference(name)
         else:
@@ -712,6 +937,267 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "deleted": name})
         else:
             self._send_json({"error": f"Reference '{name}' not found"}, 404)
+
+    # ---- Manual mode endpoints ----
+
+    def _handle_manual_list_scenes(self):
+        """Return all manual scenes with state."""
+        plan = _load_manual_plan()
+        scenes_out = []
+        for s in plan["scenes"]:
+            entry = dict(s)
+            clip_path = s.get("clip_path", "")
+            entry["clip_exists"] = bool(clip_path and os.path.isfile(clip_path))
+            if entry["clip_exists"]:
+                entry["clip_url"] = f"/api/clips/{os.path.basename(clip_path)}"
+            else:
+                entry["clip_url"] = None
+            entry["has_photo"] = bool(s.get("photo_path") and os.path.isfile(s.get("photo_path", "")))
+            if entry["has_photo"]:
+                entry["photo_url"] = f"/api/manual/scene-photo/{s['id']}"
+            else:
+                entry["photo_url"] = None
+            scenes_out.append(entry)
+        self._send_json({
+            "scenes": scenes_out,
+            "song_path": plan.get("song_path"),
+        })
+
+    def _handle_manual_create_scene(self):
+        """Create a new manual scene. Accepts multipart (with photo) or JSON."""
+        content_type = self.headers.get("Content-Type", "")
+        plan = _load_manual_plan()
+        scene_id = str(_uuid.uuid4())[:8]
+        scene = {
+            "id": scene_id,
+            "prompt": "",
+            "duration": 8,
+            "transition": "crossfade",
+            "photo_path": None,
+            "clip_path": None,
+            "has_clip": False,
+        }
+
+        if "multipart/form-data" in content_type:
+            parts_ct = content_type.split("boundary=")
+            if len(parts_ct) < 2:
+                self._send_json({"error": "No boundary"}, 400)
+                return
+            boundary = parts_ct[1].strip().encode()
+            body = self._read_body()
+            parts = self._parse_multipart(body, boundary)
+
+            for part in parts:
+                if part["name"] == "prompt":
+                    scene["prompt"] = part["data"].decode(errors="replace").strip()
+                elif part["name"] == "duration":
+                    try:
+                        scene["duration"] = int(part["data"].decode().strip())
+                    except ValueError:
+                        pass
+                elif part["name"] == "transition":
+                    scene["transition"] = part["data"].decode(errors="replace").strip()
+                elif part["name"] == "photo" and part["filename"]:
+                    ext = os.path.splitext(part["filename"])[1] or ".jpg"
+                    photo_path = os.path.join(SCENE_PHOTOS_DIR, f"{scene_id}{ext}")
+                    with open(photo_path, "wb") as f:
+                        f.write(part["data"])
+                    scene["photo_path"] = photo_path
+        else:
+            body = self._read_body()
+            try:
+                params = json.loads(body) if body else {}
+            except json.JSONDecodeError:
+                params = {}
+            scene["prompt"] = params.get("prompt", "")
+            scene["duration"] = params.get("duration", 8)
+            scene["transition"] = params.get("transition", "crossfade")
+
+        plan["scenes"].append(scene)
+        _save_manual_plan(plan)
+        self._send_json({"ok": True, "scene": scene})
+
+    def _handle_manual_update_scene(self, scene_id: str):
+        """Update a manual scene's prompt, duration, or transition."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        plan = _load_manual_plan()
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                if "prompt" in params:
+                    s["prompt"] = params["prompt"]
+                if "duration" in params:
+                    s["duration"] = params["duration"]
+                if "transition" in params:
+                    s["transition"] = params["transition"]
+                _save_manual_plan(plan)
+                self._send_json({"ok": True, "scene": s})
+                return
+
+        self._send_json({"error": "Scene not found"}, 404)
+
+    def _handle_manual_delete_scene(self, scene_id: str):
+        """Delete a manual scene."""
+        plan = _load_manual_plan()
+        new_scenes = [s for s in plan["scenes"] if s["id"] != scene_id]
+        if len(new_scenes) == len(plan["scenes"]):
+            self._send_json({"error": "Scene not found"}, 404)
+            return
+        # Clean up files for the deleted scene
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                if s.get("photo_path") and os.path.isfile(s["photo_path"]):
+                    os.remove(s["photo_path"])
+                if s.get("clip_path") and os.path.isfile(s["clip_path"]):
+                    os.remove(s["clip_path"])
+                break
+        plan["scenes"] = new_scenes
+        _save_manual_plan(plan)
+        self._send_json({"ok": True, "deleted": scene_id})
+
+    def _handle_manual_upload_photo(self, scene_id: str):
+        """Upload/replace a scene photo."""
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._send_json({"error": "Expected multipart/form-data"}, 400)
+            return
+
+        parts_ct = content_type.split("boundary=")
+        if len(parts_ct) < 2:
+            self._send_json({"error": "No boundary"}, 400)
+            return
+        boundary = parts_ct[1].strip().encode()
+        body = self._read_body()
+        parts = self._parse_multipart(body, boundary)
+
+        file_data = None
+        file_ext = ".jpg"
+        for part in parts:
+            if part["name"] == "photo" or part["filename"]:
+                file_data = part["data"]
+                if part["filename"]:
+                    file_ext = os.path.splitext(part["filename"])[1] or ".jpg"
+                break
+
+        if file_data is None:
+            self._send_json({"error": "No photo file found"}, 400)
+            return
+
+        plan = _load_manual_plan()
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                # Remove old photo if exists
+                if s.get("photo_path") and os.path.isfile(s["photo_path"]):
+                    os.remove(s["photo_path"])
+                photo_path = os.path.join(SCENE_PHOTOS_DIR, f"{scene_id}{file_ext}")
+                with open(photo_path, "wb") as f:
+                    f.write(file_data)
+                s["photo_path"] = photo_path
+                _save_manual_plan(plan)
+                self._send_json({"ok": True, "photo_url": f"/api/manual/scene-photo/{scene_id}"})
+                return
+
+        self._send_json({"error": "Scene not found"}, 404)
+
+    def _handle_get_scene_photo(self, scene_id: str):
+        """Serve a scene photo."""
+        plan = _load_manual_plan()
+        for s in plan["scenes"]:
+            if s["id"] == scene_id and s.get("photo_path"):
+                if os.path.isfile(s["photo_path"]):
+                    self._send_file(s["photo_path"])
+                    return
+        self.send_error(404, "Photo not found")
+
+    def _handle_manual_generate_scene(self, scene_id: str):
+        """Generate video for a single manual scene."""
+        with gen_lock:
+            if gen_state["running"]:
+                self._send_json({"error": "Generation already in progress"}, 409)
+                return
+
+        with gen_lock:
+            _reset_state()
+            gen_state["running"] = True
+            gen_state["phase"] = "starting"
+
+        thread = threading.Thread(
+            target=_run_manual_generate_scene,
+            args=(scene_id,),
+            daemon=True,
+        )
+        thread.start()
+        self._send_json({"ok": True, "message": f"Generating scene {scene_id}"})
+
+    def _handle_manual_generate_all(self):
+        """Generate all manual scenes that don't have clips."""
+        with gen_lock:
+            if gen_state["running"]:
+                self._send_json({"error": "Generation already in progress"}, 409)
+                return
+
+        with gen_lock:
+            _reset_state()
+            gen_state["running"] = True
+            gen_state["phase"] = "starting"
+
+        thread = threading.Thread(target=_run_manual_generate_all, daemon=True)
+        thread.start()
+        self._send_json({"ok": True, "message": "Generating all scenes"})
+
+    def _handle_manual_stitch(self):
+        """Stitch all manual scenes into final video."""
+        with gen_lock:
+            if gen_state["running"]:
+                self._send_json({"error": "Generation already in progress"}, 409)
+                return
+
+        with gen_lock:
+            _reset_state()
+            gen_state["running"] = True
+            gen_state["phase"] = "starting"
+
+        thread = threading.Thread(target=_run_manual_stitch, daemon=True)
+        thread.start()
+        self._send_json({"ok": True, "message": "Stitching video"})
+
+    def _handle_manual_reorder(self):
+        """Reorder manual scenes and optionally set song path."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        order = params.get("order", [])  # list of scene IDs in new order
+
+        plan = _load_manual_plan()
+
+        # Update song path if provided
+        song_filename = params.get("song_filename")
+        if song_filename:
+            plan["song_path"] = os.path.join(UPLOADS_DIR, os.path.basename(song_filename))
+
+        if order:
+            scene_map = {s["id"]: s for s in plan["scenes"]}
+            new_scenes = []
+            for sid in order:
+                if sid in scene_map:
+                    new_scenes.append(scene_map[sid])
+            # Add any scenes not in the order list at the end
+            for s in plan["scenes"]:
+                if s["id"] not in order:
+                    new_scenes.append(s)
+            plan["scenes"] = new_scenes
+
+        _save_manual_plan(plan)
+        self._send_json({"ok": True})
 
     # ---- Prompt assistant endpoints ----
 

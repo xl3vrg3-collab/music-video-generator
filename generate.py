@@ -91,9 +91,15 @@ def main():
     parser.add_argument("--preset", default=None,
                         choices=list(STYLE_PRESETS.keys()),
                         help="Use a style preset (e.g. cyberpunk, synthwave, space)")
+    parser.add_argument("--manual", action="store_true",
+                        help="Use manual scene plan (output/manual_scene_plan.json) instead of auto-analysis")
     parser.add_argument("-y", "--yes", action="store_true",
                         help="Skip confirmation prompt")
     args = parser.parse_args()
+
+    # --- Manual mode ---
+    if args.manual:
+        return handle_manual(args)
 
     # --- Regen mode ---
     if args.regen is not None:
@@ -269,6 +275,102 @@ def handle_regen(scene_index: int, new_prompt: str | None):
         print(f"  {status}")
 
     stitch(clip_paths, song_path, output_path,
+           transitions=scene_transitions, progress_cb=on_stitch)
+
+    file_size = os.path.getsize(output_path) / (1024 * 1024)
+    print(f"\n=== COMPLETE ===")
+    print(f"  Output:   {output_path}")
+    print(f"  Size:     {file_size:.1f} MB")
+    print()
+
+
+def handle_manual(args):
+    """Generate video from manual scene plan."""
+    manual_plan_path = os.path.join("output", "manual_scene_plan.json")
+    if not os.path.isfile(manual_plan_path):
+        print(f"ERROR: No manual scene plan found at {manual_plan_path}")
+        print("Use the web UI's Manual Mode to create scenes first.")
+        sys.exit(1)
+
+    with open(manual_plan_path, "r") as f:
+        plan = json.load(f)
+
+    scenes = plan.get("scenes", [])
+    if not scenes:
+        print("ERROR: Manual scene plan has no scenes.")
+        sys.exit(1)
+
+    song_path = plan.get("song_path")
+    output_path = args.output or os.path.join("output", "manual_final_video.mp4")
+    output_path = os.path.abspath(output_path)
+    clips_dir = os.path.join(os.path.dirname(output_path), "manual_clips")
+
+    print(f"\n=== MANUAL MODE ===")
+    print(f"  Scenes: {len(scenes)}")
+    if song_path:
+        print(f"  Audio:  {song_path}")
+    else:
+        print(f"  Audio:  (none)")
+
+    for i, scene in enumerate(scenes):
+        print(f"  Scene {i + 1:2d} | {scene.get('duration', 8)}s | {scene.get('transition', 'crossfade'):10s} "
+              f"| {scene.get('prompt', '')[:60]}...")
+
+    # Generate clips for scenes without them
+    scenes_to_gen = [(i, s) for i, s in enumerate(scenes)
+                     if not s.get("has_clip") or not s.get("clip_path")
+                     or not os.path.isfile(s.get("clip_path", ""))]
+
+    if scenes_to_gen:
+        print(f"\n=== GENERATING {len(scenes_to_gen)} CLIPS ===")
+        n = len(scenes_to_gen)
+        scene_status = {}
+
+        def on_progress(index, status):
+            scene_status[index] = status
+            done = sum(1 for s in scene_status.values() if "done" in s.lower() or "FAILED" in s)
+            sys.stdout.write(f"\r  {progress_bar(done, n)} Scene {index + 1}: {status[:50]}   ")
+            sys.stdout.flush()
+
+        start_time = time.time()
+        for scene_idx, scene in scenes_to_gen:
+            gen_prompt = scene["prompt"]
+            if scene.get("photo_path") and os.path.isfile(scene["photo_path"]):
+                gen_prompt += ", matching the reference image style"
+
+            gen_scene = {
+                "prompt": gen_prompt,
+                "duration": scene.get("duration", 8),
+            }
+            try:
+                clip_path = generate_scene(gen_scene, scene_idx, clips_dir,
+                                           progress_cb=on_progress)
+                scene["clip_path"] = clip_path
+                scene["has_clip"] = True
+            except Exception as e:
+                print(f"\n  Scene {scene_idx} failed: {e}")
+
+        elapsed = time.time() - start_time
+        generated = sum(1 for _, s in scenes_to_gen if s.get("has_clip"))
+        print(f"\n\n  Generated {generated} / {n} clips in {elapsed:.0f}s")
+
+        # Save updated plan
+        with open(manual_plan_path, "w") as f:
+            json.dump(plan, f, indent=2)
+    else:
+        print("\n  All clips already generated.")
+
+    # Stitch
+    print("\n=== STITCHING FINAL VIDEO ===")
+    clip_paths = [s.get("clip_path") for s in scenes]
+    scene_transitions = [s.get("transition", "crossfade") for s in scenes]
+
+    audio = song_path if song_path and os.path.isfile(song_path) else None
+
+    def on_stitch(status):
+        print(f"  {status}")
+
+    stitch(clip_paths, audio, output_path,
            transitions=scene_transitions, progress_cb=on_stitch)
 
     file_size = os.path.getsize(output_path) / (1024 * 1024)

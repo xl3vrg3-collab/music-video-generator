@@ -561,6 +561,238 @@
     .preset-grid { gap: 6px; }
     .preset-card { min-width: 80px; padding: 8px 10px; }
   }
+
+  /* ---- Mode Toggle ---- */
+  .mode-toggle {
+    display: flex; justify-content: center; gap: 0;
+    margin-bottom: 30px;
+  }
+  .mode-btn {
+    padding: 10px 28px;
+    font-family: inherit; font-size: 11px;
+    letter-spacing: 3px; text-transform: uppercase;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all 0.3s;
+  }
+  .mode-btn:first-child { border-radius: 4px 0 0 4px; }
+  .mode-btn:last-child { border-radius: 0 4px 4px 0; }
+  .mode-btn.active {
+    background: rgba(0,212,255,0.1);
+    border-color: var(--cyan);
+    color: var(--cyan);
+    box-shadow: 0 0 12px var(--cyan-dim);
+  }
+
+  /* ---- Manual Scene Cards ---- */
+  .manual-scene-list {
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .manual-scene-card {
+    border: 2px solid var(--amber);
+    border-radius: 6px;
+    background: var(--surface);
+    overflow: hidden;
+    transition: border-color 0.4s, box-shadow 0.4s;
+    position: relative;
+  }
+  .manual-scene-card.state-pending {
+    border-color: var(--amber);
+  }
+  .manual-scene-card.state-generated {
+    border-color: var(--green);
+    box-shadow: 0 0 8px rgba(0,255,136,0.15);
+  }
+  .manual-scene-card.state-generating {
+    border-color: var(--cyan);
+    animation: pulse-border 1.5s ease-in-out infinite;
+  }
+  .manual-scene-card.state-failed {
+    border-color: var(--red);
+    box-shadow: 0 0 8px rgba(255,68,85,0.2);
+  }
+
+  @keyframes pulse-border {
+    0%, 100% { box-shadow: 0 0 4px var(--cyan-dim); }
+    50% { box-shadow: 0 0 16px var(--cyan), 0 0 30px var(--cyan-dim); }
+  }
+
+  .msc-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+  }
+  .msc-drag-handle {
+    cursor: grab; font-size: 16px; color: var(--text-dim);
+    user-select: none; min-width: 20px; text-align: center;
+    line-height: 1;
+  }
+  .msc-drag-handle:active { cursor: grabbing; }
+  .msc-title {
+    font-size: 12px; font-weight: 700; color: var(--amber);
+    letter-spacing: 2px; text-transform: uppercase;
+    flex: 1;
+  }
+  .msc-delete-btn {
+    background: transparent;
+    border: 1px solid var(--red);
+    color: var(--red);
+    font-family: inherit; font-size: 9px;
+    padding: 4px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    transition: all 0.2s;
+  }
+  .msc-delete-btn:hover {
+    background: rgba(255,68,85,0.15);
+  }
+  .msc-body {
+    padding: 16px;
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 16px;
+  }
+  .msc-photo-area {
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .msc-photo-preview {
+    width: 140px; height: 105px;
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    position: relative;
+    background: var(--bg);
+  }
+  .msc-photo-preview img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+  }
+  /* Scanline overlay on photo thumbnails */
+  .msc-photo-preview::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(
+      transparent, transparent 2px,
+      rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none;
+  }
+  .msc-photo-placeholder {
+    font-size: 10px; color: var(--text-dim);
+    text-align: center; line-height: 1.5;
+    letter-spacing: 1px;
+  }
+  .msc-photo-input { display: none; }
+  .msc-fields {
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .msc-prompt-input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-family: inherit; font-size: 12px;
+    resize: vertical;
+    min-height: 60px;
+  }
+  .msc-prompt-input:focus {
+    outline: none; border-color: var(--cyan);
+  }
+  .msc-prompt-input::placeholder { color: var(--text-dim); }
+  .msc-controls-row {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+  .msc-select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    color: var(--text);
+    font-family: inherit; font-size: 11px;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236a6a7a'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    padding-right: 24px;
+  }
+  .msc-select:focus { outline: none; border-color: var(--cyan); }
+  .msc-select option { background: var(--surface); color: var(--text); }
+  .msc-label {
+    font-size: 10px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+  .msc-actions {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    margin-top: 4px;
+  }
+  .msc-status {
+    font-size: 10px; margin-left: auto;
+    letter-spacing: 1px; text-transform: uppercase;
+  }
+  .msc-clip-preview {
+    margin-top: 8px; text-align: center;
+    grid-column: 1 / -1;
+  }
+  .msc-clip-preview video {
+    max-width: 100%; max-height: 240px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+
+  .manual-add-btn {
+    width: 100%;
+    padding: 14px;
+    border: 2px dashed var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-dim);
+    font-family: inherit; font-size: 12px;
+    letter-spacing: 3px; text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.3s;
+    margin-top: 8px;
+  }
+  .manual-add-btn:hover {
+    border-color: var(--cyan);
+    color: var(--cyan);
+    background: rgba(0,212,255,0.03);
+  }
+
+  .manual-bottom-bar {
+    display: flex; gap: 12px; justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+
+  .manual-progress-wrap {
+    margin-top: 16px;
+  }
+
+  /* Drag-and-drop reorder visual */
+  .manual-scene-card.dragging {
+    opacity: 0.4;
+  }
+  .manual-scene-card.drag-over {
+    border-top: 3px solid var(--cyan);
+  }
+
+  @media (max-width: 600px) {
+    .msc-body { grid-template-columns: 1fr; }
+    .msc-photo-preview { width: 100%; height: 120px; }
+  }
 </style>
 </head>
 <body>
@@ -572,6 +804,15 @@
     <h1>Music Video Generator</h1>
     <div class="sub">Grok AI &middot; Video Synthesis Engine</div>
   </div>
+
+  <!-- Mode Toggle -->
+  <div class="mode-toggle">
+    <button class="mode-btn active" id="autoModeBtn" onclick="window._setMode('auto')">Auto Mode</button>
+    <button class="mode-btn" id="manualModeBtn" onclick="window._setMode('manual')">Manual Mode</button>
+  </div>
+
+  <!-- ============ AUTO MODE ============ -->
+  <div id="autoModeContainer">
 
   <!-- Upload Panel -->
   <div class="panel" id="uploadPanel">
@@ -676,6 +917,62 @@
       </div>
     </div>
   </div>
+
+  </div><!-- /autoModeContainer -->
+
+  <!-- ============ MANUAL MODE ============ -->
+  <div id="manualModeContainer" class="hidden">
+
+    <!-- Manual Audio Upload (optional) -->
+    <div class="panel">
+      <div class="panel-header"><span class="dot"></span> Audio Track (Optional)</div>
+      <div class="panel-body">
+        <div class="upload-zone mini" id="manualUploadZone">
+          <div class="icon">&#9835;</div>
+          <div class="label">Drop an audio file or click to browse (optional)</div>
+          <div class="filename hidden" id="manualUploadFilename"></div>
+          <input type="file" id="manualFileInput" accept="audio/*">
+        </div>
+      </div>
+    </div>
+
+    <!-- Manual Scene Builder -->
+    <div class="panel">
+      <div class="panel-header"><span class="dot dot-magenta"></span> Scene Builder</div>
+      <div class="panel-body">
+        <div class="hint" style="margin-bottom:14px;">
+          Build your video scene by scene. Upload a photo reference, write a prompt, choose duration and transition. Generate clips individually or all at once, then stitch into final video.
+        </div>
+        <div class="manual-scene-list" id="manualSceneList"></div>
+        <button class="manual-add-btn" id="manualAddSceneBtn">+ Add Scene</button>
+
+        <div class="manual-progress-wrap hidden" id="manualProgressWrap">
+          <div class="phase-label" id="manualPhaseLabel">...</div>
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" id="manualProgressFill"></div>
+          </div>
+        </div>
+
+        <div class="manual-bottom-bar">
+          <button class="btn" id="manualGenerateAllBtn">Generate All</button>
+          <button class="btn btn-amber" id="manualStitchBtn">Stitch Video</button>
+          <a class="btn btn-magenta hidden" id="manualDownloadBtn" href="#" download="music_video.mp4">Download</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Manual Preview -->
+    <div class="panel hidden" id="manualPreviewPanel">
+      <div class="panel-header"><span class="dot"></span> Result</div>
+      <div class="panel-body">
+        <div class="preview-wrap">
+          <video id="manualPreviewVideo" controls></video>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /manualModeContainer -->
+
 </div>
 
 <script>
@@ -1270,6 +1567,494 @@
       }
     } catch (e) { /* no plan yet */ }
   })();
+
+  // ===================== MODE TOGGLE =====================
+
+  const autoModeContainer = $('autoModeContainer');
+  const manualModeContainer = $('manualModeContainer');
+  const autoModeBtn = $('autoModeBtn');
+  const manualModeBtn = $('manualModeBtn');
+
+  window._setMode = function(mode) {
+    if (mode === 'manual') {
+      autoModeContainer.classList.add('hidden');
+      manualModeContainer.classList.remove('hidden');
+      autoModeBtn.classList.remove('active');
+      manualModeBtn.classList.add('active');
+      loadManualScenes();
+    } else {
+      autoModeContainer.classList.remove('hidden');
+      manualModeContainer.classList.add('hidden');
+      autoModeBtn.classList.add('active');
+      manualModeBtn.classList.remove('active');
+    }
+  };
+
+  // ===================== MANUAL MODE =====================
+
+  const manualSceneList = $('manualSceneList');
+  const manualAddSceneBtn = $('manualAddSceneBtn');
+  const manualGenerateAllBtn = $('manualGenerateAllBtn');
+  const manualStitchBtn = $('manualStitchBtn');
+  const manualDownloadBtn = $('manualDownloadBtn');
+  const manualPreviewPanel = $('manualPreviewPanel');
+  const manualPreviewVideo = $('manualPreviewVideo');
+  const manualProgressWrap = $('manualProgressWrap');
+  const manualPhaseLabel = $('manualPhaseLabel');
+  const manualProgressFill = $('manualProgressFill');
+  const manualUploadZone = $('manualUploadZone');
+  const manualFileInput = $('manualFileInput');
+  const manualUploadFilename = $('manualUploadFilename');
+
+  let manualScenes = [];
+  let manualSongFilename = null;
+  let manualPollTimer = null;
+  let dragSrcId = null;
+
+  const MANUAL_TRANSITIONS = ['crossfade','hard_cut','fade_black','wipe_left','wipe_right','dissolve','zoom_in','glitch'];
+  const MANUAL_DURATIONS = [4, 6, 8, 10, 12, 15];
+
+  // ---- Manual audio upload ----
+  manualUploadZone.addEventListener('click', () => manualFileInput.click());
+  manualUploadZone.addEventListener('dragover', e => {
+    e.preventDefault(); manualUploadZone.classList.add('dragover');
+  });
+  manualUploadZone.addEventListener('dragleave', () => {
+    manualUploadZone.classList.remove('dragover');
+  });
+  manualUploadZone.addEventListener('drop', e => {
+    e.preventDefault(); manualUploadZone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) uploadManualAudio(e.dataTransfer.files[0]);
+  });
+  manualFileInput.addEventListener('change', () => {
+    if (manualFileInput.files.length) uploadManualAudio(manualFileInput.files[0]);
+  });
+
+  async function uploadManualAudio(file) {
+    manualUploadFilename.textContent = 'Uploading...';
+    manualUploadFilename.classList.remove('hidden');
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const resp = await fetch('/api/upload', { method: 'POST', body: form });
+      const data = await resp.json();
+      if (data.ok) {
+        manualSongFilename = data.filename;
+        manualUploadFilename.textContent = data.filename + ' (' + (data.size / 1048576).toFixed(1) + ' MB)';
+      } else {
+        manualUploadFilename.textContent = 'Error: ' + (data.error || 'Upload failed');
+      }
+    } catch (err) {
+      manualUploadFilename.textContent = 'Error: ' + err.message;
+    }
+  }
+
+  // ---- Load manual scenes ----
+  async function loadManualScenes() {
+    try {
+      const resp = await fetch('/api/manual/scenes');
+      const data = await resp.json();
+      manualScenes = data.scenes || [];
+      if (data.song_path) {
+        // Extract filename from path
+        const parts = data.song_path.replace(/\\/g, '/').split('/');
+        manualSongFilename = parts[parts.length - 1];
+        manualUploadFilename.textContent = manualSongFilename;
+        manualUploadFilename.classList.remove('hidden');
+      }
+      renderManualScenes();
+    } catch (e) {
+      manualScenes = [];
+      renderManualScenes();
+    }
+  }
+
+  // ---- Render manual scenes ----
+  function renderManualScenes() {
+    if (!manualScenes.length) {
+      manualSceneList.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:20px;text-align:center;">No scenes yet. Click "+ Add Scene" to begin.</div>';
+      return;
+    }
+
+    let html = '';
+    manualScenes.forEach((s, i) => {
+      const hasClip = s.clip_exists;
+      const hasPhoto = s.has_photo;
+      let stateClass = 'state-pending';
+      if (hasClip) stateClass = 'state-generated';
+
+      const durOptions = MANUAL_DURATIONS.map(d =>
+        `<option value="${d}" ${d === (s.duration || 8) ? 'selected' : ''}>${d}s</option>`
+      ).join('');
+
+      const transOptions = MANUAL_TRANSITIONS.map(t => {
+        const sel = (t === (s.transition || 'crossfade')) ? 'selected' : '';
+        return `<option value="${t}" ${sel}>${t.replace(/_/g, ' ')}</option>`;
+      }).join('');
+
+      const photoHtml = hasPhoto
+        ? `<img src="${s.photo_url}?t=${Date.now()}" alt="Scene photo">`
+        : `<div class="msc-photo-placeholder">Click to<br>upload photo</div>`;
+
+      const clipHtml = hasClip
+        ? `<div class="msc-clip-preview"><video src="${s.clip_url}?t=${Date.now()}" controls preload="metadata"></video></div>`
+        : '';
+
+      html += `
+        <div class="manual-scene-card ${stateClass}" data-scene-id="${s.id}" id="msc-${s.id}"
+             draggable="true"
+             ondragstart="window._mscDragStart(event, '${s.id}')"
+             ondragover="window._mscDragOver(event)"
+             ondragenter="window._mscDragEnter(event, '${s.id}')"
+             ondragleave="window._mscDragLeave(event)"
+             ondrop="window._mscDrop(event, '${s.id}')"
+             ondragend="window._mscDragEnd(event)">
+          <div class="msc-header">
+            <span class="msc-drag-handle" title="Drag to reorder">&#8801;</span>
+            <span class="msc-title">Scene ${i + 1}</span>
+            <button class="msc-delete-btn" onclick="window._manualDeleteScene('${s.id}')">Delete</button>
+          </div>
+          <div class="msc-body">
+            <div class="msc-photo-area">
+              <div class="msc-photo-preview" onclick="document.getElementById('msc-photo-input-${s.id}').click()">
+                ${photoHtml}
+              </div>
+              <input type="file" class="msc-photo-input" id="msc-photo-input-${s.id}" accept="image/*"
+                     onchange="window._manualUploadPhoto('${s.id}', this.files[0])">
+            </div>
+            <div class="msc-fields">
+              <textarea class="msc-prompt-input" id="msc-prompt-${s.id}" placeholder="Describe what this scene should look like..."
+                        onchange="window._manualUpdateScene('${s.id}', {prompt: this.value})">${escHtml(s.prompt || '')}</textarea>
+              <div class="msc-controls-row">
+                <span class="msc-label">Duration:</span>
+                <select class="msc-select" onchange="window._manualUpdateScene('${s.id}', {duration: parseInt(this.value)})">
+                  ${durOptions}
+                </select>
+                <span class="msc-label" style="margin-left:8px;">Transition:</span>
+                <select class="msc-select" onchange="window._manualUpdateScene('${s.id}', {transition: this.value})">
+                  ${transOptions}
+                </select>
+              </div>
+              <div class="msc-actions">
+                <button class="btn btn-small" onclick="window._manualGenerateScene('${s.id}')">Generate Clip</button>
+                ${hasClip ? `<button class="btn btn-small btn-amber" onclick="window._manualPreviewClip('${s.id}')">Preview</button>` : ''}
+                <span class="msc-status" id="msc-status-${s.id}"></span>
+              </div>
+            </div>
+            ${clipHtml}
+          </div>
+        </div>
+      `;
+    });
+
+    manualSceneList.innerHTML = html;
+  }
+
+  // ---- Add scene ----
+  manualAddSceneBtn.addEventListener('click', async () => {
+    try {
+      const resp = await fetch('/api/manual/scene', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: '', duration: 8, transition: 'crossfade' }),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        await loadManualScenes();
+      }
+    } catch (e) {
+      alert('Failed to add scene: ' + e.message);
+    }
+  });
+
+  // ---- Update scene ----
+  window._manualUpdateScene = async function(sceneId, fields) {
+    try {
+      await fetch(`/api/manual/scene/${sceneId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fields),
+      });
+    } catch (e) { /* ignore */ }
+  };
+
+  // ---- Delete scene ----
+  window._manualDeleteScene = async function(sceneId) {
+    if (!confirm('Delete this scene?')) return;
+    try {
+      await fetch(`/api/manual/scene/${sceneId}`, { method: 'DELETE' });
+      await loadManualScenes();
+    } catch (e) {
+      alert('Failed to delete: ' + e.message);
+    }
+  };
+
+  // ---- Upload photo ----
+  window._manualUploadPhoto = async function(sceneId, file) {
+    if (!file) return;
+    const form = new FormData();
+    form.append('photo', file);
+    try {
+      const resp = await fetch(`/api/manual/scene/${sceneId}/photo`, {
+        method: 'POST',
+        body: form,
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        await loadManualScenes();
+      }
+    } catch (e) {
+      alert('Photo upload failed: ' + e.message);
+    }
+  };
+
+  // ---- Generate single scene ----
+  window._manualGenerateScene = async function(sceneId) {
+    // Save prompt first
+    const promptEl = document.getElementById('msc-prompt-' + sceneId);
+    if (promptEl) {
+      await window._manualUpdateScene(sceneId, { prompt: promptEl.value });
+    }
+
+    const statusEl = document.getElementById('msc-status-' + sceneId);
+    const card = document.getElementById('msc-' + sceneId);
+    if (statusEl) { statusEl.textContent = 'STARTING...'; statusEl.style.color = 'var(--amber)'; }
+    if (card) { card.className = card.className.replace(/state-\w+/g, '') + ' state-generating'; }
+
+    try {
+      const resp = await fetch(`/api/manual/scene/${sceneId}/generate`, { method: 'POST' });
+      const data = await resp.json();
+      if (!data.ok) {
+        if (statusEl) { statusEl.textContent = data.error || 'ERROR'; statusEl.style.color = 'var(--red)'; }
+        if (card) { card.className = card.className.replace(/state-\w+/g, '') + ' state-failed'; }
+        return;
+      }
+
+      // Poll for completion
+      const poll = setInterval(async () => {
+        try {
+          const pr = await fetch('/api/progress');
+          const pd = await pr.json();
+          const st = pd.progress && pd.progress[0] ? pd.progress[0].status : '';
+          if (statusEl) { statusEl.textContent = st.toUpperCase(); }
+
+          if (pd.phase === 'done' || pd.phase === 'error') {
+            clearInterval(poll);
+            if (pd.phase === 'done') {
+              if (statusEl) { statusEl.textContent = 'DONE'; statusEl.style.color = 'var(--green)'; }
+              await loadManualScenes();
+            } else {
+              if (statusEl) { statusEl.textContent = 'FAILED'; statusEl.style.color = 'var(--red)'; }
+              if (card) { card.className = card.className.replace(/state-\w+/g, '') + ' state-failed'; }
+            }
+          }
+        } catch (e) { /* ignore */ }
+      }, 2000);
+    } catch (e) {
+      if (statusEl) { statusEl.textContent = 'ERROR'; statusEl.style.color = 'var(--red)'; }
+    }
+  };
+
+  // ---- Preview clip inline ----
+  window._manualPreviewClip = function(sceneId) {
+    const card = document.getElementById('msc-' + sceneId);
+    if (!card) return;
+    const video = card.querySelector('.msc-clip-preview video');
+    if (video) {
+      video.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      video.play();
+    }
+  };
+
+  // ---- Generate all ----
+  manualGenerateAllBtn.addEventListener('click', async () => {
+    // Save all prompts first
+    for (const s of manualScenes) {
+      const promptEl = document.getElementById('msc-prompt-' + s.id);
+      if (promptEl && promptEl.value !== s.prompt) {
+        await window._manualUpdateScene(s.id, { prompt: promptEl.value });
+      }
+    }
+
+    manualGenerateAllBtn.disabled = true;
+    manualProgressWrap.classList.remove('hidden');
+    manualPhaseLabel.textContent = 'STARTING...';
+    manualProgressFill.style.width = '0%';
+
+    try {
+      const resp = await fetch('/api/manual/generate-all', { method: 'POST' });
+      const data = await resp.json();
+      if (!data.ok) {
+        alert('Error: ' + (data.error || 'failed'));
+        manualGenerateAllBtn.disabled = false;
+        return;
+      }
+
+      const poll = setInterval(async () => {
+        try {
+          const pr = await fetch('/api/progress');
+          const pd = await pr.json();
+          manualPhaseLabel.textContent = pd.phase.toUpperCase();
+
+          if (pd.progress && pd.total_scenes > 0) {
+            let done = 0;
+            pd.progress.forEach(p => {
+              const st = (p.status || '').toLowerCase();
+              if (st.includes('done') || st.includes('fail')) done++;
+            });
+            manualProgressFill.style.width = Math.round((done / pd.total_scenes) * 100) + '%';
+          }
+
+          if (pd.phase === 'done' || pd.phase === 'error') {
+            clearInterval(poll);
+            manualGenerateAllBtn.disabled = false;
+            if (pd.phase === 'done') {
+              manualPhaseLabel.textContent = 'ALL CLIPS GENERATED';
+            } else {
+              manualPhaseLabel.textContent = 'ERROR: ' + (pd.error || '');
+            }
+            await loadManualScenes();
+          }
+        } catch (e) { /* ignore */ }
+      }, 2000);
+    } catch (e) {
+      alert('Error: ' + e.message);
+      manualGenerateAllBtn.disabled = false;
+    }
+  });
+
+  // ---- Stitch ----
+  manualStitchBtn.addEventListener('click', async () => {
+    // Set song path in the manual plan if we have one
+    if (manualSongFilename) {
+      // The server needs to know the song path - we store it by updating the plan
+      // We do this by sending it via the stitch endpoint implicitly (song is already uploaded)
+      // Actually we need to update the manual plan's song_path
+      try {
+        // Quick hack: create a dummy scene update to set song path
+        // Better: add a dedicated endpoint. For now, we'll use reorder to trigger a save
+        // Actually let's just fetch-and-update using the upload path
+        await fetch('/api/manual/reorder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            order: manualScenes.map(s => s.id),
+            song_filename: manualSongFilename,
+          }),
+        });
+      } catch (e) { /* ignore */ }
+    }
+
+    manualStitchBtn.disabled = true;
+    manualStitchBtn.textContent = 'STITCHING...';
+    manualProgressWrap.classList.remove('hidden');
+    manualPhaseLabel.textContent = 'STITCHING...';
+
+    try {
+      const resp = await fetch('/api/manual/stitch', { method: 'POST' });
+      const data = await resp.json();
+      if (!data.ok) {
+        alert('Error: ' + (data.error || 'failed'));
+        manualStitchBtn.disabled = false;
+        manualStitchBtn.textContent = 'STITCH VIDEO';
+        return;
+      }
+
+      const poll = setInterval(async () => {
+        try {
+          const pr = await fetch('/api/progress');
+          const pd = await pr.json();
+          manualPhaseLabel.textContent = pd.phase.toUpperCase();
+
+          if (pd.phase === 'done') {
+            clearInterval(poll);
+            manualStitchBtn.disabled = false;
+            manualStitchBtn.textContent = 'STITCH VIDEO';
+            manualPhaseLabel.textContent = 'COMPLETE';
+            manualProgressFill.style.width = '100%';
+            // Show preview and download
+            manualPreviewPanel.classList.remove('hidden');
+            manualPreviewVideo.src = '/api/download?t=' + Date.now();
+            manualDownloadBtn.classList.remove('hidden');
+            manualDownloadBtn.href = '/api/download';
+          } else if (pd.phase === 'error') {
+            clearInterval(poll);
+            manualStitchBtn.disabled = false;
+            manualStitchBtn.textContent = 'STITCH VIDEO';
+            manualPhaseLabel.textContent = 'ERROR: ' + (pd.error || '');
+          }
+        } catch (e) { /* ignore */ }
+      }, 2000);
+    } catch (e) {
+      alert('Error: ' + e.message);
+      manualStitchBtn.disabled = false;
+      manualStitchBtn.textContent = 'STITCH VIDEO';
+    }
+  });
+
+  // ---- Drag and drop reorder ----
+  window._mscDragStart = function(e, sceneId) {
+    dragSrcId = sceneId;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', sceneId);
+    setTimeout(() => {
+      const el = document.getElementById('msc-' + sceneId);
+      if (el) el.classList.add('dragging');
+    }, 0);
+  };
+
+  window._mscDragOver = function(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  window._mscDragEnter = function(e, sceneId) {
+    e.preventDefault();
+    if (sceneId !== dragSrcId) {
+      const el = document.getElementById('msc-' + sceneId);
+      if (el) el.classList.add('drag-over');
+    }
+  };
+
+  window._mscDragLeave = function(e) {
+    const card = e.target.closest('.manual-scene-card');
+    if (card) card.classList.remove('drag-over');
+  };
+
+  window._mscDrop = async function(e, targetId) {
+    e.preventDefault();
+    const card = document.getElementById('msc-' + targetId);
+    if (card) card.classList.remove('drag-over');
+
+    if (!dragSrcId || dragSrcId === targetId) return;
+
+    // Reorder locally
+    const srcIdx = manualScenes.findIndex(s => s.id === dragSrcId);
+    const tgtIdx = manualScenes.findIndex(s => s.id === targetId);
+    if (srcIdx < 0 || tgtIdx < 0) return;
+
+    const [moved] = manualScenes.splice(srcIdx, 1);
+    manualScenes.splice(tgtIdx, 0, moved);
+
+    // Send new order to server
+    try {
+      await fetch('/api/manual/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order: manualScenes.map(s => s.id) }),
+      });
+    } catch (e) { /* ignore */ }
+
+    renderManualScenes();
+  };
+
+  window._mscDragEnd = function(e) {
+    document.querySelectorAll('.manual-scene-card').forEach(el => {
+      el.classList.remove('dragging', 'drag-over');
+    });
+    dragSrcId = null;
+  };
+
 })();
 </script>
 </body>

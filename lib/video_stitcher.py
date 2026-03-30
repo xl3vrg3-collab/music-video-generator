@@ -86,17 +86,17 @@ def _get_transition_duration(transition: str, base_crossfade: float) -> float:
     return base_crossfade
 
 
-def stitch(clip_paths: list, audio_path: str, output_path: str,
+def stitch(clip_paths: list, audio_path: str | None, output_path: str,
            crossfade: float = 0.5, fade_dur: float = 1.0,
            transitions: list | None = None,
            default_transition: str = "crossfade",
            progress_cb=None) -> str:
     """
-    Stitch video clips together with audio.
+    Stitch video clips together with optional audio.
 
     Args:
         clip_paths: ordered list of video clip file paths (Nones are skipped)
-        audio_path: path to the audio track
+        audio_path: path to the audio track (None to skip audio overlay)
         output_path: where to write the final video
         crossfade: base crossfade duration in seconds between clips
         fade_dur: fade in/out duration in seconds
@@ -131,8 +131,11 @@ def stitch(clip_paths: list, audio_path: str, output_path: str,
         progress_cb("preparing clips...")
 
     if len(valid_clips) == 1:
-        return _overlay_audio(valid_clips[0], audio_path, output_path, fade_dur,
-                              progress_cb)
+        if audio_path and os.path.isfile(audio_path):
+            return _overlay_audio(valid_clips[0], audio_path, output_path, fade_dur,
+                                  progress_cb)
+        else:
+            return _copy_clip(valid_clips[0], output_path, progress_cb)
 
     # Check if we need the advanced multi-transition pipeline or simple crossfade
     unique_transitions = set(valid_transitions[1:])  # skip first (no previous clip)
@@ -147,6 +150,17 @@ def stitch(clip_paths: list, audio_path: str, output_path: str,
     return _stitch_with_transitions(valid_clips, audio_path, output_path,
                                      crossfade, fade_dur, valid_transitions,
                                      progress_cb)
+
+
+def _copy_clip(clip: str, output: str, progress_cb=None) -> str:
+    """Copy/re-encode a single clip as the final output (no audio)."""
+    if progress_cb:
+        progress_cb("copying single clip...")
+    import shutil
+    shutil.copy2(clip, output)
+    if progress_cb:
+        progress_cb("done")
+    return output
 
 
 def _overlay_audio(clip: str, audio: str, output: str,
@@ -169,22 +183,24 @@ def _overlay_audio(clip: str, audio: str, output: str,
     return output
 
 
-def _stitch_with_crossfades(clips: list, audio: str, output: str,
+def _stitch_with_crossfades(clips: list, audio: str | None, output: str,
                             crossfade: float, fade_dur: float,
                             progress_cb=None) -> str:
     """
     Concatenate clips with crossfade transitions using ffmpeg xfade filter.
-    Then overlay the audio track.
+    Then overlay the audio track (if provided).
     """
     if progress_cb:
         progress_cb(f"stitching {len(clips)} clips with crossfades...")
 
+    has_audio = audio and os.path.isfile(audio)
     durations = [_get_clip_duration(c) for c in clips]
 
     input_args = []
     for c in clips:
         input_args += ["-i", c]
-    input_args += ["-i", audio]
+    if has_audio:
+        input_args += ["-i", audio]
 
     filter_parts = []
     n = len(clips)
@@ -214,11 +230,15 @@ def _stitch_with_crossfades(clips: list, audio: str, output: str,
             f"fade=t=out:st={fade_out_start:.3f}:d={fade_dur}[v]"
         )
 
-    audio_idx = n
-    filter_parts.append(
-        f"[{audio_idx}:a]afade=t=in:st=0:d={fade_dur},"
-        f"afade=t=out:st={fade_out_start:.3f}:d={fade_dur}[a]"
-    )
+    map_args = ["-map", "[v]"]
+
+    if has_audio:
+        audio_idx = n
+        filter_parts.append(
+            f"[{audio_idx}:a]afade=t=in:st=0:d={fade_dur},"
+            f"afade=t=out:st={fade_out_start:.3f}:d={fade_dur}[a]"
+        )
+        map_args += ["-map", "[a]"]
 
     filter_complex = ";".join(filter_parts)
 
@@ -226,9 +246,10 @@ def _stitch_with_crossfades(clips: list, audio: str, output: str,
         "ffmpeg", "-y",
         *input_args,
         "-filter_complex", filter_complex,
-        "-map", "[v]", "-map", "[a]",
-        "-c:v", "libx264", "-c:a", "aac",
-        "-shortest",
+        *map_args,
+        "-c:v", "libx264",
+        *([ "-c:a", "aac"] if has_audio else []),
+        *(["-shortest"] if has_audio else []),
         "-pix_fmt", "yuv420p",
         output,
     ]
@@ -244,7 +265,7 @@ def _stitch_with_crossfades(clips: list, audio: str, output: str,
     return output
 
 
-def _stitch_with_transitions(clips: list, audio: str, output: str,
+def _stitch_with_transitions(clips: list, audio: str | None, output: str,
                               crossfade: float, fade_dur: float,
                               transitions: list,
                               progress_cb=None) -> str:
@@ -255,13 +276,15 @@ def _stitch_with_transitions(clips: list, audio: str, output: str,
     if progress_cb:
         progress_cb(f"stitching {len(clips)} clips with mixed transitions...")
 
+    has_audio = audio and os.path.isfile(audio)
     n = len(clips)
     durations = [_get_clip_duration(c) for c in clips]
 
     input_args = []
     for c in clips:
         input_args += ["-i", c]
-    input_args += ["-i", audio]
+    if has_audio:
+        input_args += ["-i", audio]
 
     filter_parts = []
     running_duration = durations[0]
@@ -342,11 +365,14 @@ def _stitch_with_transitions(clips: list, audio: str, output: str,
         )
 
     # Audio
-    audio_idx = n
-    filter_parts.append(
-        f"[{audio_idx}:a]afade=t=in:st=0:d={fade_dur},"
-        f"afade=t=out:st={fade_out_start:.3f}:d={fade_dur}[a]"
-    )
+    map_args = ["-map", "[v]"]
+    if has_audio:
+        audio_idx = n
+        filter_parts.append(
+            f"[{audio_idx}:a]afade=t=in:st=0:d={fade_dur},"
+            f"afade=t=out:st={fade_out_start:.3f}:d={fade_dur}[a]"
+        )
+        map_args += ["-map", "[a]"]
 
     filter_complex = ";".join(filter_parts)
 
@@ -354,9 +380,10 @@ def _stitch_with_transitions(clips: list, audio: str, output: str,
         "ffmpeg", "-y",
         *input_args,
         "-filter_complex", filter_complex,
-        "-map", "[v]", "-map", "[a]",
-        "-c:v", "libx264", "-c:a", "aac",
-        "-shortest",
+        *map_args,
+        "-c:v", "libx264",
+        *([ "-c:a", "aac"] if has_audio else []),
+        *(["-shortest"] if has_audio else []),
         "-pix_fmt", "yuv420p",
         output,
     ]
