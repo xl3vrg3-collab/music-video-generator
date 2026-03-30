@@ -1326,6 +1326,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/prompt-history":
             self._handle_prompt_history()
 
+        elif path == "/api/estimate-render":
+            self._handle_estimate_render_time()
+
         elif path == "/api/project/autosave":
             autosave_path = os.path.join(OUTPUT_DIR, "autosave.json")
             if os.path.isfile(autosave_path):
@@ -4426,3 +4429,47 @@ if __name__ == "__main__":
         with open(autosave_path, "w", encoding="utf-8") as f:
             f.write(body.decode("utf-8") if isinstance(body, bytes) else body)
         self._send_json({"ok": True})
+
+
+    def _handle_estimate_render_time(self):
+        """Estimate total render time based on scenes and engines."""
+        plan = _load_manual_plan()
+        scenes = plan.get("scenes", [])
+        if not scenes:
+            self._send_json({"estimate_seconds": 0, "estimate_human": "0 seconds"})
+            return
+        
+        # Average generation time per engine
+        ENGINE_TIMES = {
+            "grok": 35,      # ~35 seconds per clip
+            "runway": 60,    # ~60 seconds per clip  
+            "luma": 45,      # ~45 seconds per clip
+            "openai": 15,    # ~15 seconds (image only + Ken Burns)
+        }
+        STITCH_PER_CLIP = 5  # ~5 seconds per clip for stitching
+        
+        settings = _load_settings()
+        default_engine = settings.get("default_engine", "grok")
+        
+        total = 0
+        for s in scenes:
+            if s.get("has_clip") or s.get("clip_path"):
+                continue  # already generated
+            engine = s.get("engine") or default_engine
+            total += ENGINE_TIMES.get(engine, 35)
+        
+        total += len(scenes) * STITCH_PER_CLIP  # stitching time
+        
+        if total < 60:
+            human = f"{total} seconds"
+        elif total < 3600:
+            human = f"{total // 60} min {total % 60}s"
+        else:
+            human = f"{total // 3600}h {(total % 3600) // 60}m"
+        
+        self._send_json({
+            "estimate_seconds": total,
+            "estimate_human": human,
+            "scenes_to_generate": sum(1 for s in scenes if not s.get("has_clip") and not s.get("clip_path")),
+            "scenes_ready": sum(1 for s in scenes if s.get("has_clip") or s.get("clip_path")),
+        })
