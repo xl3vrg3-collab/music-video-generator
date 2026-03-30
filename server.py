@@ -1591,6 +1591,55 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/project/autosave":
             self._handle_autosave()
 
+        # Roadmap: Style mixing
+        elif path == "/api/mix-styles":
+            self._handle_mix_styles()
+
+        # Roadmap: Emotion detection
+        elif path == "/api/detect-emotion":
+            self._handle_detect_emotion()
+
+        # Roadmap: QR code
+        elif path == "/api/qr-code":
+            self._handle_qr_code()
+
+        # Roadmap: Version history save
+        elif path == "/api/versions/save":
+            self._handle_save_version()
+
+        # Roadmap: Enhanced prompt
+        elif path == "/api/enhance-prompt-context":
+            self._handle_enhance_context()
+
+        # Roadmap: Auto transitions from energy
+        elif path == "/api/auto-transitions-energy":
+            self._handle_auto_transitions_energy()
+
+        # Roadmap: Key detection
+        elif path == "/api/detect-key":
+            self._handle_detect_key()
+
+        # Roadmap: Auto-mix master
+        elif path == "/api/auto-mix":
+            self._handle_auto_mix()
+
+        # Roadmap: Click track
+        elif path == "/api/click-track":
+            self._handle_click_track()
+
+        # Roadmap: Extract frames
+        elif re.match(r'^/api/manual/scene/([^/]+)/frames$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/frames$', path)
+            self._handle_extract_frames(m.group(1))
+
+        # Roadmap: Storyboard PDF
+        elif path == "/api/storyboard-pdf":
+            self._handle_storyboard_pdf()
+
+        # Roadmap: Embed code
+        elif path == "/api/embed-code":
+            self._handle_embed_code()
+
         else:
             self.send_error(404)
 
@@ -4507,3 +4556,105 @@ if __name__ == "__main__":
         emotions = detect_emotion(lyrics)
         visual = emotion_to_visual_prompt(emotions)
         self._send_json({"ok": True, "emotions": emotions, "visual_prompt": visual})
+
+
+    # ---- Remaining Roadmap Handlers ----
+
+    def _handle_qr_code(self):
+        body = self._read_body()
+        params = json.loads(body) if body else {}
+        url = params.get("url", "https://example.com")
+        from lib.roadmap_features import generate_qr_code
+        qr_path = os.path.join(OUTPUT_DIR, "qr_code.png")
+        generate_qr_code(url, qr_path)
+        self._send_json({"ok": True, "qr_url": "/output/qr_code.png"})
+
+    def _handle_save_version(self):
+        from lib.roadmap_features import save_version
+        final = os.path.join(OUTPUT_DIR, "final_video.mp4")
+        if os.path.isfile(final):
+            path = save_version(OUTPUT_DIR, final)
+            self._send_json({"ok": True, "version_path": path})
+        else:
+            self._send_json({"ok": False, "error": "No final video to version"})
+
+    def _handle_enhance_context(self):
+        body = self._read_body()
+        params = json.loads(body) if body else {}
+        from lib.roadmap_features import enhance_prompt_with_context
+        result = enhance_prompt_with_context(
+            params.get("prompt", ""),
+            params.get("scene_index", 0),
+            params.get("total_scenes", 1),
+            params.get("prev_prompt", ""),
+            params.get("energy", 0.5),
+        )
+        self._send_json({"ok": True, "enhanced": result})
+
+    def _handle_auto_transitions_energy(self):
+        from lib.roadmap_features import auto_transitions_from_energy
+        plan = _load_manual_plan()
+        scenes = auto_transitions_from_energy(plan.get("scenes", []))
+        plan["scenes"] = scenes
+        _save_manual_plan(plan)
+        self._send_json({"ok": True, "scenes_updated": len(scenes)})
+
+    def _handle_detect_key(self):
+        body = self._read_body()
+        params = json.loads(body) if body else {}
+        audio = params.get("audio_path", "")
+        if not audio:
+            plan = _load_manual_plan()
+            audio = plan.get("song_path", "")
+        from lib.roadmap_features import detect_key
+        key = detect_key(audio)
+        self._send_json({"ok": True, "key": key})
+
+    def _handle_auto_mix(self):
+        body = self._read_body()
+        params = json.loads(body) if body else {}
+        input_path = params.get("input_path", "")
+        if not input_path:
+            self._send_json({"ok": False, "error": "No input_path"})
+            return
+        from lib.roadmap_features import auto_mix_master
+        output = input_path.replace(".mp3", "_mastered.mp3").replace(".wav", "_mastered.wav")
+        auto_mix_master(input_path, output)
+        self._send_json({"ok": True, "output": output})
+
+    def _handle_click_track(self):
+        body = self._read_body()
+        params = json.loads(body) if body else {}
+        bpm = float(params.get("bpm", 120))
+        duration = float(params.get("duration", 60))
+        from lib.roadmap_features import generate_click_track
+        output = os.path.join(OUTPUT_DIR, "click_track.aac")
+        generate_click_track(bpm, duration, output)
+        self._send_json({"ok": True, "click_track_url": "/output/click_track.aac"})
+
+    def _handle_extract_frames(self, scene_id):
+        plan = _load_manual_plan()
+        for s in plan.get("scenes", []):
+            if s.get("id") == scene_id and s.get("clip_path") and os.path.isfile(s["clip_path"]):
+                from lib.roadmap_features import extract_frames
+                frames_dir = os.path.join(OUTPUT_DIR, "frames", scene_id)
+                frames = extract_frames(s["clip_path"], frames_dir, fps=2)
+                urls = [f"/output/frames/{scene_id}/{os.path.basename(f)}" for f in frames]
+                self._send_json({"ok": True, "frames": urls, "count": len(frames)})
+                return
+        self._send_json({"ok": False, "error": "Scene or clip not found"})
+
+    def _handle_storyboard_pdf(self):
+        from lib.roadmap_features import export_storyboard_pdf
+        plan = _load_manual_plan()
+        output = os.path.join(OUTPUT_DIR, "storyboard.html")
+        export_storyboard_pdf(plan.get("scenes", []), output)
+        self._send_json({"ok": True, "storyboard_url": "/output/storyboard.html"})
+
+    def _handle_embed_code(self):
+        body = self._read_body()
+        params = json.loads(body) if body else {}
+        url = params.get("video_url", "/output/final_video.mp4")
+        from lib.roadmap_features import generate_embed_code
+        code = generate_embed_code(url)
+        self._send_json({"ok": True, "embed_code": code})
