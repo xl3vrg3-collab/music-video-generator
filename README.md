@@ -5,7 +5,7 @@ AI-powered music video generator using Grok (xAI) for video synthesis, Python fo
 ## Prerequisites
 
 - **Python 3.10+**
-- **ffmpeg** on your PATH ([download](https://ffmpeg.org/download.html))
+- **ffmpeg** on your PATH ([download](https://ffmpeg.org/download))
 - **xAI API key** with access to `grok-imagine-video` and `grok-imagine-image`
 
 ## Setup
