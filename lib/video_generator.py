@@ -162,56 +162,65 @@ def _generate_image(prompt: str) -> str:
     return images[0]["url"]
 
 
-def _generate_image_from_photo(prompt: str, photo_path: str) -> str:
+def _generate_image_from_photo(prompt: str, photo_path: str,
+                                edit_strength: float = 0.3) -> str:
     """
     Generate a styled image via Grok image API with a source photo.
     Sends the photo as base64 data URI for style transfer.
+
+    edit_strength: 0.0 = keep photo exactly, 1.0 = ignore photo completely
+                   0.2-0.4 recommended for maintaining photo likeness with style applied
+
     Returns the styled image URL.
     """
-    print(f"[_generate_image_from_photo] START photo_path={photo_path}, prompt={prompt[:80]}...")
-    print(f"[_generate_image_from_photo] Photo file exists: {os.path.isfile(photo_path)}, size: {os.path.getsize(photo_path) if os.path.isfile(photo_path) else 'N/A'} bytes")
+    print(f"[PHOTO_GEN] START photo={photo_path}, strength={edit_strength}")
+    print(f"[PHOTO_GEN] Prompt: {prompt[:100]}...")
 
     # Read photo and convert to base64 data URI
     with open(photo_path, "rb") as f:
         photo_bytes = f.read()
 
-    # Detect MIME type from extension
     ext = os.path.splitext(photo_path)[1].lower()
     mime_map = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".webp": "image/webp",
-        ".gif": "image/gif",
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif",
     }
     mime = mime_map.get(ext, "image/jpeg")
     b64_data = base64.b64encode(photo_bytes).decode("ascii")
     data_uri = f"data:{mime};base64,{b64_data}"
-    print(f"[_generate_image_from_photo] Encoded {len(photo_bytes)} bytes as base64 ({len(b64_data)} chars), mime={mime}")
+    print(f"[PHOTO_GEN] Encoded {len(photo_bytes)} bytes, mime={mime}")
 
-    # Call Grok image API with image parameter for style transfer
-    print(f"[_generate_image_from_photo] Calling Grok API: POST {API_BASE}/images/generations with image param...")
+    # Build a prompt that PRESERVES the original photo
+    # Key: tell the model to edit, not recreate
+    edit_prompt = (
+        f"Edit this image: {prompt}. "
+        f"Keep the original subjects, composition, and key visual elements intact. "
+        f"Only modify the style, lighting, and atmosphere as described."
+    )
+
+    print(f"[PHOTO_GEN] Calling Grok API with edit prompt + image_strength={edit_strength}...")
     resp = requests.post(
         f"{API_BASE}/images/generations",
         headers=_headers(),
         json={
             "model": "grok-imagine-image",
-            "prompt": prompt,
+            "prompt": edit_prompt,
             "image": data_uri,
             "n": 1,
+            "strength": edit_strength,        # How much to deviate from original
+            "image_strength": 1.0 - edit_strength,  # How much to keep original
         },
         timeout=120,
     )
-    print(f"[_generate_image_from_photo] API response status: {resp.status_code}")
+    print(f"[PHOTO_GEN] API response: {resp.status_code}")
     if resp.status_code != 200:
-        print(f"[_generate_image_from_photo] API error body: {resp.text[:500]}")
+        print(f"[PHOTO_GEN] Error: {resp.text[:500]}")
     resp.raise_for_status()
     data = resp.json()
     images = data.get("data", [])
     if not images:
-        print(f"[_generate_image_from_photo] ERROR: No images in response: {data}")
-        raise RuntimeError("No image returned from photo style transfer API")
-    print(f"[_generate_image_from_photo] SUCCESS: Got styled image URL: {images[0]['url'][:80]}...")
+        raise RuntimeError("No image returned from photo edit API")
+    print(f"[PHOTO_GEN] SUCCESS: {images[0]['url'][:80]}...")
     return images[0]["url"]
 
 
@@ -348,7 +357,8 @@ def generate_scene(scene: dict, index: int, output_dir: str,
         print(f"[generate_scene][{index}] Photo detected at {photo_path}, using photo+prompt pipeline")
         try:
             _report("sending photo to Grok for style transfer...")
-            img_url = _generate_image_from_photo(gen_prompt, photo_path)
+            edit_strength = scene.get("edit_strength", 0.3)
+            img_url = _generate_image_from_photo(gen_prompt, photo_path, edit_strength)
             print(f"[generate_scene][{index}] Got styled image URL: {img_url[:80]}...")
             img_path = os.path.join(output_dir, f"img_{index:03d}_styled.png")
             _report("downloading styled image...")
@@ -394,7 +404,8 @@ def generate_scene(scene: dict, index: int, output_dir: str,
 
 def generate_from_photo(photo_path: str, prompt: str, duration: float,
                         output_path: str, progress_cb=None,
-                        camera: str = "zoom_in") -> str:
+                        camera: str = "zoom_in",
+                        edit_strength: float = 0.3) -> str:
     """
     Generate a video clip from a reference photo + text prompt.
     Uses TRUE photo-to-video with style transfer via Grok image API.
@@ -427,7 +438,7 @@ def generate_from_photo(photo_path: str, prompt: str, duration: float,
     # Attempt 1: True style transfer with base64 photo
     _report("sending photo to Grok for style transfer (base64)...")
     try:
-        img_url = _generate_image_from_photo(prompt, photo_path)
+        img_url = _generate_image_from_photo(prompt, photo_path, edit_strength)
         img_path = output_path.replace(".mp4", "_styled.png")
         _report("downloading styled image...")
         _download(img_url, img_path)

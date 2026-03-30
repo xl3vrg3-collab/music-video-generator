@@ -572,8 +572,10 @@ def _run_manual_generate_from_photo(scene_id: str):
         duration = scene.get("duration", 8)
         camera = scene.get("camera_movement", "zoom_in")
 
+        edit_strength = scene.get("edit_strength", 0.3)
         generate_from_photo(photo_path, prompt, duration, clip_path,
                             camera=camera,
+                            edit_strength=edit_strength,
                             progress_cb=on_progress)
         _record_cost(str(scene_id), "image")
 
