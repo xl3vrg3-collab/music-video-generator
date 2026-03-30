@@ -383,15 +383,15 @@ def _runway_submit_image_to_video(prompt: str, image_path: str,
     prompt_image = _photo_to_data_uri(image_path)
 
     payload = {
-        "model": "gen4.5",
+        "model": model,
         "promptImage": prompt_image,
         "promptText": f"Animate this scene: {prompt}. Maintain the visual elements from the image.",
         "duration": duration,
         "ratio": RUNWAY_RATIO_MAP.get(ratio, "1280:720"),
     }
 
-    print(f"[RUNWAY] Submitting image-to-video: prompt={prompt[:80]}..., "
-          f"duration={duration}s, ratio={ratio}")
+    print(f"[RUNWAY] Submitting image-to-video: model={model}, prompt={prompt[:80]}..., "
+          f"duration={duration}s, ratio={RUNWAY_RATIO_MAP.get(ratio, '1280:720')}")
 
     resp = requests.post(
         f"{RUNWAY_API_BASE}/image_to_video",
@@ -427,14 +427,14 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
     duration = 10 if duration > 7 else 5  # Runway supports 5 or 10
 
     payload = {
-        "model": "gen4.5",
+        "model": model,
         "promptText": prompt,
         "duration": duration,
         "ratio": RUNWAY_RATIO_MAP.get(ratio, "1280:720"),
     }
 
-    print(f"[RUNWAY] Submitting text-to-video: prompt={prompt[:80]}..., "
-          f"duration={duration}s, ratio={ratio}")
+    print(f"[RUNWAY] Submitting text-to-video: model={model}, prompt={prompt[:80]}..., "
+          f"duration={duration}s, ratio={RUNWAY_RATIO_MAP.get(ratio, '1280:720')}")
 
     resp = requests.post(
         f"{RUNWAY_API_BASE}/text_to_video",
@@ -570,20 +570,11 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
         return clip_path
 
     except Exception as e:
-        _report(f"Runway generation failed ({e})")
-
-        # Fall back to Grok image + Ken Burns
-        _report("falling back to Grok image + Ken Burns...")
-        try:
-            img_url = _generate_image(gen_prompt)
-            img_path = os.path.join(output_dir, f"img_{index:03d}.png")
-            _download(img_url, img_path)
-            _ken_burns(img_path, clip_path, duration, camera=camera)
-            _record("image")
-            _report("done (Grok image fallback)")
-            return clip_path
-        except Exception as e2:
-            _report(f"all generation attempts failed: {e2}")
+        _report(f"Runway generation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        # NO FALLBACK TO IMAGES — user wants video only
+        raise RuntimeError(f"Scene {index} video generation failed: {e}") from e
             raise RuntimeError(
                 f"Scene {index} Runway generation failed entirely: {e2}"
             ) from e2
