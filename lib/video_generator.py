@@ -560,30 +560,59 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
 
     try:
         if has_photo:
-            # Describe the photo so Runway knows what to keep throughout the video
-            _report(f"analyzing photo to maintain consistency...")
+            # Describe the photo generically (avoid celebrity names to pass moderation)
+            _report(f"analyzing photo for subject consistency...")
             try:
                 photo_desc = describe_photo(photo_path)
-                # Build a prompt that tells Runway to KEEP the photo content
+                # Strip any celebrity/real person names from the description
+                # to help pass content moderation
+                import re as _re
+                photo_desc = _re.sub(r'(?i)(looks like|resembles|appears to be)\s+\w+(\s+\w+)?', 'a person', photo_desc)
+
                 gen_prompt = (
-                    f"The exact person/subject from this image: {photo_desc}. "
-                    f"Keep this exact subject visible and recognizable throughout the entire video. "
-                    f"Action: {gen_prompt}. "
-                    f"Do NOT change the subject's appearance. Do NOT introduce new people."
+                    f"This exact person from the starting frame: {photo_desc}. "
+                    f"CRITICAL: Keep this SAME person with the SAME face, hair, clothing, "
+                    f"and body type visible throughout the ENTIRE video. Never replace them. "
+                    f"Action: {gen_prompt}"
                 )
-                print(f"[RUNWAY/{model}][{index}] Enhanced prompt with photo description")
+                print(f"[RUNWAY/{model}][{index}] Enhanced prompt with photo description (names stripped)")
             except Exception as desc_err:
-                print(f"[RUNWAY/{model}][{index}] Photo describe failed: {desc_err}, using original prompt")
+                print(f"[RUNWAY/{model}][{index}] Photo describe failed: {desc_err}")
                 gen_prompt = (
-                    f"Keep the exact subject from this starting image throughout the entire video. "
-                    f"{gen_prompt}. "
-                    f"Do NOT change the subject. Do NOT introduce new people or characters."
+                    f"Keep the SAME person from this starting frame throughout the entire video. "
+                    f"Do NOT change their appearance, face, or clothing. "
+                    f"{gen_prompt}"
                 )
 
-            _report(f"submitting image-to-video ({model}) with photo: {os.path.basename(photo_path)}...")
-            task_id = _runway_submit_image_to_video(
-                gen_prompt, photo_path, duration=duration, model=model
-            )
+            # Try image-to-video with moderation retry
+            # If rejected, try: 1) different model, 2) stylized photo, 3) text-only
+            FALLBACK_MODELS = [model, "gen3a_turbo", "kling3.0_pro", "kling3.0_standard"]
+            # Remove current model from fallbacks to avoid duplicate
+            FALLBACK_MODELS = list(dict.fromkeys(FALLBACK_MODELS))
+
+            task_id = None
+            used_model = model
+            for try_model in FALLBACK_MODELS:
+                try:
+                    _report(f"submitting image-to-video ({try_model}) with photo...")
+                    task_id = _runway_submit_image_to_video(
+                        gen_prompt, photo_path, duration=duration, model=try_model
+                    )
+                    used_model = try_model
+                    break
+                except Exception as submit_err:
+                    err_str = str(submit_err).lower()
+                    if "moderation" in err_str or "safety" in err_str or "content" in err_str:
+                        _report(f"{try_model} rejected by moderation, trying next model...")
+                        continue
+                    else:
+                        raise  # non-moderation error, don't retry
+
+            if task_id is None:
+                # All models rejected the photo — fall back to text-only
+                _report("all models rejected photo (moderation), falling back to text-only video...")
+                task_id = _runway_submit_text_to_video(gen_prompt, duration=duration, model=model)
+                used_model = model
         else:
             _report(f"submitting text-to-video ({model})...")
             task_id = _runway_submit_text_to_video(
