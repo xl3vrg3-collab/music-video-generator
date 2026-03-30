@@ -1,12 +1,18 @@
 """
-Video generator using the Grok (xAI) API.
+Video generator supporting multiple AI engines:
+  - Grok (xAI) -- text-to-video, image generation + Ken Burns
+  - Luma Dream Machine (Ray2) -- text-to-video and image-to-video
+  - OpenAI GPT -- image generation (stills) + Ken Burns
+
 Handles video generation requests, async polling, downloads,
 and falls back to image generation + Ken Burns if video fails.
 Supports photo+text style transfer via Grok image API with base64.
 Supports camera movement presets for Ken Burns animations.
+Supports character reference system for auto-attaching photos to prompts.
 """
 
 import base64
+import json
 import os
 import sys
 import time
@@ -16,9 +22,18 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 API_BASE = "https://api.x.ai/v1"
+LUMA_API_BASE = "https://api.lumalabs.ai"
 POLL_INTERVAL = 5       # seconds between status checks
 POLL_TIMEOUT = 300      # max seconds to wait for a single video
+LUMA_POLL_INTERVAL = 5  # seconds between Luma status checks
+LUMA_POLL_TIMEOUT = 600 # max seconds to wait for Luma (longer due to queue)
 MAX_CONCURRENT = 3      # max parallel video generations
+
+# ---- Engine names ----
+ENGINE_GROK = "grok"
+ENGINE_LUMA = "luma"
+ENGINE_OPENAI = "openai"
+SUPPORTED_ENGINES = [ENGINE_GROK, ENGINE_LUMA, ENGINE_OPENAI]
 
 # ---- Camera movement presets for Ken Burns ----
 # Each preset maps to an ffmpeg crop animation expression
@@ -85,6 +100,397 @@ def _headers() -> dict:
         "Authorization": f"Bearer {_get_api_key()}",
         "Content-Type": "application/json",
     }
+
+
+# ---- Luma Dream Machine (Ray2) API ----
+
+def _get_luma_api_key() -> str:
+    key = os.environ.get("LUMA_API_KEY", "")
+    if not key:
+        raise RuntimeError(
+            "LUMA_API_KEY environment variable is not set. "
+            "Get an API key from https://lumalabs.ai and add it to your .env file."
+        )
+    return key
+
+
+def _luma_headers() -> dict:
+    """Auth headers for Luma Dream Machine API."""
+    return {
+        "Authorization": f"Bearer {_get_luma_api_key()}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def _luma_submit_video(prompt: str, image_url: str = None,
+                       duration: int = 5) -> str:
+    """
+    Submit a video generation request to Luma Dream Machine (Ray2).
+
+    Args:
+        prompt: text description of the video
+        image_url: optional URL to an image for image-to-video
+        duration: video duration -- "5s" or "9s" (Luma supports 5s and 9s)
+
+    Returns:
+        generation ID string
+    """
+    # Clamp duration to Luma-supported values
+    dur_str = "9s" if duration > 6 else "5s"
+
+    payload = {
+        "prompt": prompt,
+        "model": "ray-2",
+        "resolution": "1080p",
+        "duration": dur_str,
+    }
+
+    if image_url:
+        payload["keyframes"] = {
+            "frame0": {
+                "type": "image",
+                "url": image_url,
+            }
+        }
+
+    print(f"[LUMA] Submitting generation: prompt={prompt[:80]}..., "
+          f"image={'yes' if image_url else 'no'}, duration={dur_str}")
+
+    resp = requests.post(
+        f"{LUMA_API_BASE}/dream-machine/v1/generations",
+        headers=_luma_headers(),
+        json=payload,
+        timeout=30,
+    )
+
+    if resp.status_code != 200 and resp.status_code != 201:
+        print(f"[LUMA] Submit error {resp.status_code}: {resp.text[:500]}")
+    resp.raise_for_status()
+
+    data = resp.json()
+    gen_id = data.get("id", "")
+    print(f"[LUMA] Generation submitted: id={gen_id}")
+    return gen_id
+
+
+def _luma_poll(generation_id: str) -> dict:
+    """
+    Poll Luma Dream Machine until video is completed or failed.
+
+    Returns:
+        dict with video info including download URL
+    """
+    deadline = time.time() + LUMA_POLL_TIMEOUT
+    while time.time() < deadline:
+        resp = requests.get(
+            f"{LUMA_API_BASE}/dream-machine/v1/generations/{generation_id}",
+            headers=_luma_headers(),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        status = data.get("state", data.get("status", ""))
+        print(f"[LUMA] Poll {generation_id[:12]}... status={status}")
+
+        if status == "completed":
+            # Extract video URL from response
+            assets = data.get("assets", {})
+            video_url = assets.get("video", "")
+            if not video_url:
+                # Try alternate response shapes
+                video_url = data.get("video", {}).get("url", "")
+            if not video_url:
+                video_url = data.get("download_url", "")
+            if not video_url:
+                raise RuntimeError(
+                    f"Luma generation completed but no video URL found in response: "
+                    f"{json.dumps(data)[:500]}"
+                )
+            return {"url": video_url, "generation_id": generation_id}
+        elif status in ("failed", "error"):
+            failure_reason = data.get("failure_reason", data.get("error", "unknown"))
+            raise RuntimeError(
+                f"Luma generation failed: {failure_reason}"
+            )
+
+        time.sleep(LUMA_POLL_INTERVAL)
+
+    raise TimeoutError(
+        f"Luma generation timed out after {LUMA_POLL_TIMEOUT}s "
+        f"(id={generation_id})"
+    )
+
+
+def _photo_to_data_uri(photo_path: str) -> str:
+    """Convert a local photo to a base64 data URI string."""
+    with open(photo_path, "rb") as f:
+        photo_bytes = f.read()
+    ext = os.path.splitext(photo_path)[1].lower()
+    mime_map = {
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif",
+    }
+    mime = mime_map.get(ext, "image/jpeg")
+    b64_data = base64.b64encode(photo_bytes).decode("ascii")
+    return f"data:{mime};base64,{b64_data}"
+
+
+def _luma_generate_scene(scene: dict, output_dir: str, index: int,
+                         progress_cb=None, cost_cb=None,
+                         photo_path: str = None) -> str:
+    """
+    Generate a video clip using Luma Dream Machine (Ray2).
+
+    Args:
+        scene: dict with at least {prompt, duration}
+        output_dir: directory to save clips
+        index: scene index for naming
+        progress_cb: optional callable(index, status_str)
+        cost_cb: optional callable(scene_key, gen_type)
+        photo_path: optional photo path for image-to-video
+
+    Returns:
+        path to the generated video clip
+    """
+    clip_path = os.path.join(output_dir, f"clip_{index:03d}.mp4")
+    prompt = scene["prompt"]
+    duration = scene.get("duration", 8)
+    camera = scene.get("camera_movement", "zoom_in")
+
+    # Add camera movement to prompt for Luma
+    camera_suffix = CAMERA_PROMPT_SUFFIXES.get(camera, "")
+    gen_prompt = prompt + camera_suffix if camera_suffix else prompt
+
+    def _report(msg):
+        print(f"[LUMA][{index}] {msg}")
+        if progress_cb:
+            progress_cb(index, msg)
+
+    def _record(gen_type):
+        if cost_cb:
+            cost_cb(str(scene.get("id", index)), gen_type)
+
+    image_url = None
+    if photo_path and os.path.isfile(photo_path):
+        # Luma needs an image URL -- try data URI first
+        _report("encoding photo for Luma image-to-video...")
+        image_url = _photo_to_data_uri(photo_path)
+
+    try:
+        _report("submitting to Luma Dream Machine (Ray2)...")
+        gen_id = _luma_submit_video(gen_prompt, image_url=image_url,
+                                    duration=duration)
+        _report(f"polling Luma (id={gen_id[:12]}...)")
+        video_info = _luma_poll(gen_id)
+        _report("downloading Luma video...")
+        _download(video_info["url"], clip_path)
+        _record("video")
+        _report("done (Luma Ray2)")
+        return clip_path
+    except Exception as e:
+        _report(f"Luma video failed ({e})")
+
+        # If Luma fails with data URI for image, retry without image
+        if image_url and "data:" in str(image_url)[:10]:
+            _report("retrying Luma text-only (without image)...")
+            try:
+                gen_id = _luma_submit_video(gen_prompt, image_url=None,
+                                            duration=duration)
+                _report(f"polling Luma text-only (id={gen_id[:12]}...)")
+                video_info = _luma_poll(gen_id)
+                _report("downloading Luma video...")
+                _download(video_info["url"], clip_path)
+                _record("video")
+                _report("done (Luma Ray2 text-only)")
+                return clip_path
+            except Exception as e2:
+                _report(f"Luma text-only also failed ({e2})")
+
+        # Fall back to Grok image + Ken Burns
+        _report("falling back to Grok image + Ken Burns...")
+        try:
+            img_url = _generate_image(gen_prompt)
+            img_path = os.path.join(output_dir, f"img_{index:03d}.png")
+            _download(img_url, img_path)
+            _ken_burns(img_path, clip_path, duration, camera=camera)
+            _record("image")
+            _report("done (Grok image fallback)")
+            return clip_path
+        except Exception as e3:
+            _report(f"all generation attempts failed: {e3}")
+            raise RuntimeError(
+                f"Scene {index} Luma generation failed entirely: {e3}"
+            ) from e3
+
+
+# ---- OpenAI GPT Image Generation ----
+
+def _get_openai_api_key() -> str:
+    key = os.environ.get("OPENAI_API_KEY", "")
+    if not key:
+        raise RuntimeError(
+            "OPENAI_API_KEY environment variable is not set. "
+            "Get an API key from https://platform.openai.com and add it to your .env file."
+        )
+    return key
+
+
+def _openai_headers() -> dict:
+    """Auth headers for OpenAI API."""
+    return {
+        "Authorization": f"Bearer {_get_openai_api_key()}",
+        "Content-Type": "application/json",
+    }
+
+
+def _openai_generate_image(prompt: str) -> str:
+    """Generate an image via OpenAI DALL-E 3. Returns image URL."""
+    resp = requests.post(
+        "https://api.openai.com/v1/images/generations",
+        headers=_openai_headers(),
+        json={
+            "model": "dall-e-3",
+            "prompt": prompt,
+            "n": 1,
+            "size": "1792x1024",
+            "quality": "hd",
+        },
+        timeout=120,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    images = data.get("data", [])
+    if not images:
+        raise RuntimeError("No image returned from OpenAI API")
+    return images[0]["url"]
+
+
+def _openai_generate_scene(scene: dict, output_dir: str, index: int,
+                           progress_cb=None, cost_cb=None,
+                           photo_path: str = None) -> str:
+    """
+    Generate a video clip using OpenAI GPT image + Ken Burns.
+    OpenAI produces stills which are animated via Ken Burns effect.
+
+    Args:
+        scene: dict with at least {prompt, duration}
+        output_dir: directory to save clips
+        index: scene index for naming
+        progress_cb: optional callable(index, status_str)
+        cost_cb: optional callable(scene_key, gen_type)
+        photo_path: optional photo path (used as reference in prompt)
+
+    Returns:
+        path to the generated video clip
+    """
+    clip_path = os.path.join(output_dir, f"clip_{index:03d}.mp4")
+    prompt = scene["prompt"]
+    duration = scene.get("duration", 8)
+    camera = scene.get("camera_movement", "zoom_in")
+
+    camera_suffix = CAMERA_PROMPT_SUFFIXES.get(camera, "")
+    gen_prompt = prompt + camera_suffix if camera_suffix else prompt
+
+    def _report(msg):
+        print(f"[OPENAI][{index}] {msg}")
+        if progress_cb:
+            progress_cb(index, msg)
+
+    def _record(gen_type):
+        if cost_cb:
+            cost_cb(str(scene.get("id", index)), gen_type)
+
+    try:
+        _report("generating image via OpenAI DALL-E 3...")
+        img_url = _openai_generate_image(gen_prompt)
+        img_path = os.path.join(output_dir, f"img_{index:03d}_openai.png")
+        _report("downloading OpenAI image...")
+        _download(img_url, img_path)
+        _report("creating Ken Burns video from image...")
+        _ken_burns(img_path, clip_path, duration, camera=camera)
+        _record("image")
+        _report("done (OpenAI DALL-E 3 + Ken Burns)")
+        return clip_path
+    except Exception as e:
+        _report(f"OpenAI generation failed ({e}), falling back to Grok...")
+        # Fall back to Grok pipeline
+        try:
+            img_url = _generate_image(gen_prompt)
+            img_path = os.path.join(output_dir, f"img_{index:03d}.png")
+            _download(img_url, img_path)
+            _ken_burns(img_path, clip_path, duration, camera=camera)
+            _record("image")
+            _report("done (Grok image fallback)")
+            return clip_path
+        except Exception as e2:
+            _report(f"all generation attempts failed: {e2}")
+            raise RuntimeError(
+                f"Scene {index} OpenAI generation failed entirely: {e2}"
+            ) from e2
+
+
+# ---- Character Reference System ----
+
+SETTINGS_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "output", "settings.json"
+)
+REFERENCES_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "references"
+)
+
+
+def _load_settings() -> dict:
+    """Load project settings from output/settings.json."""
+    if os.path.isfile(SETTINGS_PATH):
+        try:
+            with open(SETTINGS_PATH, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {}
+
+
+def _get_character_references() -> dict:
+    """
+    Get character reference map: {name: path}.
+    Sources: output/settings.json character_references + references/ directory files.
+    Reference names are case-insensitive for matching.
+    """
+    settings = _load_settings()
+    char_refs = dict(settings.get("character_references", {}))
+
+    # Also include any reference images from the references/ directory
+    if os.path.isdir(REFERENCES_DIR):
+        for fname in os.listdir(REFERENCES_DIR):
+            fpath = os.path.join(REFERENCES_DIR, fname)
+            if os.path.isfile(fpath):
+                name = os.path.splitext(fname)[0]
+                # Don't overwrite explicit character_references entries
+                if name not in char_refs:
+                    char_refs[name] = fpath
+
+    return char_refs
+
+
+def _resolve_character_references(prompt: str, char_refs: dict = None) -> tuple:
+    """
+    Scan prompt for character reference names and return (matched_name, photo_path).
+    Returns the first matched character reference, or (None, None).
+
+    Used to auto-attach a keyframe image when a prompt mentions a character name.
+    """
+    if char_refs is None:
+        char_refs = _get_character_references()
+
+    prompt_lower = prompt.lower()
+    for name, path in char_refs.items():
+        if name.lower() in prompt_lower and os.path.isfile(path):
+            return name, path
+
+    return None, None
 
 
 def _subprocess_kwargs() -> dict:
@@ -318,10 +724,11 @@ def generate_scene(scene: dict, index: int, output_dir: str,
                    photo_path: str = None) -> str:
     """
     Generate a single video clip for a scene.
+    Dispatches to the appropriate engine based on scene.get("engine").
 
     Args:
         scene: dict with at least {prompt, duration}
-               optional: camera_movement (preset name)
+               optional: camera_movement (preset name), engine ("grok"|"luma"|"openai")
         index: scene index (for naming)
         output_dir: directory to save clips
         progress_cb: optional callable(index, status_str)
@@ -330,6 +737,49 @@ def generate_scene(scene: dict, index: int, output_dir: str,
 
     Returns:
         path to the generated video clip
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Determine engine: scene-level > global settings > default "grok"
+    engine = scene.get("engine", None)
+    if not engine:
+        settings = _load_settings()
+        engine = settings.get("default_engine", ENGINE_GROK)
+    engine = engine.lower()
+
+    # Auto-resolve character references if no explicit photo provided
+    if not photo_path:
+        char_name, char_photo = _resolve_character_references(scene.get("prompt", ""))
+        if char_photo:
+            photo_path = char_photo
+            print(f"[generate_scene] Auto-attached character reference "
+                  f"'{char_name}' -> {char_photo}")
+
+    print(f"[generate_scene] index={index}, engine={engine}, "
+          f"prompt={scene.get('prompt', '')[:80]}..., photo={photo_path}")
+
+    # Dispatch to engine
+    if engine == ENGINE_LUMA:
+        return _luma_generate_scene(
+            scene, output_dir, index, progress_cb, cost_cb, photo_path
+        )
+    elif engine == ENGINE_OPENAI:
+        return _openai_generate_scene(
+            scene, output_dir, index, progress_cb, cost_cb, photo_path
+        )
+    else:
+        # Default: Grok engine (original behavior)
+        return _grok_generate_scene(
+            scene, output_dir, index, progress_cb, cost_cb, photo_path
+        )
+
+
+def _grok_generate_scene(scene: dict, output_dir: str, index: int,
+                          progress_cb=None, cost_cb=None,
+                          photo_path: str = None) -> str:
+    """
+    Generate a video clip using the Grok (xAI) engine.
+    This is the original pipeline extracted into a named function.
     """
     clip_path = os.path.join(output_dir, f"clip_{index:03d}.mp4")
     prompt = scene["prompt"]
@@ -341,10 +791,10 @@ def generate_scene(scene: dict, index: int, output_dir: str,
     gen_prompt = prompt + camera_suffix if camera_suffix else prompt
 
     has_photo = photo_path and os.path.isfile(photo_path)
-    print(f"[generate_scene] index={index}, prompt={gen_prompt[:80]}..., photo_path={photo_path}, has_photo={has_photo}, camera={camera}")
+    print(f"[GROK][{index}] prompt={gen_prompt[:80]}..., photo={has_photo}, camera={camera}")
 
     def _report(msg):
-        print(f"[generate_scene][{index}] {msg}")
+        print(f"[GROK][{index}] {msg}")
         if progress_cb:
             progress_cb(index, msg)
 
@@ -354,24 +804,24 @@ def generate_scene(scene: dict, index: int, output_dir: str,
 
     # If scene has a photo, use photo+prompt pipeline (style transfer)
     if has_photo:
-        print(f"[generate_scene][{index}] Photo detected at {photo_path}, using photo+prompt pipeline")
+        print(f"[GROK][{index}] Photo detected at {photo_path}, using photo+prompt pipeline")
         try:
             _report("sending photo to Grok for style transfer...")
             edit_strength = scene.get("edit_strength", 0.3)
             img_url = _generate_image_from_photo(gen_prompt, photo_path, edit_strength)
-            print(f"[generate_scene][{index}] Got styled image URL: {img_url[:80]}...")
+            print(f"[GROK][{index}] Got styled image URL: {img_url[:80]}...")
             img_path = os.path.join(output_dir, f"img_{index:03d}_styled.png")
             _report("downloading styled image...")
             _download(img_url, img_path)
-            print(f"[generate_scene][{index}] Downloaded styled image to {img_path}")
+            print(f"[GROK][{index}] Downloaded styled image to {img_path}")
             _report("creating Ken Burns video from styled image...")
             _ken_burns(img_path, clip_path, duration, camera=camera)
             _record("image")
             _report("done (photo style transfer + Ken Burns)")
-            print(f"[generate_scene][{index}] SUCCESS: photo+prompt clip at {clip_path}")
+            print(f"[GROK][{index}] SUCCESS: photo+prompt clip at {clip_path}")
             return clip_path
         except Exception as e:
-            print(f"[generate_scene][{index}] Photo+prompt failed: {e}")
+            print(f"[GROK][{index}] Photo+prompt failed: {e}")
             _report(f"photo style transfer failed ({e}), falling back to video...")
 
     # Try video generation (text-only)
@@ -478,6 +928,7 @@ def generate_all(scenes: list, output_dir: str,
                  progress_cb=None, cost_cb=None) -> list:
     """
     Generate video clips for all scenes with concurrency limit.
+    Each scene can specify its own engine via scene["engine"].
 
     Args:
         scenes: list of scene dicts
@@ -507,3 +958,40 @@ def generate_all(scenes: list, output_dir: str,
                 results[idx] = None
 
     return results
+
+
+def get_available_engines() -> list:
+    """Return list of engine info dicts with availability status."""
+    engines = []
+
+    # Grok
+    grok_available = bool(os.environ.get("XAI_API_KEY", ""))
+    engines.append({
+        "id": ENGINE_GROK,
+        "name": "Grok (xAI)",
+        "description": "Text-to-video and image style transfer via Grok API",
+        "available": grok_available,
+        "missing_key": "XAI_API_KEY" if not grok_available else None,
+    })
+
+    # Luma
+    luma_available = bool(os.environ.get("LUMA_API_KEY", ""))
+    engines.append({
+        "id": ENGINE_LUMA,
+        "name": "Luma Dream Machine (Ray2)",
+        "description": "High-quality text-to-video and image-to-video via Luma Ray2",
+        "available": luma_available,
+        "missing_key": "LUMA_API_KEY" if not luma_available else None,
+    })
+
+    # OpenAI
+    openai_available = bool(os.environ.get("OPENAI_API_KEY", ""))
+    engines.append({
+        "id": ENGINE_OPENAI,
+        "name": "OpenAI GPT (DALL-E 3)",
+        "description": "High-quality image generation + Ken Burns animation",
+        "available": openai_available,
+        "missing_key": "OPENAI_API_KEY" if not openai_available else None,
+    })
+
+    return engines

@@ -1243,6 +1243,14 @@
 
         <div class="stitch-settings-bar">
           <div class="stitch-setting-group">
+            <span class="msc-label">Default Engine:</span>
+            <select class="styled-select" id="globalEngineSelect" onchange="window._updateGlobalEngine(this.value)">
+              <option value="grok">Grok (xAI)</option>
+              <option value="luma">Luma Ray2</option>
+              <option value="openai">OpenAI GPT</option>
+            </select>
+          </div>
+          <div class="stitch-setting-group">
             <span class="msc-label">Color Grade:</span>
             <select class="styled-select" id="globalColorGradeSelect" onchange="window._updateStitchSettings()">
               <option value="none">None</option>
@@ -1265,6 +1273,26 @@
               <option value="spectrum">Spectrum</option>
               <option value="both">Both</option>
             </select>
+          </div>
+        </div>
+
+        <!-- Character References -->
+        <div class="panel" style="margin:12px 0;border-color:var(--magenta-dim);">
+          <div class="panel-header" style="cursor:pointer;" onclick="$('charRefBody').classList.toggle('hidden')">
+            <span style="color:var(--magenta);">CHAR</span>
+            <span style="flex:1;">Character References</span>
+            <span style="font-size:10px;color:var(--text-dim);">click to toggle</span>
+          </div>
+          <div id="charRefBody" class="hidden" style="padding:12px;">
+            <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;">
+              Map character names to reference photos. When a prompt mentions the name, the photo auto-attaches as a keyframe.
+            </div>
+            <div id="charRefList"></div>
+            <div style="display:flex;gap:6px;margin-top:8px;">
+              <input type="text" id="charRefNameInput" class="msc-overlay-input" placeholder="Name (e.g. TB)" style="width:80px;">
+              <select id="charRefImageSelect" class="styled-select" style="flex:1;"><option value="">Select reference image...</option></select>
+              <button class="btn btn-small btn-magenta" onclick="window._addCharRef()">Add</button>
+            </div>
           </div>
         </div>
 
@@ -2077,6 +2105,8 @@
   let manualSongFilename = null;
   let manualPollTimer = null;
   let dragSrcId = null;
+  let availableEngines = [];
+  let globalSettings = { default_engine: 'grok', character_references: {} };
 
   const MANUAL_TRANSITIONS = ['crossfade','hard_cut','fade_black','wipe_left','wipe_right','dissolve','zoom_in','glitch'];
   const MANUAL_DURATIONS = [4, 6, 8, 10, 12, 15];
@@ -2086,6 +2116,8 @@
   const OVERLAY_SIZES = ['small','medium','large'];
   const OVERLAY_COLORS = ['white','cyan','orange'];
   const CAMERA_PRESETS = ['static','pan_left','pan_right','zoom_in','zoom_out','orbit','tracking'];
+  const ENGINE_LABELS = { grok: 'Grok', luma: 'Luma Ray2', openai: 'OpenAI GPT' };
+  const ENGINE_COLORS = { grok: 'var(--cyan)', luma: 'var(--magenta)', openai: 'var(--green)' };
 
   const CAMERA_ICONS = { static: '&#9632;', pan_left: '&#8592;', pan_right: '&#8594;', zoom_in: '&#8853;', zoom_out: '&#8854;', orbit: '&#10227;', tracking: '&#10132;' };
 
@@ -2116,8 +2148,26 @@
   }
 
   // ---- Load manual scenes ----
+  async function loadEnginesAndSettings() {
+    try {
+      const [engResp, setResp] = await Promise.all([
+        fetch('/api/engines'),
+        fetch('/api/settings'),
+      ]);
+      const engData = await engResp.json();
+      availableEngines = engData.engines || [];
+      const setData = await setResp.json();
+      globalSettings = { default_engine: 'grok', character_references: {}, ...setData };
+      // Update global engine selector if present
+      const geSel = $('globalEngineSelect');
+      if (geSel) geSel.value = globalSettings.default_engine;
+      renderCharacterReferences();
+    } catch (e) { console.warn('Failed to load engines/settings:', e); }
+  }
+
   async function loadManualScenes() {
     try {
+      await loadEnginesAndSettings();
       const resp = await fetch('/api/manual/scenes');
       const data = await resp.json();
       manualScenes = data.scenes || [];
@@ -2192,6 +2242,17 @@
         const icon = CAMERA_ICONS[cp] || '';
         return `<option value="${cp}" ${sel}>${icon} ${cp.replace(/_/g, ' ')}</option>`;
       }).join('');
+
+      const sceneEngine = s.engine || '';
+      const effectiveEngine = sceneEngine || globalSettings.default_engine || 'grok';
+      const engineOptions = [
+        `<option value="" ${sceneEngine === '' ? 'selected' : ''}>Default (${ENGINE_LABELS[globalSettings.default_engine] || globalSettings.default_engine})</option>`,
+        ...availableEngines.map(eng => {
+          const sel = (eng.id === sceneEngine) ? 'selected' : '';
+          const avail = eng.available ? '' : ' [no key]';
+          return `<option value="${eng.id}" ${sel}>${ENGINE_LABELS[eng.id] || eng.id}${avail}</option>`;
+        })
+      ].join('');
 
       const photoHtml = hasPhoto
         ? `<img src="${s.photo_url}?t=${Date.now()}" alt="Scene photo">`
@@ -2296,6 +2357,12 @@
                     ${sceneGradeOptions}
                   </select>
                 </div>
+                <div class="msc-control-item">
+                  <span class="msc-label">Engine:</span>
+                  <select class="styled-select" style="flex:1;" onchange="window._manualUpdateScene('${s.id}', {engine: this.value})">
+                    ${engineOptions}
+                  </select>
+                </div>
               </div>
             </div>
             <div class="msc-overlay-row" style="margin-top:8px;">
@@ -2308,6 +2375,7 @@
               <select class="styled-select" id="msc-overlay-color-${s.id}" onchange="window._updateOverlay('${s.id}')">${overlayColorOptions}</select>
             </div>
             <div class="msc-badge-row">
+              ${hasClip ? `<span class="msc-badge" style="background:${ENGINE_COLORS[effectiveEngine] || 'var(--cyan)'}20;color:${ENGINE_COLORS[effectiveEngine] || 'var(--cyan)'};">${ENGINE_LABELS[effectiveEngine] || effectiveEngine}</span>` : ''}
               ${s.has_video ? '<span class="msc-badge msc-badge-video">VIDEO UPLOADED</span>' : ''}
               ${s.has_vocal ? '<span class="msc-badge msc-badge-vocal">VOICEOVER</span>' : ''}
               ${s.has_vocal ? `<div class="slider-group"><input type="range" class="styled-slider magenta-slider" min="0" max="100" value="${s.vocal_volume || 80}" style="width:60px;"
@@ -2458,6 +2526,87 @@
     const color = (document.getElementById('msc-overlay-color-' + sceneId) || {}).value || 'white';
     const overlay = text ? { text, position, font_size, color } : null;
     window._manualUpdateScene(sceneId, { overlay });
+  };
+
+  // ---- Global engine selector ----
+  window._updateGlobalEngine = async function(engine) {
+    try {
+      const resp = await fetch('/api/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_engine: engine }),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        globalSettings.default_engine = engine;
+        renderManualScenes();
+      }
+    } catch (e) { console.error('Failed to update engine:', e); }
+  };
+
+  // ---- Character reference management ----
+  function renderCharacterReferences() {
+    const list = $('charRefList');
+    const sel = $('charRefImageSelect');
+    if (!list || !sel) return;
+
+    // Render current character references
+    const refs = globalSettings.character_references || {};
+    const names = Object.keys(refs);
+    if (names.length === 0) {
+      list.innerHTML = '<div style="font-size:10px;color:var(--text-dim);">No character references defined.</div>';
+    } else {
+      list.innerHTML = names.map(name => {
+        const path = refs[name] || '';
+        const fname = path.replace(/\\/g, '/').split('/').pop();
+        return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+          <span style="color:var(--magenta);font-weight:700;font-size:12px;min-width:60px;">${escHtml(name)}</span>
+          <span style="font-size:10px;color:var(--text-dim);flex:1;">${escHtml(fname)}</span>
+          <button class="btn btn-small" style="padding:1px 6px;font-size:9px;color:var(--red);" onclick="window._removeCharRef('${escHtml(name)}')">x</button>
+        </div>`;
+      }).join('');
+    }
+
+    // Populate reference image dropdown from /api/references
+    fetch('/api/references').then(r => r.json()).then(data => {
+      const items = data.references || [];
+      sel.innerHTML = '<option value="">Select reference image...</option>' +
+        items.map(r => `<option value="${escHtml(r.name)}">${escHtml(r.name)} (${escHtml(r.filename)})</option>`).join('');
+    }).catch(() => {});
+  }
+
+  window._addCharRef = async function() {
+    const nameInput = $('charRefNameInput');
+    const imgSel = $('charRefImageSelect');
+    if (!nameInput || !imgSel) return;
+    const name = nameInput.value.trim();
+    const refName = imgSel.value;
+    if (!name || !refName) { alert('Enter a character name and select a reference image.'); return; }
+    try {
+      const resp = await fetch('/api/character-references', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, reference_name: refName }),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        globalSettings.character_references = data.character_references;
+        nameInput.value = '';
+        renderCharacterReferences();
+      } else { alert(data.error || 'Failed'); }
+    } catch (e) { alert('Error: ' + e); }
+  };
+
+  window._removeCharRef = async function(name) {
+    try {
+      const resp = await fetch('/api/character-references', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, path: '' }),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        globalSettings.character_references = data.character_references;
+        renderCharacterReferences();
+      }
+    } catch (e) { console.error(e); }
   };
 
   // ---- Stitch settings ----

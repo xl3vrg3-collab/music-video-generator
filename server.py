@@ -52,6 +52,9 @@ from lib.scene_planner import plan_scenes, TRANSITION_TYPES
 from lib.video_generator import (
     generate_scene, generate_all, generate_from_photo,
     describe_photo, CAMERA_PRESETS, CAMERA_PROMPT_SUFFIXES,
+    get_available_engines, SUPPORTED_ENGINES, ENGINE_GROK,
+    _load_settings as _load_gen_settings,
+    _get_character_references, _resolve_character_references,
 )
 from lib.video_stitcher import (
     stitch, apply_lyrics_overlay, apply_aspect_ratio, split_clip,
@@ -89,6 +92,7 @@ SOCIAL_EXPORTS_DIR = os.path.join(OUTPUT_DIR, "social_exports")
 SCENE_VIDEOS_DIR = os.path.join(UPLOADS_DIR, "scene_videos")
 SCENE_VOCALS_DIR = os.path.join(UPLOADS_DIR, "scene_vocals")
 FULL_PROJECTS_DIR = os.path.join(OUTPUT_DIR, "full_projects")
+SETTINGS_PATH = os.path.join(OUTPUT_DIR, "settings.json")
 
 # Cost defaults
 COST_PER_VIDEO_GEN = 0.15
@@ -370,6 +374,25 @@ def _record_cost(scene_key: str, gen_type: str = "video"):
     return tracker
 
 
+# ---- Settings helpers ----
+
+def _load_settings() -> dict:
+    """Load project settings from output/settings.json."""
+    if os.path.isfile(SETTINGS_PATH):
+        try:
+            with open(SETTINGS_PATH, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {"default_engine": "grok", "character_references": {}}
+
+
+def _save_settings(settings: dict):
+    """Save project settings to output/settings.json."""
+    with open(SETTINGS_PATH, "w") as f:
+        json.dump(settings, f, indent=2)
+
+
 # ---- Upscale helper ----
 
 def _subprocess_kwargs() -> dict:
@@ -501,9 +524,11 @@ def _run_manual_generate_scene(scene_id: str):
             "prompt": gen_prompt,
             "duration": scene.get("duration", 8),
             "camera_movement": scene.get("camera_movement", "zoom_in"),
+            "engine": scene.get("engine", ""),
+            "id": scene.get("id", ""),
         }
 
-        print(f"[_run_manual_generate_scene] Calling generate_scene with photo_path={scene_photo_path}")
+        print(f"[_run_manual_generate_scene] Calling generate_scene with photo_path={scene_photo_path}, engine={gen_scene['engine']}")
         clip_path = generate_scene(gen_scene, scene_idx, MANUAL_CLIPS_DIR,
                                    progress_cb=on_progress, cost_cb=_record_cost,
                                    photo_path=scene_photo_path)
@@ -660,6 +685,8 @@ def _run_manual_generate_all():
                 "prompt": gen_prompt,
                 "duration": scene.get("duration", 8),
                 "camera_movement": scene.get("camera_movement", "zoom_in"),
+                "engine": scene.get("engine", ""),
+                "id": scene.get("id", ""),
             }
 
             try:
@@ -1155,6 +1182,26 @@ class Handler(BaseHTTPRequestHandler):
                         })
             self._send_json({"exports": exports})
 
+        elif path == "/api/engines":
+            engines = get_available_engines()
+            self._send_json({"engines": engines})
+
+        elif path == "/api/settings":
+            settings = _load_settings()
+            self._send_json(settings)
+
+        elif path == "/api/character-references":
+            char_refs = _get_character_references()
+            items = []
+            for name, fpath in char_refs.items():
+                items.append({
+                    "name": name,
+                    "path": fpath,
+                    "url": f"/api/references/{urllib.parse.quote(name)}",
+                    "exists": os.path.isfile(fpath),
+                })
+            self._send_json({"character_references": items})
+
         # Serve uploaded scene videos
         elif path.startswith("/api/manual/scene-video/"):
             scene_id = path[len("/api/manual/scene-video/"):]
@@ -1322,6 +1369,14 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/manual/scene/([^/]+)/vocal$', path):
             m = re.match(r'^/api/manual/scene/([^/]+)/vocal$', path)
             self._handle_manual_upload_vocal(m.group(1))
+
+        # Settings (engine, character references, etc.)
+        elif path == "/api/settings":
+            self._handle_update_settings()
+
+        # Character reference management
+        elif path == "/api/character-references":
+            self._handle_update_character_references()
 
         # Feature: Save full project with clips
         elif path == "/api/project/save-full":
@@ -1625,6 +1680,7 @@ class Handler(BaseHTTPRequestHandler):
                 if pp and os.path.isfile(pp):
                     entry["photo_urls"].append(f"/api/manual/scene-photo/{s['id']}?idx={pi}")
             entry["camera_movement"] = s.get("camera_movement", "zoom_in")
+            entry["engine"] = s.get("engine", "")
             # Video upload info
             video_path = s.get("video_path", "")
             entry["has_video"] = bool(video_path and os.path.isfile(video_path))
@@ -1659,6 +1715,7 @@ class Handler(BaseHTTPRequestHandler):
             "overlay": None,
             "color_grade": None,
             "camera_movement": "zoom_in",
+            "engine": "",         # empty = use global default
             "photo_path": None,
             "photo_paths": [],  # multi-photo mood board (up to 4)
             "clip_path": None,
@@ -1702,13 +1759,15 @@ class Handler(BaseHTTPRequestHandler):
             scene["prompt"] = params.get("prompt", "")
             scene["duration"] = params.get("duration", 8)
             scene["transition"] = params.get("transition", "crossfade")
+            if "engine" in params and params["engine"] in SUPPORTED_ENGINES:
+                scene["engine"] = params["engine"]
 
         plan["scenes"].append(scene)
         _save_manual_plan(plan)
         self._send_json({"ok": True, "scene": scene})
 
     def _handle_manual_update_scene(self, scene_id: str):
-        """Update a manual scene's prompt, duration, transition, speed, overlay, or color_grade."""
+        """Update a manual scene's prompt, duration, transition, speed, overlay, color_grade, or engine."""
         body = self._read_body()
         try:
             params = json.loads(body)
@@ -1735,6 +1794,10 @@ class Handler(BaseHTTPRequestHandler):
                     s["camera_movement"] = params["camera_movement"]
                 if "vocal_volume" in params:
                     s["vocal_volume"] = params["vocal_volume"]
+                if "engine" in params:
+                    engine_val = params["engine"]
+                    if engine_val in SUPPORTED_ENGINES or engine_val == "":
+                        s["engine"] = engine_val
                 _save_manual_plan(plan)
                 self._send_json({"ok": True, "scene": s})
                 return
@@ -1986,6 +2049,75 @@ class Handler(BaseHTTPRequestHandler):
             plan["audio_viz"] = params["audio_viz"]
         _save_manual_plan(plan)
         self._send_json({"ok": True})
+
+    def _handle_update_settings(self):
+        """Update global project settings (default_engine, character_references, etc.)."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        settings = _load_settings()
+
+        if "default_engine" in params:
+            engine = params["default_engine"]
+            if engine in SUPPORTED_ENGINES:
+                settings["default_engine"] = engine
+
+        if "character_references" in params:
+            # Expects dict like {"TB": "path/to/bear.jpg", "HERO": "path/to/hero.jpg"}
+            settings["character_references"] = params["character_references"]
+
+        _save_settings(settings)
+        self._send_json({"ok": True, "settings": settings})
+
+    def _handle_update_character_references(self):
+        """Add or update a character reference mapping."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        settings = _load_settings()
+        char_refs = settings.get("character_references", {})
+
+        # Support adding single reference: {name: "TB", reference_name: "bear"}
+        # where reference_name refers to a file in references/ dir
+        name = params.get("name", "")
+        ref_name = params.get("reference_name", "")
+        ref_path = params.get("path", "")
+
+        if name:
+            if ref_path:
+                char_refs[name] = ref_path
+            elif ref_name:
+                # Look up in references directory
+                refs = _get_references()
+                if ref_name in refs:
+                    char_refs[name] = refs[ref_name]
+                else:
+                    self._send_json({"error": f"Reference '{ref_name}' not found"}, 404)
+                    return
+            else:
+                # Delete the character reference
+                char_refs.pop(name, None)
+
+        # Support bulk update: {references: {"TB": "bear", ...}}
+        if "references" in params:
+            refs = _get_references()
+            for char_name, ref_name_or_path in params["references"].items():
+                if ref_name_or_path in refs:
+                    char_refs[char_name] = refs[ref_name_or_path]
+                elif os.path.isfile(ref_name_or_path):
+                    char_refs[char_name] = ref_name_or_path
+
+        settings["character_references"] = char_refs
+        _save_settings(settings)
+        self._send_json({"ok": True, "character_references": char_refs})
 
     def _handle_manual_reorder(self):
         """Reorder manual scenes and optionally set song path."""
