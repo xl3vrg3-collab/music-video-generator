@@ -3,6 +3,7 @@ Video generator supporting multiple AI engines:
   - Grok (xAI) -- text-to-video, image generation + Ken Burns
   - Luma Dream Machine (Ray2) -- text-to-video and image-to-video
   - OpenAI GPT -- image generation (stills) + Ken Burns
+  - Runway Gen-3 Alpha Turbo -- image-to-video and text-to-video (recommended for photo scenes)
 
 Handles video generation requests, async polling, downloads,
 and falls back to image generation + Ken Burns if video fails.
@@ -27,13 +28,18 @@ POLL_INTERVAL = 5       # seconds between status checks
 POLL_TIMEOUT = 300      # max seconds to wait for a single video
 LUMA_POLL_INTERVAL = 5  # seconds between Luma status checks
 LUMA_POLL_TIMEOUT = 600 # max seconds to wait for Luma (longer due to queue)
+RUNWAY_API_BASE = "https://api.dev.runwayml.com/v1"
+RUNWAY_POLL_INTERVAL = 5   # seconds between Runway status checks
+RUNWAY_POLL_TIMEOUT = 600  # max seconds to wait for Runway
+RUNWAY_COST_PER_SEC = 0.05 # ~$0.05 per second (5 credits/sec for turbo)
 MAX_CONCURRENT = 3      # max parallel video generations
 
 # ---- Engine names ----
 ENGINE_GROK = "grok"
 ENGINE_LUMA = "luma"
 ENGINE_OPENAI = "openai"
-SUPPORTED_ENGINES = [ENGINE_GROK, ENGINE_LUMA, ENGINE_OPENAI]
+ENGINE_RUNWAY = "runway"
+SUPPORTED_ENGINES = [ENGINE_GROK, ENGINE_LUMA, ENGINE_OPENAI, ENGINE_RUNWAY]
 
 # ---- Camera movement presets for Ken Burns ----
 # Each preset maps to an ffmpeg crop animation expression
@@ -322,6 +328,248 @@ def _luma_generate_scene(scene: dict, output_dir: str, index: int,
             raise RuntimeError(
                 f"Scene {index} Luma generation failed entirely: {e3}"
             ) from e3
+
+
+# ---- Runway Gen-3 Alpha Turbo ----
+
+def _get_runway_api_key() -> str:
+    key = os.environ.get("RUNWAY_API_KEY", "")
+    if not key:
+        raise RuntimeError(
+            "RUNWAY_API_KEY environment variable is not set. "
+            "Get an API key from https://dev.runwayml.com and add it to your .env file."
+        )
+    return key
+
+
+def _runway_headers() -> dict:
+    """Auth headers for Runway API."""
+    return {
+        "Authorization": f"Bearer {_get_runway_api_key()}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def _runway_submit_image_to_video(prompt: str, image_path: str,
+                                   duration: int = 5,
+                                   ratio: str = "16:9") -> str:
+    """
+    Submit an image-to-video request to Runway Gen-3 Alpha Turbo.
+
+    Args:
+        prompt: text description of what should happen in the video
+        image_path: local path to image file (will be base64-encoded)
+        duration: 5 or 10 seconds
+        ratio: "16:9" or "9:16"
+
+    Returns:
+        task ID string
+    """
+    duration = 10 if duration > 7 else 5  # Runway supports 5 or 10
+
+    prompt_image = _photo_to_data_uri(image_path)
+
+    payload = {
+        "model": "gen3a_turbo",
+        "promptImage": prompt_image,
+        "promptText": f"Animate this scene: {prompt}. Maintain the visual elements from the image.",
+        "duration": duration,
+        "ratio": ratio,
+    }
+
+    print(f"[RUNWAY] Submitting image-to-video: prompt={prompt[:80]}..., "
+          f"duration={duration}s, ratio={ratio}")
+
+    resp = requests.post(
+        f"{RUNWAY_API_BASE}/image_to_video",
+        headers=_runway_headers(),
+        json=payload,
+        timeout=60,
+    )
+
+    if resp.status_code not in (200, 201):
+        print(f"[RUNWAY] Submit error {resp.status_code}: {resp.text[:500]}")
+    resp.raise_for_status()
+
+    data = resp.json()
+    task_id = data.get("id", "")
+    print(f"[RUNWAY] Task submitted: id={task_id}")
+    return task_id
+
+
+def _runway_submit_text_to_video(prompt: str, duration: int = 5,
+                                  ratio: str = "16:9") -> str:
+    """
+    Submit a text-to-video request to Runway Gen-3 Alpha Turbo.
+
+    Args:
+        prompt: text description of the video
+        duration: 5 or 10 seconds
+        ratio: "16:9" or "9:16"
+
+    Returns:
+        task ID string
+    """
+    duration = 10 if duration > 7 else 5  # Runway supports 5 or 10
+
+    payload = {
+        "model": "gen3a_turbo",
+        "promptText": prompt,
+        "duration": duration,
+        "ratio": ratio,
+    }
+
+    print(f"[RUNWAY] Submitting text-to-video: prompt={prompt[:80]}..., "
+          f"duration={duration}s, ratio={ratio}")
+
+    resp = requests.post(
+        f"{RUNWAY_API_BASE}/text_to_video",
+        headers=_runway_headers(),
+        json=payload,
+        timeout=60,
+    )
+
+    if resp.status_code not in (200, 201):
+        print(f"[RUNWAY] Submit error {resp.status_code}: {resp.text[:500]}")
+    resp.raise_for_status()
+
+    data = resp.json()
+    task_id = data.get("id", "")
+    print(f"[RUNWAY] Task submitted: id={task_id}")
+    return task_id
+
+
+def _runway_poll(task_id: str) -> dict:
+    """
+    Poll Runway task until SUCCEEDED or FAILED.
+
+    Returns:
+        dict with video output URL
+    """
+    deadline = time.time() + RUNWAY_POLL_TIMEOUT
+    while time.time() < deadline:
+        resp = requests.get(
+            f"{RUNWAY_API_BASE}/tasks/{task_id}",
+            headers=_runway_headers(),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        status = data.get("status", "")
+        print(f"[RUNWAY] Poll {task_id[:12]}... status={status}")
+
+        if status == "SUCCEEDED":
+            output = data.get("output", [])
+            if not output:
+                raise RuntimeError(
+                    f"Runway task succeeded but no output URL found: "
+                    f"{json.dumps(data)[:500]}"
+                )
+            return {"url": output[0], "task_id": task_id}
+        elif status == "FAILED":
+            raise RuntimeError(
+                f"Runway generation failed (task={task_id}): "
+                f"{json.dumps(data)[:500]}"
+            )
+
+        time.sleep(RUNWAY_POLL_INTERVAL)
+
+    raise TimeoutError(
+        f"Runway generation timed out after {RUNWAY_POLL_TIMEOUT}s "
+        f"(task={task_id})"
+    )
+
+
+def _runway_generate_scene(scene: dict, output_dir: str, index: int,
+                            progress_cb=None, cost_cb=None,
+                            photo_path: str = None) -> str:
+    """
+    Generate a video clip using Runway Gen-3 Alpha Turbo.
+
+    This is the recommended engine for scenes with character reference photos,
+    as Runway excels at image-to-video with motion while preserving the source image.
+
+    Args:
+        scene: dict with at least {prompt, duration}
+        output_dir: directory to save clips
+        index: scene index for naming
+        progress_cb: optional callable(index, status_str)
+        cost_cb: optional callable(scene_key, gen_type)
+        photo_path: optional photo path for image-to-video (THE key feature)
+
+    Returns:
+        path to the generated video clip
+    """
+    clip_path = os.path.join(output_dir, f"clip_{index:03d}.mp4")
+    prompt = scene["prompt"]
+    duration = scene.get("duration", 8)
+    camera = scene.get("camera_movement", "zoom_in")
+
+    # Add camera movement to prompt for Runway
+    camera_suffix = CAMERA_PROMPT_SUFFIXES.get(camera, "")
+    gen_prompt = prompt + camera_suffix if camera_suffix else prompt
+
+    has_photo = photo_path and os.path.isfile(photo_path)
+
+    def _report(msg):
+        print(f"[RUNWAY][{index}] {msg}")
+        if progress_cb:
+            progress_cb(index, msg)
+
+    def _record(gen_type):
+        if cost_cb:
+            cost_cb(str(scene.get("id", index)), gen_type)
+
+    try:
+        if has_photo:
+            # Image-to-video: THE reason we added Runway
+            _report(f"submitting image-to-video to Runway Gen-3 Alpha Turbo (photo: {os.path.basename(photo_path)})...")
+            task_id = _runway_submit_image_to_video(
+                gen_prompt, photo_path, duration=duration
+            )
+        else:
+            # Text-to-video fallback
+            _report("submitting text-to-video to Runway Gen-3 Alpha Turbo...")
+            task_id = _runway_submit_text_to_video(
+                gen_prompt, duration=duration
+            )
+
+        _report(f"polling Runway (task={task_id[:12]}...)")
+        video_info = _runway_poll(task_id)
+        _report("downloading Runway video...")
+        _download(video_info["url"], clip_path)
+
+        # Cost tracking: ~$0.05 per second for gen3a_turbo (5 credits/sec)
+        effective_dur = 10 if duration > 7 else 5
+        est_cost = effective_dur * RUNWAY_COST_PER_SEC
+        print(f"[RUNWAY][{index}] Estimated cost: ~${est_cost:.2f} "
+              f"({effective_dur}s x ${RUNWAY_COST_PER_SEC}/s)")
+        _record("video")
+
+        # Apply camera movement post-processing if the video needs Ken Burns overlay
+        # Runway natively handles camera movement via prompt, so skip Ken Burns
+        _report("done (Runway Gen-3 Alpha Turbo)")
+        return clip_path
+
+    except Exception as e:
+        _report(f"Runway generation failed ({e})")
+
+        # Fall back to Grok image + Ken Burns
+        _report("falling back to Grok image + Ken Burns...")
+        try:
+            img_url = _generate_image(gen_prompt)
+            img_path = os.path.join(output_dir, f"img_{index:03d}.png")
+            _download(img_url, img_path)
+            _ken_burns(img_path, clip_path, duration, camera=camera)
+            _record("image")
+            _report("done (Grok image fallback)")
+            return clip_path
+        except Exception as e2:
+            _report(f"all generation attempts failed: {e2}")
+            raise RuntimeError(
+                f"Scene {index} Runway generation failed entirely: {e2}"
+            ) from e2
 
 
 # ---- OpenAI GPT Image Generation ----
@@ -728,7 +976,7 @@ def generate_scene(scene: dict, index: int, output_dir: str,
 
     Args:
         scene: dict with at least {prompt, duration}
-               optional: camera_movement (preset name), engine ("grok"|"luma"|"openai")
+               optional: camera_movement (preset name), engine ("grok"|"luma"|"openai"|"runway")
         index: scene index (for naming)
         output_dir: directory to save clips
         progress_cb: optional callable(index, status_str)
@@ -765,6 +1013,10 @@ def generate_scene(scene: dict, index: int, output_dir: str,
         )
     elif engine == ENGINE_OPENAI:
         return _openai_generate_scene(
+            scene, output_dir, index, progress_cb, cost_cb, photo_path
+        )
+    elif engine == ENGINE_RUNWAY:
+        return _runway_generate_scene(
             scene, output_dir, index, progress_cb, cost_cb, photo_path
         )
     else:
@@ -992,6 +1244,16 @@ def get_available_engines() -> list:
         "description": "High-quality image generation + Ken Burns animation",
         "available": openai_available,
         "missing_key": "OPENAI_API_KEY" if not openai_available else None,
+    })
+
+    # Runway
+    runway_available = bool(os.environ.get("RUNWAY_API_KEY", ""))
+    engines.append({
+        "id": ENGINE_RUNWAY,
+        "name": "Runway Gen-3 Alpha Turbo",
+        "description": "Fast image-to-video and text-to-video — best for scenes with photos",
+        "available": runway_available,
+        "missing_key": "RUNWAY_API_KEY" if not runway_available else None,
     })
 
     return engines
