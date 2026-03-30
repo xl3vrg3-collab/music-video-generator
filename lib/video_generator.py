@@ -412,19 +412,15 @@ def _runway_submit_image_to_video(prompt: str, image_path: str,
 
 def _runway_submit_text_to_video(prompt: str, duration: int = 5,
                                   ratio: str = "16:9",
-                                  model: str = "gen4.5") -> str:
+                                  model: str = "gen4.5",
+                                  character_photo_path: str = None) -> str:
     """
-    Submit a text-to-video request to Runway Gen-3 Alpha Turbo.
-
-    Args:
-        prompt: text description of the video
-        duration: 5 or 10 seconds
-        ratio: "16:9" or "9:16"
-
-    Returns:
-        task ID string
+    Submit a text-to-video request to Runway.
+    If character_photo_path is provided, the photo is used as a CHARACTER REFERENCE
+    (not as the first frame). The AI generates a new video but keeps the character
+    looking like the person in the photo.
     """
-    duration = 10 if duration > 7 else 5  # Runway supports 5 or 10
+    duration = 10 if duration > 7 else 5
 
     payload = {
         "model": model,
@@ -435,6 +431,18 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
 
     print(f"[RUNWAY] Submitting text-to-video: model={model}, prompt={prompt[:80]}..., "
           f"duration={duration}s, ratio={RUNWAY_RATIO_MAP.get(ratio, '1280:720')}")
+
+    # Add character reference if photo provided
+    if character_photo_path and os.path.isfile(character_photo_path):
+        photo_uri = _photo_to_data_uri(character_photo_path)
+        payload["referenceImages"] = [
+            {"uri": photo_uri, "type": "character"}
+        ]
+        print(f"[RUNWAY] Using photo as CHARACTER REFERENCE (not first frame)")
+
+    print(f"[RUNWAY] Submitting text-to-video: model={model}, "
+          f"char_ref={'YES' if character_photo_path else 'NO'}, "
+          f"prompt={prompt[:80]}...")
 
     resp = requests.post(
         f"{RUNWAY_API_BASE}/text_to_video",
@@ -560,59 +568,29 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
 
     try:
         if has_photo:
-            # Describe the photo generically (avoid celebrity names to pass moderation)
-            _report(f"analyzing photo for subject consistency...")
+            # USE CHARACTER REFERENCE — photo is NOT the first frame
+            # Instead, Runway uses it to learn what the person looks like
+            # and generates a brand new video keeping that character consistent
+            _report(f"using photo as CHARACTER REFERENCE (not first frame)...")
+
+            # Describe the photo to enhance the prompt
             try:
                 photo_desc = describe_photo(photo_path)
-                # Strip any celebrity/real person names from the description
-                # to help pass content moderation
                 import re as _re
                 photo_desc = _re.sub(r'(?i)(looks like|resembles|appears to be)\s+\w+(\s+\w+)?', 'a person', photo_desc)
-
                 gen_prompt = (
-                    f"This exact person from the starting frame: {photo_desc}. "
-                    f"CRITICAL: Keep this SAME person with the SAME face, hair, clothing, "
-                    f"and body type visible throughout the ENTIRE video. Never replace them. "
-                    f"Action: {gen_prompt}"
-                )
-                print(f"[RUNWAY/{model}][{index}] Enhanced prompt with photo description (names stripped)")
-            except Exception as desc_err:
-                print(f"[RUNWAY/{model}][{index}] Photo describe failed: {desc_err}")
-                gen_prompt = (
-                    f"Keep the SAME person from this starting frame throughout the entire video. "
-                    f"Do NOT change their appearance, face, or clothing. "
+                    f"The character from the reference image ({photo_desc}). "
                     f"{gen_prompt}"
                 )
+                print(f"[RUNWAY/{model}][{index}] Enhanced prompt with character description")
+            except Exception as desc_err:
+                print(f"[RUNWAY/{model}][{index}] Photo describe skipped: {desc_err}")
 
-            # Try image-to-video with moderation retry
-            # If rejected, try: 1) different model, 2) stylized photo, 3) text-only
-            FALLBACK_MODELS = [model, "gen3a_turbo", "kling3.0_pro", "kling3.0_standard"]
-            # Remove current model from fallbacks to avoid duplicate
-            FALLBACK_MODELS = list(dict.fromkeys(FALLBACK_MODELS))
-
-            task_id = None
-            used_model = model
-            for try_model in FALLBACK_MODELS:
-                try:
-                    _report(f"submitting image-to-video ({try_model}) with photo...")
-                    task_id = _runway_submit_image_to_video(
-                        gen_prompt, photo_path, duration=duration, model=try_model
-                    )
-                    used_model = try_model
-                    break
-                except Exception as submit_err:
-                    err_str = str(submit_err).lower()
-                    if "moderation" in err_str or "safety" in err_str or "content" in err_str:
-                        _report(f"{try_model} rejected by moderation, trying next model...")
-                        continue
-                    else:
-                        raise  # non-moderation error, don't retry
-
-            if task_id is None:
-                # All models rejected the photo — fall back to text-only
-                _report("all models rejected photo (moderation), falling back to text-only video...")
-                task_id = _runway_submit_text_to_video(gen_prompt, duration=duration, model=model)
-                used_model = model
+            _report(f"submitting text-to-video ({model}) with character reference...")
+            task_id = _runway_submit_text_to_video(
+                gen_prompt, duration=duration, model=model,
+                character_photo_path=photo_path
+            )
         else:
             _report(f"submitting text-to-video ({model})...")
             task_id = _runway_submit_text_to_video(
