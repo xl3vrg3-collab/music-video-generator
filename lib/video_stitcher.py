@@ -1023,14 +1023,16 @@ def apply_aspect_ratio(input_path: str, output_path: str,
 
 
 def split_clip(clip_path: str, output_dir: str,
-               scene_id: str, progress_cb=None) -> tuple:
+               scene_id: str, split_pct: float = 0.5,
+               progress_cb=None) -> tuple:
     """
-    Split a video clip into two halves at the midpoint.
+    Split a video clip at a given percentage position.
 
     Args:
         clip_path: path to the clip to split
         output_dir: directory for output files
         scene_id: base ID for naming
+        split_pct: 0.0-1.0 position to split (default 0.5 = midpoint)
         progress_cb: optional callable(status_str)
 
     Returns:
@@ -1041,29 +1043,30 @@ def split_clip(clip_path: str, output_dir: str,
     if progress_cb:
         progress_cb("splitting clip...")
 
+    split_pct = max(0.05, min(0.95, split_pct))
     duration = _get_clip_duration(clip_path)
-    midpoint = duration / 2.0
+    split_point = duration * split_pct
     os.makedirs(output_dir, exist_ok=True)
 
     first_path = os.path.join(output_dir, f"{scene_id}_a.mp4")
     second_path = os.path.join(output_dir, f"{scene_id}_b.mp4")
 
-    # First half
+    # First part
     cmd1 = [
         "ffmpeg", "-y",
         "-i", clip_path,
-        "-t", f"{midpoint:.3f}",
+        "-t", f"{split_point:.3f}",
         "-c:v", "libx264", "-c:a", "aac",
         "-pix_fmt", "yuv420p",
         first_path,
     ]
     subprocess.run(cmd1, check=True, capture_output=True, **_subprocess_kwargs())
 
-    # Second half
+    # Second part
     cmd2 = [
         "ffmpeg", "-y",
         "-i", clip_path,
-        "-ss", f"{midpoint:.3f}",
+        "-ss", f"{split_point:.3f}",
         "-c:v", "libx264", "-c:a", "aac",
         "-pix_fmt", "yuv420p",
         second_path,
@@ -1208,3 +1211,200 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
         progress_cb("done")
 
     return output
+
+
+def align_scenes_to_beats(scenes: list, beats: list) -> list:
+    """
+    Snap scene boundaries to the nearest beat timestamp.
+    Redistributes scene durations so that each scene ends on a beat.
+
+    Args:
+        scenes: list of scene dicts with start_sec, end_sec, duration
+        beats: list of beat timestamps in seconds (sorted ascending)
+
+    Returns:
+        updated list of scene dicts with beat-aligned boundaries
+    """
+    if not scenes or not beats:
+        return scenes
+
+    beats = sorted(beats)
+    total_duration = scenes[-1].get("end_sec", scenes[-1].get("start_sec", 0) + scenes[-1].get("duration", 8))
+
+    # Add 0.0 and total_duration as boundary anchors
+    all_candidates = [0.0] + beats + [total_duration]
+
+    def nearest_beat(t):
+        """Find the beat timestamp nearest to t."""
+        best = all_candidates[0]
+        best_dist = abs(t - best)
+        for b in all_candidates:
+            d = abs(t - b)
+            if d < best_dist:
+                best = b
+                best_dist = d
+        return best
+
+    # Snap each scene boundary to nearest beat
+    aligned = []
+    for i, scene in enumerate(scenes):
+        s = dict(scene)
+        start = s.get("start_sec", 0)
+        end = s.get("end_sec", start + s.get("duration", 8))
+
+        if i == 0:
+            snapped_start = 0.0
+        else:
+            snapped_start = aligned[i - 1]["end_sec"]
+
+        snapped_end = nearest_beat(end)
+
+        # Ensure minimum 1s scene duration
+        if snapped_end <= snapped_start + 1.0:
+            # Find next beat after snapped_start + 1
+            for b in all_candidates:
+                if b > snapped_start + 1.0:
+                    snapped_end = b
+                    break
+            else:
+                snapped_end = snapped_start + max(2.0, s.get("duration", 8))
+
+        s["start_sec"] = round(snapped_start, 3)
+        s["end_sec"] = round(snapped_end, 3)
+        s["duration"] = round(snapped_end - snapped_start, 3)
+        aligned.append(s)
+
+    return aligned
+
+
+def overlay_scene_vocals(video_path: str, output_path: str,
+                         vocal_entries: list, progress_cb=None) -> str:
+    """
+    Mix per-scene vocal clips onto a video at their respective timespans.
+
+    Args:
+        video_path: source video (already has background audio)
+        output_path: destination video
+        vocal_entries: list of dicts: {vocal_path, start_sec, end_sec, volume}
+                       volume is 0-100 (percent)
+        progress_cb: optional callable(status_str)
+
+    Returns:
+        path to the output video with vocals mixed in
+    """
+    _check_ffmpeg()
+
+    # Filter to valid entries
+    valid = [v for v in vocal_entries
+             if v.get("vocal_path") and os.path.isfile(v["vocal_path"])]
+    if not valid:
+        import shutil
+        shutil.copy2(video_path, output_path)
+        return output_path
+
+    if progress_cb:
+        progress_cb(f"mixing {len(valid)} vocal track(s)...")
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
+    # Build ffmpeg command with multiple vocal inputs
+    input_args = ["-i", video_path]
+    for v in valid:
+        input_args += ["-i", v["vocal_path"]]
+
+    # Build filter_complex
+    filter_parts = []
+    vocal_labels = []
+
+    for idx, v in enumerate(valid):
+        inp_idx = idx + 1  # 0 is the video
+        start_ms = int(v.get("start_sec", 0) * 1000)
+        vol = max(0.0, min(2.0, v.get("volume", 80) / 100.0))
+        label = f"[voc{idx}]"
+        filter_parts.append(
+            f"[{inp_idx}:a]adelay={start_ms}|{start_ms},volume={vol:.2f}{label}"
+        )
+        vocal_labels.append(label)
+
+    # Mix all vocals together
+    if len(vocal_labels) == 1:
+        mixed_label = vocal_labels[0]
+    else:
+        all_labels = "".join(vocal_labels)
+        filter_parts.append(
+            f"{all_labels}amix=inputs={len(vocal_labels)}:duration=longest:dropout_transition=2[vocmix]"
+        )
+        mixed_label = "[vocmix]"
+
+    # Mix the combined vocals with the original video audio
+    filter_parts.append(
+        f"[0:a]{mixed_label}amix=inputs=2:duration=first:dropout_transition=2[outa]"
+    )
+
+    filter_complex = ";".join(filter_parts)
+
+    cmd = [
+        "ffmpeg", "-y",
+        *input_args,
+        "-filter_complex", filter_complex,
+        "-map", "0:v",
+        "-map", "[outa]",
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "192k",
+        output_path,
+    ]
+
+    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+
+    if progress_cb:
+        progress_cb("vocal overlay complete")
+    return output_path
+
+
+def add_beat_cuts_to_stitch(video_path: str, output_path: str,
+                            beat_timestamps: list,
+                            progress_cb=None) -> str:
+    """
+    Add rhythmic hard cuts (brightness flashes) at beat timestamps within
+    the stitched video for a more rhythmic feel.
+    """
+    _check_ffmpeg()
+
+    if not beat_timestamps or len(beat_timestamps) < 2:
+        import shutil
+        shutil.copy2(video_path, output_path)
+        return output_path
+
+    if progress_cb:
+        progress_cb("adding rhythmic beat cuts...")
+
+    parts = []
+    for bt in beat_timestamps:
+        parts.append(f"between(t,{bt:.3f},{bt + 0.08:.3f})")
+    if not parts:
+        import shutil
+        shutil.copy2(video_path, output_path)
+        return output_path
+
+    flash_expr = "+".join(parts)
+    vf = f"eq=brightness=0.12*({flash_expr}):eval=frame"
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-vf", vf,
+        "-c:v", "libx264",
+        "-c:a", "copy",
+        "-pix_fmt", "yuv420p",
+        output_path,
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+    except subprocess.CalledProcessError:
+        import shutil
+        shutil.copy2(video_path, output_path)
+
+    if progress_cb:
+        progress_cb("beat cuts added")
+    return output_path

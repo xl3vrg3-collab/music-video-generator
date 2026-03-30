@@ -1166,6 +1166,54 @@
 /* ---- Lyrics Sync ---- */  .lyrics-textarea {    width: 100%; background: var(--bg); border: 1px solid var(--border);    border-radius: 4px; padding: 12px 14px; color: var(--text);    font-family: inherit; font-size: 12px; resize: vertical;    min-height: 100px; line-height: 1.6;  }  .lyrics-textarea:focus { outline: none; border-color: var(--cyan); }  .lyrics-textarea::placeholder { color: var(--text-dim); }  .lyrics-mode-toggle { display: flex; gap: 0; margin-bottom: 12px; }  .lyrics-mode-btn {    padding: 6px 16px; font-family: inherit; font-size: 10px;    letter-spacing: 2px; text-transform: uppercase;    border: 1px solid var(--border); background: transparent;    color: var(--text-dim); cursor: pointer; transition: all 0.3s;  }  .lyrics-mode-btn:first-child { border-radius: 4px 0 0 4px; }  .lyrics-mode-btn:last-child { border-radius: 0 4px 4px 0; }  .lyrics-mode-btn.active { background: rgba(0,212,255,0.1); border-color: var(--cyan); color: var(--cyan); }  .lyrics-timestamps { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 200px; overflow-y: auto; }  .lyrics-ts-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }  .lyrics-ts-row .ts-line { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }  .lyrics-ts-input {    width: 70px; background: var(--bg); border: 1px solid var(--border);    border-radius: 3px; padding: 4px 6px; color: var(--amber);    font-family: inherit; font-size: 11px; text-align: right;  }  .lyrics-ts-input:focus { outline: none; border-color: var(--cyan); }  /* ---- Style Lock ---- */  .style-lock-bar {    display: flex; align-items: center; gap: 10px; margin-top: 10px;    padding: 10px 14px; background: var(--bg);    border: 1px solid var(--border); border-radius: 4px;  }  .style-lock-toggle { position: relative; width: 36px; height: 20px; cursor: pointer; }  .style-lock-toggle input { display: none; }  .style-lock-toggle .slider {    position: absolute; inset: 0; background: var(--border);    border-radius: 10px; transition: all 0.3s;  }  .style-lock-toggle .slider::after {    content: ""; position: absolute; width: 16px; height: 16px;    border-radius: 50%; background: var(--text-dim);    top: 2px; left: 2px; transition: all 0.3s;  }  .style-lock-toggle input:checked + .slider { background: var(--cyan-dim); }  .style-lock-toggle input:checked + .slider::after { background: var(--cyan); transform: translateX(16px); }  .style-lock-input {    flex: 1; background: transparent; border: none;    color: var(--cyan); font-family: inherit; font-size: 11px; letter-spacing: 1px;  }  .style-lock-input:focus { outline: none; }  .style-lock-input::placeholder { color: var(--text-dim); }  .style-lock-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; white-space: nowrap; }  /* ---- Aspect Ratio / Batch Export ---- */  .aspect-select {    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;    padding: 6px 10px; color: var(--text); font-family: inherit; font-size: 11px;    cursor: pointer; appearance: none; -webkit-appearance: none;    padding-right: 24px;  }  .aspect-select:focus { outline: none; border-color: var(--cyan); }  .aspect-select option { background: var(--surface); color: var(--text); }  .export-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }  .export-item {    display: flex; align-items: center; justify-content: space-between;    padding: 8px 12px; background: var(--bg);    border: 1px solid var(--border); border-radius: 4px; font-size: 11px;  }  .export-item .export-name { color: var(--cyan); letter-spacing: 1px; }  .export-item .export-size { color: var(--text-dim); }
   /* ---- New Feature Styles ---- */
   .btn-gen-photo, .btn-upscale { transition: all 0.2s; }
+  /* ---- Split Slider ---- */
+  .split-slider-container {
+    display: none; align-items: center; gap: 8px; margin-top: 6px;
+    padding: 8px 12px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .split-slider-container.active { display: flex; }
+  .split-slider {
+    flex: 1; -webkit-appearance: none; appearance: none; height: 6px;
+    background: var(--border); border-radius: 3px; outline: none; cursor: pointer;
+  }
+  .split-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 16px; height: 16px;
+    border-radius: 50%; background: var(--amber); cursor: pointer;
+    border: 2px solid var(--bg);
+  }
+  .split-slider::-moz-range-thumb {
+    width: 16px; height: 16px; border-radius: 50%; background: var(--amber);
+    cursor: pointer; border: 2px solid var(--bg);
+  }
+  .split-pct-label { font-size: 11px; color: var(--amber); min-width: 36px; text-align: right; }
+  .split-confirm-btn {
+    padding: 4px 10px; font-family: inherit; font-size: 9px;
+    letter-spacing: 1px; text-transform: uppercase;
+    border: 1px solid var(--green); background: transparent;
+    color: var(--green); border-radius: 3px; cursor: pointer;
+  }
+  .split-confirm-btn:hover { background: rgba(0,255,136,0.1); }
+  /* ---- Video/Vocal Upload Badges ---- */
+  .msc-badge-row { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; align-items: center; }
+  .msc-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; font-size: 9px; letter-spacing: 1px;
+    text-transform: uppercase; border-radius: 3px;
+    border: 1px solid var(--border);
+  }
+  .msc-badge-video { border-color: var(--green); color: var(--green); }
+  .msc-badge-vocal { border-color: var(--magenta); color: var(--magenta); }
+  /* ---- Vocal Volume Slider ---- */
+  .vocal-vol-slider {
+    width: 60px; -webkit-appearance: none; appearance: none; height: 4px;
+    background: var(--border); border-radius: 2px; outline: none; cursor: pointer;
+  }
+  .vocal-vol-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 12px; height: 12px;
+    border-radius: 50%; background: var(--magenta); cursor: pointer;
+  }
+  .vocal-vol-label { font-size: 9px; color: var(--text-dim); min-width: 28px; }
 </style>
 </head>
 <body>
@@ -1180,6 +1228,7 @@
 
 <!-- Hidden file input for project load -->
 <input type="file" id="projectLoadInput" accept=".json">
+<input type="file" id="fullProjectLoadInput" accept=".zip">
 
 <div class="container">
   <div class="header">
@@ -1195,8 +1244,10 @@
     </div>
     <div class="toolbar-sep"></div>
     <div class="toolbar-group">
-      <button class="btn-toolbar btn-tb-green" id="saveProjectBtn" title="Save project to JSON">Save Project</button>
+      <button class="btn-toolbar btn-tb-green" id="saveProjectBtn" title="Save project metadata to JSON">Save Project</button>
+      <button class="btn-toolbar btn-tb-green" id="saveFullProjectBtn" title="Save project with all clips, photos, audio as zip">Save Full</button>
       <button class="btn-toolbar btn-tb-amber" id="loadProjectBtn" title="Load project from JSON">Load Project</button>
+      <button class="btn-toolbar btn-tb-amber" id="loadFullProjectBtn" title="Load full project from zip">Load Full</button>
     </div>
     <div class="toolbar-sep"></div>
     <div class="toolbar-group">
@@ -1448,6 +1499,7 @@
 
         <div class="manual-bottom-bar">
           <button class="btn" id="manualGenerateAllBtn">Generate All</button>
+          <button class="btn btn-amber" id="manualAlignBeatsBtn" onclick="window._alignToBeats()" title="Snap scene boundaries to beat timestamps">Align to Beats</button>
           <button class="btn btn-amber" id="manualPreviewAllBtn" onclick="window._previewAll()">Preview All</button>
           <button class="btn btn-amber" id="manualStitchBtn">Stitch Video</button>
           <a class="btn btn-magenta hidden" id="manualDownloadBtn" href="#" download="music_video.mp4">Download</a>
@@ -2359,9 +2411,12 @@
         ? `<img src="${s.photo_url}?t=${Date.now()}" alt="Scene photo">`
         : `<div class="msc-photo-placeholder">Click to<br>upload photo</div>`;
 
-      const clipHtml = hasClip
-        ? `<div class="msc-clip-preview"><video src="${s.clip_url}?t=${Date.now()}" controls preload="metadata"></video></div>`
-        : '';
+      let clipHtml = '';
+      if (hasClip) {
+        clipHtml = `<div class="msc-clip-preview"><video src="${s.clip_url}?t=${Date.now()}" controls preload="metadata"></video></div>`;
+      } else if (s.has_video && s.video_url) {
+        clipHtml = `<div class="msc-clip-preview"><video src="${s.video_url}?t=${Date.now()}" controls preload="metadata"></video></div>`;
+      }
 
       const isLast = i >= manualScenes.length - 1;
 
@@ -2465,15 +2520,37 @@
                 ${overlayColorOptions}
               </select>
             </div>
+            <div class="msc-badge-row">
+              ${s.has_video ? '<span class="msc-badge msc-badge-video">VIDEO UPLOADED</span>' : ''}
+              ${s.has_vocal ? '<span class="msc-badge msc-badge-vocal">VOICEOVER</span>' : ''}
+              ${s.has_vocal ? `<input type="range" class="vocal-vol-slider" min="0" max="100" value="${s.vocal_volume || 80}"
+                onchange="window._manualUpdateScene('${s.id}', {vocal_volume: parseInt(this.value)}); this.nextElementSibling.textContent=this.value+'%'"
+                title="Voiceover volume">
+                <span class="vocal-vol-label">${s.vocal_volume || 80}%</span>` : ''}
+            </div>
             <div class="msc-actions">
               <button class="btn btn-small" onclick="window._manualGenerateScene('${s.id}')">Generate Clip</button>
+              <button class="btn btn-small" onclick="document.getElementById('msc-video-input-${s.id}').click()" title="Upload your own video clip (.mp4/.webm/.mov, max 100MB)">Upload Video</button>
+              <input type="file" style="display:none" id="msc-video-input-${s.id}" accept=".mp4,.webm,.mov"
+                     onchange="window._manualUploadVideo('${s.id}', this.files[0])">
+              <button class="btn btn-small btn-magenta" onclick="document.getElementById('msc-vocal-input-${s.id}').click()" title="Upload voiceover audio (.mp3/.wav)">Upload Voiceover</button>
+              <input type="file" style="display:none" id="msc-vocal-input-${s.id}" accept=".mp3,.wav,.m4a,.ogg"
+                     onchange="window._manualUploadVocal('${s.id}', this.files[0])">
               ${hasPhoto ? `<button class="btn-gen-photo" onclick="window._generateFromPhoto('${s.id}')" title="Generate video from photo using styled image + Ken Burns">Generate from Photo</button>` : ''}
               ${hasPhoto ? `<button class="btn btn-small btn-amber" onclick="window._autoDescribePhoto('${s.id}')" title="AI describes photo for prompt">Auto Describe</button>` : ''}
-              <button class="btn btn-small btn-amber" onclick="window._manualSplitScene('${s.id}')">Split</button>
+              <button class="btn btn-small btn-amber" onclick="window._toggleSplitSlider('${s.id}')" title="Split scene at a precise point">Split</button>
               ${hasClip ? `<button class="btn btn-small btn-amber" onclick="window._manualPreviewClip('${s.id}')">Preview</button>` : ''}
               ${hasClip ? `<button class="btn-upscale" onclick="window._upscaleScene('${s.id}', this)" title="Upscale clip 2x with lanczos">2x</button>` : ''}
               ${(window._sceneCosts && window._sceneCosts[s.id]) ? `<span class="msc-cost-badge">$` + window._sceneCosts[s.id].toFixed(2) + `</span>` : ''}
               <span class="msc-status" id="msc-status-${s.id}"></span>
+            </div>
+            <div class="split-slider-container" id="split-slider-${s.id}">
+              <span style="font-size:10px;color:var(--text-dim);">SPLIT AT:</span>
+              <input type="range" class="split-slider" min="5" max="95" value="50"
+                     id="split-range-${s.id}"
+                     oninput="document.getElementById('split-pct-${s.id}').textContent=this.value+'%'">
+              <span class="split-pct-label" id="split-pct-${s.id}">50%</span>
+              <button class="split-confirm-btn" onclick="window._manualSplitSceneAt('${s.id}')">Confirm Split</button>
             </div>
             ${clipHtml}
           </div>
@@ -3453,10 +3530,42 @@
     }
   };
 
-  window._manualSplitScene = async function(sceneId) {
-    if (!confirm('Split this scene into two halves?')) return;
+  // ---- Split with slider ----
+  window._toggleSplitSlider = function(sceneId) {
+    var el = document.getElementById('split-slider-' + sceneId);
+    if (el) {
+      el.classList.toggle('active');
+    }
+  };
+
+  window._manualSplitSceneAt = async function(sceneId) {
+    var rangeEl = document.getElementById('split-range-' + sceneId);
+    var pct = rangeEl ? parseInt(rangeEl.value) / 100.0 : 0.5;
     try {
-      var resp = await fetch('/api/manual/scene/' + sceneId + '/split', { method: 'POST' });
+      var resp = await fetch('/api/manual/scene/' + sceneId + '/split', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ split_pct: pct }),
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        await loadManualScenes();
+      } else {
+        alert('Error: ' + (data.error || 'failed'));
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  window._manualSplitScene = async function(sceneId) {
+    // Legacy: split at midpoint
+    try {
+      var resp = await fetch('/api/manual/scene/' + sceneId + '/split', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ split_pct: 0.5 }),
+      });
       var data = await resp.json();
       if (data.ok) {
         await loadManualScenes();
@@ -3781,6 +3890,156 @@
       }).join('');
     } catch (e) { /* ignore */ }
   };
+
+  // ===================== FEATURE: VIDEO UPLOAD PER SCENE =====================
+
+  window._manualUploadVideo = async function(sceneId, file) {
+    if (!file) return;
+    if (file.size > 100 * 1024 * 1024) {
+      alert('Video file too large. Maximum 100MB.');
+      return;
+    }
+    var statusEl = document.getElementById('msc-status-' + sceneId);
+    if (statusEl) statusEl.textContent = 'Uploading video...';
+
+    var formData = new FormData();
+    formData.append('video', file, file.name);
+
+    try {
+      var resp = await fetch('/api/manual/scene/' + sceneId + '/video', {
+        method: 'POST',
+        body: formData,
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        if (statusEl) statusEl.textContent = 'Video uploaded!';
+        await loadManualScenes();
+      } else {
+        if (statusEl) statusEl.textContent = 'Error: ' + (data.error || 'failed');
+      }
+    } catch (e) {
+      if (statusEl) statusEl.textContent = 'Error: ' + e.message;
+    }
+  };
+
+  // ===================== FEATURE: PER-SCENE VOCAL UPLOAD =====================
+
+  window._manualUploadVocal = async function(sceneId, file) {
+    if (!file) return;
+    var statusEl = document.getElementById('msc-status-' + sceneId);
+    if (statusEl) statusEl.textContent = 'Uploading voiceover...';
+
+    var formData = new FormData();
+    formData.append('vocal', file, file.name);
+
+    try {
+      var resp = await fetch('/api/manual/scene/' + sceneId + '/vocal', {
+        method: 'POST',
+        body: formData,
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        if (statusEl) statusEl.textContent = 'Voiceover uploaded!';
+        await loadManualScenes();
+      } else {
+        if (statusEl) statusEl.textContent = 'Error: ' + (data.error || 'failed');
+      }
+    } catch (e) {
+      if (statusEl) statusEl.textContent = 'Error: ' + e.message;
+    }
+  };
+
+  // ===================== FEATURE: AUTO BEAT ALIGNMENT =====================
+
+  window._alignToBeats = async function() {
+    if (!confirm('Align all scene boundaries to beat timestamps? This will adjust scene durations.')) return;
+    try {
+      var resp = await fetch('/api/auto-align-beats', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'manual' }),
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        alert('Aligned ' + data.scenes_aligned + ' scenes to ' + data.beats_used + ' beats.');
+        await loadManualScenes();
+      } else {
+        alert('Error: ' + (data.error || 'failed'));
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  // ===================== FEATURE: SAVE/LOAD FULL PROJECT =====================
+
+  var saveFullProjectBtn = document.getElementById('saveFullProjectBtn');
+  var loadFullProjectBtn = document.getElementById('loadFullProjectBtn');
+  var fullProjectLoadInput = document.getElementById('fullProjectLoadInput');
+
+  if (saveFullProjectBtn) {
+    saveFullProjectBtn.addEventListener('click', async function() {
+      saveFullProjectBtn.disabled = true;
+      saveFullProjectBtn.textContent = 'SAVING...';
+      try {
+        var resp = await fetch('/api/project/save-full', { method: 'POST' });
+        var data = await resp.json();
+        if (data.ok) {
+          // Auto-download the zip
+          var a = document.createElement('a');
+          a.href = data.url;
+          a.download = data.filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          alert('Full project saved (' + data.size_mb + ' MB). Download started.');
+        } else {
+          alert('Error: ' + (data.error || 'failed'));
+        }
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
+      saveFullProjectBtn.disabled = false;
+      saveFullProjectBtn.textContent = 'Save Full';
+    });
+  }
+
+  if (loadFullProjectBtn) {
+    loadFullProjectBtn.addEventListener('click', function() {
+      fullProjectLoadInput.click();
+    });
+  }
+
+  if (fullProjectLoadInput) {
+    fullProjectLoadInput.addEventListener('change', async function() {
+      var file = fullProjectLoadInput.files[0];
+      if (!file) return;
+      loadFullProjectBtn.disabled = true;
+      loadFullProjectBtn.textContent = 'LOADING...';
+
+      var formData = new FormData();
+      formData.append('project', file, file.name);
+
+      try {
+        var resp = await fetch('/api/project/load-full', {
+          method: 'POST',
+          body: formData,
+        });
+        var data = await resp.json();
+        if (data.ok) {
+          alert('Full project loaded with clips!');
+          await loadManualScenes();
+        } else {
+          alert('Error: ' + (data.error || 'failed'));
+        }
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
+      loadFullProjectBtn.disabled = false;
+      loadFullProjectBtn.textContent = 'Load Full';
+      fullProjectLoadInput.value = '';
+    });
+  }
 
 })();
 </script>

@@ -30,6 +30,7 @@ import threading
 import time
 import uuid as _uuid
 import urllib.parse
+import zipfile
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Load .env if python-dotenv is available
@@ -51,6 +52,7 @@ from lib.video_stitcher import (
     SPEED_OPTIONS, COLOR_GRADE_PRESETS, AUDIO_VIZ_STYLES,
     generate_credits, apply_watermark, extract_thumbnail,
     mix_audio_tracks, export_for_platform, apply_beat_sync_cuts,
+    align_scenes_to_beats, overlay_scene_vocals, add_beat_cuts_to_stitch,
 )
 from lib.prompt_assistant import (
     STYLE_PRESETS, get_preset, enhance_prompt, suggest_from_song_name,
@@ -77,6 +79,9 @@ WATERMARK_PATH = os.path.join(OUTPUT_DIR, "watermark.png")
 THUMBNAIL_PATH = os.path.join(OUTPUT_DIR, "thumbnail.jpg")
 AUDIO_TRACKS_DIR = os.path.join(UPLOADS_DIR, "audio_tracks")
 SOCIAL_EXPORTS_DIR = os.path.join(OUTPUT_DIR, "social_exports")
+SCENE_VIDEOS_DIR = os.path.join(UPLOADS_DIR, "scene_videos")
+SCENE_VOCALS_DIR = os.path.join(UPLOADS_DIR, "scene_vocals")
+FULL_PROJECTS_DIR = os.path.join(OUTPUT_DIR, "full_projects")
 
 # Cost defaults
 COST_PER_VIDEO_GEN = 0.15
@@ -94,6 +99,9 @@ os.makedirs(STORYBOARD_DIR, exist_ok=True)
 os.makedirs(PREVIEWS_DIR, exist_ok=True)
 os.makedirs(AUDIO_TRACKS_DIR, exist_ok=True)
 os.makedirs(SOCIAL_EXPORTS_DIR, exist_ok=True)
+os.makedirs(SCENE_VIDEOS_DIR, exist_ok=True)
+os.makedirs(SCENE_VOCALS_DIR, exist_ok=True)
+os.makedirs(FULL_PROJECTS_DIR, exist_ok=True)
 
 # ---- Global generation state ----
 gen_state = {
@@ -424,6 +432,18 @@ def _run_manual_generate_scene(scene_id: str):
                 gen_state["running"] = False
             return
 
+        # If user uploaded a video, use it directly as the clip
+        video_path = scene.get("video_path", "")
+        if video_path and os.path.isfile(video_path):
+            scene["clip_path"] = video_path
+            scene["has_clip"] = True
+            plan["scenes"][scene_idx] = scene
+            _save_manual_plan(plan)
+            with gen_lock:
+                gen_state["phase"] = "done"
+                gen_state["running"] = False
+            return
+
         with gen_lock:
             gen_state["phase"] = "generating"
             gen_state["total_scenes"] = 1
@@ -436,9 +456,28 @@ def _run_manual_generate_scene(scene_id: str):
                 if gen_state["progress"]:
                     gen_state["progress"][0]["status"] = status
 
-        # Build the prompt - if there's a photo, add reference context
+        # Build the prompt - handle multi-photo compositing
         gen_prompt = scene["prompt"]
-        if scene.get("photo_path") and os.path.isfile(scene["photo_path"]):
+        photo_paths = scene.get("photo_paths", [])
+        valid_photos = [p for p in photo_paths if p and os.path.isfile(p)]
+
+        if len(valid_photos) > 1:
+            # Feature 5: Multiple photos - describe all and merge into prompt
+            try:
+                descriptions = []
+                for pp in valid_photos:
+                    desc = describe_photo(pp)
+                    descriptions.append(desc)
+                merged_desc = "Scene combining: " + " with ".join(descriptions)
+                if gen_prompt:
+                    gen_prompt = merged_desc + ", style: " + gen_prompt
+                else:
+                    gen_prompt = merged_desc
+            except Exception:
+                # Fall back to single photo behavior
+                if scene.get("photo_path") and os.path.isfile(scene["photo_path"]):
+                    gen_prompt += ", matching the reference image style"
+        elif scene.get("photo_path") and os.path.isfile(scene["photo_path"]):
             gen_prompt += ", matching the reference image style"
 
         gen_scene = {
@@ -557,8 +596,33 @@ def _run_manual_generate_all():
                     if _pi < len(gen_state["progress"]):
                         gen_state["progress"][_pi]["status"] = status
 
+            # If user uploaded a video, use it directly
+            video_path = scene.get("video_path", "")
+            if video_path and os.path.isfile(video_path):
+                scene["clip_path"] = video_path
+                scene["has_clip"] = True
+                on_progress(scene_idx, "using uploaded video")
+                plan["scenes"][scene_idx] = scene
+                _save_manual_plan(plan)
+                continue
+
+            # Build prompt with multi-photo compositing
             gen_prompt = scene["prompt"]
-            if scene.get("photo_path") and os.path.isfile(scene["photo_path"]):
+            photo_paths = scene.get("photo_paths", [])
+            valid_photos = [p for p in photo_paths if p and os.path.isfile(p)]
+
+            if len(valid_photos) > 1:
+                try:
+                    descriptions = []
+                    for pp in valid_photos:
+                        desc = describe_photo(pp)
+                        descriptions.append(desc)
+                    merged_desc = "Scene combining: " + " with ".join(descriptions)
+                    gen_prompt = merged_desc + (", style: " + gen_prompt if gen_prompt else "")
+                except Exception:
+                    if scene.get("photo_path") and os.path.isfile(scene["photo_path"]):
+                        gen_prompt += ", matching the reference image style"
+            elif scene.get("photo_path") and os.path.isfile(scene["photo_path"]):
                 gen_prompt += ", matching the reference image style"
 
             gen_scene = {
@@ -627,6 +691,30 @@ def _run_manual_stitch():
                color_grade=global_color_grade,
                scene_color_grades=scene_color_grades,
                audio_viz=audio_viz)
+
+        # Apply per-scene vocal overlays if any exist
+        vocal_entries = []
+        running_time = 0.0
+        for s in plan["scenes"]:
+            dur = s.get("duration", 8)
+            vp = s.get("vocal_path", "")
+            if vp and os.path.isfile(vp):
+                vocal_entries.append({
+                    "vocal_path": vp,
+                    "start_sec": running_time,
+                    "end_sec": running_time + dur,
+                    "volume": s.get("vocal_volume", 80),
+                })
+            running_time += dur
+
+        if vocal_entries and os.path.isfile(output_path):
+            temp_vocal_out = output_path + ".vocal_tmp.mp4"
+            try:
+                overlay_scene_vocals(output_path, temp_vocal_out, vocal_entries)
+                os.replace(temp_vocal_out, output_path)
+            except Exception:
+                if os.path.isfile(temp_vocal_out):
+                    os.remove(temp_vocal_out)
 
         plan["output_path"] = output_path
         _save_manual_plan(plan)
@@ -845,6 +933,9 @@ class Handler(BaseHTTPRequestHandler):
                 ".gif": "image/gif",
                 ".webp": "image/webp",
                 ".svg": "image/svg+xml",
+                ".webm": "video/webm",
+                ".mov": "video/quicktime",
+                ".zip": "application/zip",
             }.get(ext, "application/octet-stream")
         size = os.path.getsize(path)
         self.send_response(200)
@@ -1031,6 +1122,16 @@ class Handler(BaseHTTPRequestHandler):
                         })
             self._send_json({"exports": exports})
 
+        # Serve uploaded scene videos
+        elif path.startswith("/api/manual/scene-video/"):
+            scene_id = path[len("/api/manual/scene-video/"):]
+            self._handle_get_scene_video(scene_id)
+
+        # Serve full project zips
+        elif path.startswith("/api/full-projects/"):
+            fname = os.path.basename(path[len("/api/full-projects/"):])
+            self._send_file(os.path.join(FULL_PROJECTS_DIR, fname))
+
         else:
             self.send_error(404)
 
@@ -1174,6 +1275,28 @@ class Handler(BaseHTTPRequestHandler):
         # Feature 3: Beat-sync cuts
         elif path == "/api/beat-sync":
             self._handle_beat_sync()
+
+        # Feature: Video upload per scene
+        elif re.match(r'^/api/manual/scene/([^/]+)/video$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/video$', path)
+            self._handle_manual_upload_video(m.group(1))
+
+        # Feature: Auto beat alignment
+        elif path == "/api/auto-align-beats":
+            self._handle_auto_align_beats()
+
+        # Feature: Per-scene vocal upload
+        elif re.match(r'^/api/manual/scene/([^/]+)/vocal$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/vocal$', path)
+            self._handle_manual_upload_vocal(m.group(1))
+
+        # Feature: Save full project with clips
+        elif path == "/api/project/save-full":
+            self._handle_project_save_full()
+
+        # Feature: Load full project from zip
+        elif path == "/api/project/load-full":
+            self._handle_project_load_full()
 
         else:
             self.send_error(404)
@@ -1469,6 +1592,17 @@ class Handler(BaseHTTPRequestHandler):
                 if pp and os.path.isfile(pp):
                     entry["photo_urls"].append(f"/api/manual/scene-photo/{s['id']}?idx={pi}")
             entry["camera_movement"] = s.get("camera_movement", "zoom_in")
+            # Video upload info
+            video_path = s.get("video_path", "")
+            entry["has_video"] = bool(video_path and os.path.isfile(video_path))
+            if entry["has_video"]:
+                entry["video_url"] = f"/api/manual/scene-video/{s['id']}"
+            else:
+                entry["video_url"] = None
+            # Vocal upload info
+            vocal_path = s.get("vocal_path", "")
+            entry["has_vocal"] = bool(vocal_path and os.path.isfile(vocal_path))
+            entry["vocal_volume"] = s.get("vocal_volume", 80)
             scenes_out.append(entry)
         self._send_json({
             "scenes": scenes_out,
@@ -1496,6 +1630,9 @@ class Handler(BaseHTTPRequestHandler):
             "photo_paths": [],  # multi-photo mood board (up to 4)
             "clip_path": None,
             "has_clip": False,
+            "video_path": None,   # user-uploaded video clip
+            "vocal_path": None,   # per-scene voiceover audio
+            "vocal_volume": 80,   # voiceover volume 0-100
         }
 
         if "multipart/form-data" in content_type:
@@ -1563,6 +1700,8 @@ class Handler(BaseHTTPRequestHandler):
                     s["color_grade"] = params["color_grade"]
                 if "camera_movement" in params:
                     s["camera_movement"] = params["camera_movement"]
+                if "vocal_volume" in params:
+                    s["vocal_volume"] = params["vocal_volume"]
                 _save_manual_plan(plan)
                 self._send_json({"ok": True, "scene": s})
                 return
@@ -2324,7 +2463,15 @@ class Handler(BaseHTTPRequestHandler):
     # ---- Scene Split ----
 
     def _handle_manual_split_scene(self, scene_id: str):
-        """POST /api/manual/scene/:id/split - Split a manual scene into two halves."""
+        """POST /api/manual/scene/:id/split - Split a manual scene at a given percentage."""
+        body = self._read_body()
+        try:
+            params = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            params = {}
+        split_pct = float(params.get("split_pct", 0.5))
+        split_pct = max(0.05, min(0.95, split_pct))
+
         plan = _load_manual_plan()
         scene = None
         scene_idx = None
@@ -2339,15 +2486,19 @@ class Handler(BaseHTTPRequestHandler):
         new_id_a = str(_uuid.uuid4())[:8]
         new_id_b = str(_uuid.uuid4())[:8]
         orig_dur = scene.get("duration", 8)
-        half = max(2, round(orig_dur / 2))
-        scene_a = {"id": new_id_a, "prompt": scene.get("prompt", ""), "duration": half,
+        dur_a = max(2, round(orig_dur * split_pct))
+        dur_b = max(2, orig_dur - dur_a)
+        scene_a = {"id": new_id_a, "prompt": scene.get("prompt", ""), "duration": dur_a,
                     "transition": scene.get("transition", "crossfade"),
-                    "photo_path": scene.get("photo_path"), "clip_path": None, "has_clip": False}
-        scene_b = {"id": new_id_b, "prompt": scene.get("prompt", ""), "duration": orig_dur - half,
-                    "transition": "crossfade", "photo_path": None, "clip_path": None, "has_clip": False}
+                    "photo_path": scene.get("photo_path"), "clip_path": None, "has_clip": False,
+                    "video_path": None, "vocal_path": None, "vocal_volume": 80}
+        scene_b = {"id": new_id_b, "prompt": scene.get("prompt", ""), "duration": dur_b,
+                    "transition": "crossfade", "photo_path": None, "clip_path": None, "has_clip": False,
+                    "video_path": None, "vocal_path": None, "vocal_volume": 80}
         if scene.get("clip_path") and os.path.isfile(scene["clip_path"]):
             try:
-                p1, p2 = split_clip(scene["clip_path"], MANUAL_CLIPS_DIR, scene_id)
+                p1, p2 = split_clip(scene["clip_path"], MANUAL_CLIPS_DIR, scene_id,
+                                    split_pct=split_pct)
                 scene_a["clip_path"] = p1
                 scene_a["has_clip"] = True
                 scene_b["clip_path"] = p2
@@ -2839,6 +2990,370 @@ class Handler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             self._send_json({"error": f"Audio mixing failed: {e}"}, 500)
+
+    # ---- Feature: Scene Video Upload ----
+
+    def _handle_manual_upload_video(self, scene_id: str):
+        """Upload a user video clip for a manual scene (replaces generation)."""
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._send_json({"error": "Expected multipart/form-data"}, 400)
+            return
+
+        parts_ct = content_type.split("boundary=")
+        if len(parts_ct) < 2:
+            self._send_json({"error": "No boundary"}, 400)
+            return
+        boundary = parts_ct[1].strip().encode()
+        body = self._read_body()
+
+        # Check file size (max 100MB)
+        if len(body) > 105 * 1024 * 1024:
+            self._send_json({"error": "File too large. Maximum 100MB."}, 400)
+            return
+
+        parts = self._parse_multipart(body, boundary)
+
+        file_data = None
+        file_ext = ".mp4"
+        for part in parts:
+            if part["name"] == "video" or part["filename"]:
+                file_data = part["data"]
+                if part["filename"]:
+                    ext = os.path.splitext(part["filename"])[1].lower()
+                    if ext in (".mp4", ".webm", ".mov"):
+                        file_ext = ext
+                break
+
+        if file_data is None:
+            self._send_json({"error": "No video file found"}, 400)
+            return
+
+        plan = _load_manual_plan()
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                # Remove old video if exists
+                old_vid = s.get("video_path", "")
+                if old_vid and os.path.isfile(old_vid):
+                    os.remove(old_vid)
+
+                video_path = os.path.join(SCENE_VIDEOS_DIR, f"{scene_id}{file_ext}")
+                with open(video_path, "wb") as f:
+                    f.write(file_data)
+                s["video_path"] = video_path
+                # Also set as clip_path so it's used directly in stitch
+                s["clip_path"] = video_path
+                s["has_clip"] = True
+                _save_manual_plan(plan)
+                self._send_json({
+                    "ok": True,
+                    "video_url": f"/api/manual/scene-video/{scene_id}",
+                    "message": "Video uploaded - this clip IS the scene",
+                })
+                return
+
+        self._send_json({"error": "Scene not found"}, 404)
+
+    def _handle_get_scene_video(self, scene_id: str):
+        """Serve an uploaded scene video."""
+        plan = _load_manual_plan()
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                vp = s.get("video_path", "")
+                if vp and os.path.isfile(vp):
+                    self._send_file(vp)
+                    return
+        self.send_error(404, "Video not found")
+
+    # ---- Feature: Per-Scene Vocal Upload ----
+
+    def _handle_manual_upload_vocal(self, scene_id: str):
+        """Upload a voiceover audio clip for a manual scene."""
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._send_json({"error": "Expected multipart/form-data"}, 400)
+            return
+
+        parts_ct = content_type.split("boundary=")
+        if len(parts_ct) < 2:
+            self._send_json({"error": "No boundary"}, 400)
+            return
+        boundary = parts_ct[1].strip().encode()
+        body = self._read_body()
+        parts = self._parse_multipart(body, boundary)
+
+        file_data = None
+        file_ext = ".mp3"
+        volume = 80
+
+        for part in parts:
+            if part["name"] == "vocal" or (part["filename"] and part["name"] != "volume"):
+                file_data = part["data"]
+                if part["filename"]:
+                    ext = os.path.splitext(part["filename"])[1].lower()
+                    if ext in (".mp3", ".wav", ".m4a", ".ogg"):
+                        file_ext = ext
+            elif part["name"] == "volume":
+                try:
+                    volume = int(part["data"].decode().strip())
+                except (ValueError, UnicodeDecodeError):
+                    pass
+
+        if file_data is None:
+            self._send_json({"error": "No vocal file found"}, 400)
+            return
+
+        plan = _load_manual_plan()
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                # Remove old vocal if exists
+                old_voc = s.get("vocal_path", "")
+                if old_voc and os.path.isfile(old_voc):
+                    os.remove(old_voc)
+
+                vocal_path = os.path.join(SCENE_VOCALS_DIR, f"{scene_id}{file_ext}")
+                with open(vocal_path, "wb") as f:
+                    f.write(file_data)
+                s["vocal_path"] = vocal_path
+                s["vocal_volume"] = volume
+                _save_manual_plan(plan)
+                self._send_json({
+                    "ok": True,
+                    "message": "Voiceover uploaded",
+                    "vocal_volume": volume,
+                })
+                return
+
+        self._send_json({"error": "Scene not found"}, 404)
+
+    # ---- Feature: Auto Beat Alignment ----
+
+    def _handle_auto_align_beats(self):
+        """Align scene boundaries to beat timestamps."""
+        body = self._read_body()
+        try:
+            params = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            params = {}
+
+        target = params.get("target", "manual")
+
+        if target == "manual":
+            plan = _load_manual_plan()
+        else:
+            plan = _load_scene_plan()
+            if not plan:
+                self._send_json({"error": "No scene plan found"}, 404)
+                return
+
+        # Get beat timestamps
+        beats = params.get("beats", [])
+        if not beats:
+            # Try to analyze audio
+            song_path = plan.get("song_path")
+            if song_path and os.path.isfile(song_path):
+                try:
+                    analysis = analyze(song_path)
+                    beats = analysis.get("beats", [])
+                except Exception:
+                    pass
+
+        if not beats:
+            self._send_json({"error": "No beat data available. Upload and analyze audio first."}, 400)
+            return
+
+        scenes = plan.get("scenes", [])
+        if not scenes:
+            self._send_json({"error": "No scenes to align"}, 400)
+            return
+
+        aligned = align_scenes_to_beats(scenes, beats)
+        plan["scenes"] = aligned
+
+        if target == "manual":
+            _save_manual_plan(plan)
+        else:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
+
+        self._send_json({
+            "ok": True,
+            "message": f"Aligned {len(aligned)} scenes to {len(beats)} beats",
+            "scenes_aligned": len(aligned),
+            "beats_used": len(beats),
+        })
+
+    # ---- Feature: Save Full Project with Clips ----
+
+    def _handle_project_save_full(self):
+        """Create a zip file containing project.json + all clips, photos, and audio."""
+        plan = _load_manual_plan()
+        auto_plan = _load_scene_plan()
+        tracker = _load_cost_tracker()
+
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        zip_filename = f"project_full_{timestamp}.zip"
+        zip_path = os.path.join(FULL_PROJECTS_DIR, zip_filename)
+
+        project = {
+            "version": 2,
+            "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "manual_plan": plan,
+            "auto_plan": auto_plan,
+            "cost_tracker": tracker,
+        }
+
+        try:
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                # Write project metadata
+                zf.writestr("project.json", json.dumps(project, indent=2))
+
+                # Add clips
+                for s in plan.get("scenes", []):
+                    cp = s.get("clip_path", "")
+                    if cp and os.path.isfile(cp):
+                        arcname = f"clips/{os.path.basename(cp)}"
+                        zf.write(cp, arcname)
+                    # Add uploaded videos
+                    vp = s.get("video_path", "")
+                    if vp and os.path.isfile(vp):
+                        arcname = f"clips/{os.path.basename(vp)}"
+                        zf.write(vp, arcname)
+
+                # Add photos
+                for s in plan.get("scenes", []):
+                    pp = s.get("photo_path", "")
+                    if pp and os.path.isfile(pp):
+                        arcname = f"photos/{os.path.basename(pp)}"
+                        zf.write(pp, arcname)
+                    for pp in s.get("photo_paths", []):
+                        if pp and os.path.isfile(pp):
+                            arcname = f"photos/{os.path.basename(pp)}"
+                            zf.write(pp, arcname)
+
+                # Add vocals
+                for s in plan.get("scenes", []):
+                    voc = s.get("vocal_path", "")
+                    if voc and os.path.isfile(voc):
+                        arcname = f"vocals/{os.path.basename(voc)}"
+                        zf.write(voc, arcname)
+
+                # Add audio track
+                song_path = plan.get("song_path", "")
+                if song_path and os.path.isfile(song_path):
+                    zf.write(song_path, f"audio/{os.path.basename(song_path)}")
+
+            size_mb = os.path.getsize(zip_path) / (1024 * 1024)
+            self._send_json({
+                "ok": True,
+                "filename": zip_filename,
+                "url": f"/api/full-projects/{zip_filename}",
+                "size_mb": round(size_mb, 1),
+            })
+        except Exception as e:
+            self._send_json({"error": f"Failed to create project zip: {e}"}, 500)
+
+    def _handle_project_load_full(self):
+        """Load a full project from an uploaded zip file."""
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._send_json({"error": "Expected multipart/form-data"}, 400)
+            return
+
+        parts_ct = content_type.split("boundary=")
+        if len(parts_ct) < 2:
+            self._send_json({"error": "No boundary"}, 400)
+            return
+        boundary = parts_ct[1].strip().encode()
+        body = self._read_body()
+        parts = self._parse_multipart(body, boundary)
+
+        file_data = None
+        for part in parts:
+            if part["filename"] and part["filename"].endswith(".zip"):
+                file_data = part["data"]
+                break
+
+        if file_data is None:
+            self._send_json({"error": "No zip file found in upload"}, 400)
+            return
+
+        try:
+            import io
+            with zipfile.ZipFile(io.BytesIO(file_data), "r") as zf:
+                # Extract project.json
+                project_json = zf.read("project.json")
+                project = json.loads(project_json)
+
+                # Extract clips
+                for name in zf.namelist():
+                    if name.startswith("clips/") and not name.endswith("/"):
+                        dest = os.path.join(MANUAL_CLIPS_DIR, os.path.basename(name))
+                        with open(dest, "wb") as f:
+                            f.write(zf.read(name))
+                    elif name.startswith("photos/") and not name.endswith("/"):
+                        dest = os.path.join(SCENE_PHOTOS_DIR, os.path.basename(name))
+                        with open(dest, "wb") as f:
+                            f.write(zf.read(name))
+                    elif name.startswith("vocals/") and not name.endswith("/"):
+                        dest = os.path.join(SCENE_VOCALS_DIR, os.path.basename(name))
+                        with open(dest, "wb") as f:
+                            f.write(zf.read(name))
+                    elif name.startswith("audio/") and not name.endswith("/"):
+                        dest = os.path.join(UPLOADS_DIR, os.path.basename(name))
+                        with open(dest, "wb") as f:
+                            f.write(zf.read(name))
+
+                # Remap paths in the plan to local paths
+                plan = project.get("manual_plan", {})
+                for s in plan.get("scenes", []):
+                    cp = s.get("clip_path", "")
+                    if cp:
+                        local_cp = os.path.join(MANUAL_CLIPS_DIR, os.path.basename(cp))
+                        if os.path.isfile(local_cp):
+                            s["clip_path"] = local_cp
+                            s["has_clip"] = True
+                    vp = s.get("video_path", "")
+                    if vp:
+                        local_vp = os.path.join(MANUAL_CLIPS_DIR, os.path.basename(vp))
+                        if os.path.isfile(local_vp):
+                            s["video_path"] = local_vp
+                    pp = s.get("photo_path", "")
+                    if pp:
+                        local_pp = os.path.join(SCENE_PHOTOS_DIR, os.path.basename(pp))
+                        if os.path.isfile(local_pp):
+                            s["photo_path"] = local_pp
+                    new_ppaths = []
+                    for pp in s.get("photo_paths", []):
+                        if pp:
+                            local_pp = os.path.join(SCENE_PHOTOS_DIR, os.path.basename(pp))
+                            if os.path.isfile(local_pp):
+                                new_ppaths.append(local_pp)
+                    s["photo_paths"] = new_ppaths
+                    voc = s.get("vocal_path", "")
+                    if voc:
+                        local_voc = os.path.join(SCENE_VOCALS_DIR, os.path.basename(voc))
+                        if os.path.isfile(local_voc):
+                            s["vocal_path"] = local_voc
+
+                song = plan.get("song_path", "")
+                if song:
+                    local_song = os.path.join(UPLOADS_DIR, os.path.basename(song))
+                    if os.path.isfile(local_song):
+                        plan["song_path"] = local_song
+
+                _save_manual_plan(plan)
+
+                if project.get("auto_plan"):
+                    with open(SCENE_PLAN_PATH, "w") as f:
+                        json.dump(project["auto_plan"], f, indent=2)
+
+                if project.get("cost_tracker"):
+                    _save_cost_tracker(project["cost_tracker"])
+
+            self._send_json({"ok": True, "message": "Full project loaded with clips"})
+        except Exception as e:
+            self._send_json({"error": f"Failed to load project zip: {e}"}, 500)
 
     # ---- Feature 10: Social platform export ----
 
