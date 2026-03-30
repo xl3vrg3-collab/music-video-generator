@@ -453,14 +453,15 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
     return task_id
 
 
-def _runway_poll(task_id: str) -> dict:
+def _runway_poll(task_id: str, progress_cb=None) -> dict:
     """
     Poll Runway task until SUCCEEDED or FAILED.
-
-    Returns:
-        dict with video output URL
+    Reports progress with elapsed time.
     """
     deadline = time.time() + RUNWAY_POLL_TIMEOUT
+    start_time = time.time()
+    poll_count = 0
+
     while time.time() < deadline:
         resp = requests.get(
             f"{RUNWAY_API_BASE}/tasks/{task_id}",
@@ -470,7 +471,20 @@ def _runway_poll(task_id: str) -> dict:
         resp.raise_for_status()
         data = resp.json()
         status = data.get("status", "")
-        print(f"[RUNWAY] Poll {task_id[:12]}... status={status}")
+        elapsed = int(time.time() - start_time)
+        poll_count += 1
+        progress_pct = data.get("progress", None)
+
+        # Build status message with timing
+        if progress_pct is not None:
+            status_msg = f"rendering {int(progress_pct * 100)}% ({elapsed}s elapsed)"
+        else:
+            status_msg = f"rendering... ({elapsed}s elapsed)"
+
+        print(f"[RUNWAY] Poll {task_id[:12]}... status={status} elapsed={elapsed}s")
+
+        if progress_cb:
+            progress_cb(status_msg)
 
         if status == "SUCCEEDED":
             output = data.get("output", [])
@@ -479,11 +493,12 @@ def _runway_poll(task_id: str) -> dict:
                     f"Runway task succeeded but no output URL found: "
                     f"{json.dumps(data)[:500]}"
                 )
+            print(f"[RUNWAY] Completed in {elapsed}s after {poll_count} polls")
             return {"url": output[0], "task_id": task_id}
         elif status == "FAILED":
+            failure = data.get("failure", "unknown reason")
             raise RuntimeError(
-                f"Runway generation failed (task={task_id}): "
-                f"{json.dumps(data)[:500]}"
+                f"Runway generation failed: {failure} (task={task_id})"
             )
 
         time.sleep(RUNWAY_POLL_INTERVAL)
@@ -553,7 +568,7 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
             )
 
         _report(f"polling Runway (task={task_id[:12]}...)")
-        video_info = _runway_poll(task_id)
+        video_info = _runway_poll(task_id, progress_cb=lambda msg: _report(msg))
         _report("downloading Runway video...")
         _download(video_info["url"], clip_path)
 
@@ -813,9 +828,10 @@ def _submit_video(prompt: str) -> str:
     return data["request_id"]
 
 
-def _poll_video(request_id: str) -> dict:
+def _poll_video(request_id: str, progress_cb=None) -> dict:
     """Poll until video is done. Returns {url, duration}."""
     deadline = time.time() + POLL_TIMEOUT
+    start_time = time.time()
     while time.time() < deadline:
         resp = requests.get(
             f"{API_BASE}/videos/{request_id}",
@@ -825,7 +841,11 @@ def _poll_video(request_id: str) -> dict:
         resp.raise_for_status()
         data = resp.json()
         status = data.get("status", "")
+        elapsed = int(time.time() - start_time)
+        if progress_cb:
+            progress_cb(f"rendering... ({elapsed}s elapsed)")
         if status == "done":
+            print(f"[GROK] Video completed in {elapsed}s")
             return data["video"]
         elif status in ("failed", "error"):
             raise RuntimeError(f"Video generation failed: {data}")
@@ -1119,7 +1139,7 @@ def _grok_generate_scene(scene: dict, output_dir: str, index: int,
             _report(f"submitting video request (attempt {attempt + 1})...")
             request_id = _submit_video(unique_prompt)
             _report(f"polling (id={request_id[:12]}...)")
-            video_info = _poll_video(request_id)
+            video_info = _poll_video(request_id, progress_cb=lambda msg: _report(msg))
             _report("downloading clip...")
             _download(video_info["url"], clip_path)
             _record("video")
