@@ -727,8 +727,6 @@ def _resolve_character_references(prompt: str, char_refs: dict = None) -> tuple:
     """
     Scan prompt for character reference names and return (matched_name, photo_path).
     Returns the first matched character reference, or (None, None).
-
-    Used to auto-attach a keyframe image when a prompt mentions a character name.
     """
     if char_refs is None:
         char_refs = _get_character_references()
@@ -739,6 +737,49 @@ def _resolve_character_references(prompt: str, char_refs: dict = None) -> tuple:
             return name, path
 
     return None, None
+
+
+# Cache for character descriptions so we don't re-describe every generation
+_char_description_cache = {}
+
+def enhance_prompt_with_references(prompt: str, char_refs: dict = None) -> str:
+    """
+    If prompt mentions a character reference name, describe the character
+    and inject the description into the prompt. This makes Grok video gen
+    understand what the character looks like even without an image input.
+    """
+    if char_refs is None:
+        char_refs = _get_character_references()
+
+    prompt_lower = prompt.lower()
+    enhanced = prompt
+
+    for name, path in char_refs.items():
+        if name.lower() in prompt_lower and os.path.isfile(path):
+            # Check cache first
+            if name in _char_description_cache:
+                desc = _char_description_cache[name]
+            else:
+                # Try to describe the photo using Grok vision
+                try:
+                    desc = describe_photo(path)
+                    _char_description_cache[name] = desc
+                    print(f"[CHAR_REF] Described '{name}': {desc[:80]}...")
+                except Exception as e:
+                    desc = name  # fallback to just the name
+                    print(f"[CHAR_REF] Could not describe '{name}': {e}")
+
+            # Replace the character name with the description
+            import re
+            enhanced = re.sub(
+                re.escape(name),
+                f"{name} ({desc})",
+                enhanced,
+                flags=re.IGNORECASE,
+                count=1
+            )
+
+    return enhanced
 
 
 def _subprocess_kwargs() -> dict:
@@ -1055,38 +1096,38 @@ def _grok_generate_scene(scene: dict, output_dir: str, index: int,
             cost_cb(str(scene.get("id", index)), gen_type)
 
     # ALWAYS try real video first (real motion is what users want)
-    # Photo pipeline (style transfer + Ken Burns) is only used via "Generate from Photo" button
-    # If photo exists, enhance the prompt with photo context for better video generation
+    # Enhance prompt with character reference descriptions if any match
+    gen_prompt = enhance_prompt_with_references(gen_prompt)
+
     if has_photo:
-        gen_prompt = f"{gen_prompt}, maintaining the visual style and subjects from the reference image"
-        print(f"[GROK][{index}] Photo exists but using VIDEO gen (not Ken Burns). Enhanced prompt.")
+        print(f"[GROK][{index}] Photo exists — using VIDEO gen (not Ken Burns). Photo ignored for Grok video.")
 
-    # Try video generation first (real motion)
-    try:
-        _report("submitting video request...")
-        request_id = _submit_video(gen_prompt)
-        _report(f"polling (id={request_id[:12]}...)")
-        video_info = _poll_video(request_id)
-        _report("downloading clip...")
-        _download(video_info["url"], clip_path)
-        _record("video")
-        _report("done")
-        return clip_path
-    except Exception as e:
-        _report(f"video failed ({e}), falling back to image...")
+    # Add uniqueness to prevent identical videos from identical prompts
+    import random
+    unique_seed = random.randint(1000, 9999)
+    unique_prompt = f"{gen_prompt} [scene {index + 1}, variation {unique_seed}]"
 
-    # Fallback: image + Ken Burns with camera preset
-    try:
-        img_url = _generate_image(gen_prompt)
-        img_path = os.path.join(output_dir, f"img_{index:03d}.png")
-        _download(img_url, img_path)
-        _ken_burns(img_path, clip_path, duration, camera=camera)
-        _record("image")
-        _report("done (image fallback)")
-        return clip_path
-    except Exception as e2:
-        _report(f"image fallback also failed: {e2}")
-        raise RuntimeError(f"Scene {index} generation failed entirely: {e2}") from e2
+    # VIDEO ONLY — no image/Ken Burns fallback
+    max_retries = 2
+    for attempt in range(max_retries):
+        try:
+            _report(f"submitting video request (attempt {attempt + 1})...")
+            request_id = _submit_video(unique_prompt)
+            _report(f"polling (id={request_id[:12]}...)")
+            video_info = _poll_video(request_id)
+            _report("downloading clip...")
+            _download(video_info["url"], clip_path)
+            _record("video")
+            _report("done")
+            return clip_path
+        except Exception as e:
+            if attempt < max_retries - 1:
+                _report(f"attempt {attempt + 1} failed ({e}), retrying with different seed...")
+                unique_seed = random.randint(1000, 9999)
+                unique_prompt = f"{gen_prompt} [scene {index + 1}, take {unique_seed}]"
+            else:
+                _report(f"video generation failed after {max_retries} attempts: {e}")
+                raise RuntimeError(f"Scene {index} video generation failed: {e}") from e
 
 
 def generate_from_photo(photo_path: str, prompt: str, duration: float,
