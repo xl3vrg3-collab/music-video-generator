@@ -1514,10 +1514,26 @@
           <div class="stitch-setting-group">
             <span class="msc-label">Default Engine:</span>
             <select class="styled-select" id="globalEngineSelect" onchange="window._updateGlobalEngine(this.value)">
-              <option value="grok">Grok (xAI)</option>
-              <option value="luma">Luma Ray2</option>
-              <option value="openai">OpenAI GPT</option>
-              <option value="runway">Runway Gen-3</option>
+              <optgroup label="─── xAI ───">
+                <option value="grok">Grok Video [$0.15, 30s]</option>
+              </optgroup>
+              <optgroup label="─── Runway ───">
+                <option value="gen4_5">Gen 4.5 (Best) 📸 [$0.10/5s, 3-4m]</option>
+                <option value="gen3a_turbo">Gen 3 Turbo (Fast) 📸 [$0.05/5s, 1-2m]</option>
+              </optgroup>
+              <optgroup label="─── Kling (via Runway) ───">
+                <option value="kling_pro">Kling 3.0 Pro 📸 [$0.08/5s, 2-3m]</option>
+                <option value="kling_standard">Kling 3.0 Standard 📸 [$0.04/5s, 1-2m]</option>
+              </optgroup>
+              <optgroup label="─── Google Veo (via Runway) ───">
+                <option value="veo3">Veo 3 📸 [$0.15/5s, 3-5m]</option>
+                <option value="veo3_1">Veo 3.1 (Latest) 📸 [$0.15/5s, 3-5m]</option>
+                <option value="veo3_1_fast">Veo 3.1 Fast 📸 [$0.08/5s, 1-2m]</option>
+              </optgroup>
+              <optgroup label="─── Other ───">
+                <option value="luma">Luma Ray2 📸 [$0.50/5s, 45s]</option>
+                <option value="openai">OpenAI GPT (Still Only) [$0.04, 10s]</option>
+              </optgroup>
             </select>
           </div>
           <div class="stitch-setting-group">
@@ -2413,8 +2429,39 @@
   const OVERLAY_SIZES = ['small','medium','large'];
   const OVERLAY_COLORS = ['white','cyan','orange'];
   const CAMERA_PRESETS = ['static','pan_left','pan_right','zoom_in','zoom_out','orbit','tracking'];
-  const ENGINE_LABELS = { grok: 'Grok', luma: 'Luma Ray2', openai: 'OpenAI GPT', runway: 'Runway Gen-3' };
-  const ENGINE_COLORS = { grok: 'var(--cyan)', luma: 'var(--magenta)', openai: 'var(--green)', runway: '#d4a017' };
+  const ENGINE_LABELS = {
+    grok:'Grok Video', luma:'Luma Ray2', openai:'OpenAI GPT', runway:'Runway Gen 4.5',
+    gen3a_turbo:'Gen 3 Turbo', gen4_5:'Gen 4.5', kling_pro:'Kling 3.0 Pro',
+    kling_standard:'Kling 3.0 Std', veo3:'Veo 3', veo3_1:'Veo 3.1', veo3_1_fast:'Veo 3.1 Fast',
+  };
+  const ENGINE_COLORS = {
+    grok:'var(--cyan)', luma:'var(--magenta)', openai:'var(--green)',
+    runway:'#d4a017', gen3a_turbo:'#d4a017', gen4_5:'#d4a017',
+    kling_pro:'#e06030', kling_standard:'#e06030',
+    veo3:'#4285f4', veo3_1:'#4285f4', veo3_1_fast:'#4285f4',
+  };
+  const ENGINE_GROUPS = [
+    { group:'─── xAI ───', models:[
+      {id:'grok', label:'Grok Video', cost:'$0.15', photo:false, speed:'30s'},
+    ]},
+    { group:'─── Runway ───', models:[
+      {id:'gen4_5', label:'Gen 4.5 (Best Quality)', cost:'$0.10/5s', photo:true, speed:'3-4m'},
+      {id:'gen3a_turbo', label:'Gen 3 Turbo (Fast)', cost:'$0.05/5s', photo:true, speed:'1-2m'},
+    ]},
+    { group:'─── Kling (via Runway) ───', models:[
+      {id:'kling_pro', label:'Kling 3.0 Pro', cost:'$0.08/5s', photo:true, speed:'2-3m'},
+      {id:'kling_standard', label:'Kling 3.0 Standard', cost:'$0.04/5s', photo:true, speed:'1-2m'},
+    ]},
+    { group:'─── Google Veo (via Runway) ───', models:[
+      {id:'veo3', label:'Veo 3', cost:'$0.15/5s', photo:true, speed:'3-5m'},
+      {id:'veo3_1', label:'Veo 3.1 (Latest)', cost:'$0.15/5s', photo:true, speed:'3-5m'},
+      {id:'veo3_1_fast', label:'Veo 3.1 Fast', cost:'$0.08/5s', photo:true, speed:'1-2m'},
+    ]},
+    { group:'─── Other ───', models:[
+      {id:'luma', label:'Luma Ray2', cost:'$0.50/5s', photo:true, speed:'45s'},
+      {id:'openai', label:'OpenAI GPT (Still Only)', cost:'$0.04', photo:true, speed:'10s'},
+    ]},
+  ];
   const CAMERA_ICONS = { static: '&#9632;', pan_left: '&#8592;', pan_right: '&#8594;', zoom_in: '&#8853;', zoom_out: '&#8854;', orbit: '&#10227;', tracking: '&#10132;' };
 
   // ---- Manual audio upload ----
@@ -2536,14 +2583,17 @@
 
       const sceneEngine = s.engine || '';
       const effectiveEngine = sceneEngine || globalSettings.default_engine || 'grok';
-      const engineOptions = [
-        `<option value="" ${sceneEngine === '' ? 'selected' : ''}>Default (${ENGINE_LABELS[globalSettings.default_engine] || globalSettings.default_engine})</option>`,
-        ...availableEngines.map(eng => {
-          const sel = (eng.id === sceneEngine) ? 'selected' : '';
-          const avail = eng.available ? '' : ' [no key]';
-          return `<option value="${eng.id}" ${sel}>${ENGINE_LABELS[eng.id] || eng.id}${avail}</option>`;
-        })
-      ].join('');
+      // Build grouped engine dropdown with optgroup headers
+      let engineOptions = `<option value="" ${sceneEngine === '' ? 'selected' : ''}>Default (${ENGINE_LABELS[globalSettings.default_engine] || globalSettings.default_engine})</option>`;
+      ENGINE_GROUPS.forEach(grp => {
+        engineOptions += `<optgroup label="${grp.group}">`;
+        grp.models.forEach(m => {
+          const sel = (m.id === sceneEngine) ? 'selected' : '';
+          const photoTag = m.photo ? '📸' : '';
+          engineOptions += `<option value="${m.id}" ${sel}>${m.label} ${photoTag} [${m.cost}, ${m.speed}]</option>`;
+        });
+        engineOptions += `</optgroup>`;
+      });
 
       const photoHtml = hasPhoto
         ? `<img src="${s.photo_url}?t=${Date.now()}" alt="Scene photo">`

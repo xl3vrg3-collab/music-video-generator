@@ -525,17 +525,20 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
 
     # Get the specific model — scene can override the engine with a model name
     runway_model = scene.get("runway_model", scene.get("engine", "gen4.5"))
-    # Map friendly engine names to Runway model IDs
+    # Map UI dropdown IDs (underscores) to Runway API model IDs (dots)
     MODEL_MAP = {
         "runway": "gen4.5",
-        "gen4.5": "gen4.5",
+        "gen4_5": "gen4.5",         # UI uses underscores
+        "gen4.5": "gen4.5",         # API uses dots
         "gen3a_turbo": "gen3a_turbo",
         "kling_pro": "kling3.0_pro",
         "kling3.0_pro": "kling3.0_pro",
         "kling_standard": "kling3.0_standard",
         "kling3.0_standard": "kling3.0_standard",
         "veo3": "veo3",
+        "veo3_1": "veo3.1",          # UI uses underscores
         "veo3.1": "veo3.1",
+        "veo3_1_fast": "veo3.1_fast", # UI uses underscores
         "veo3.1_fast": "veo3.1_fast",
     }
     model = MODEL_MAP.get(runway_model, "gen4.5")
@@ -1072,6 +1075,14 @@ def generate_scene(scene: dict, index: int, output_dir: str,
     print(f"[generate_scene] index={index}, engine={engine}, "
           f"prompt={scene.get('prompt', '')[:80]}..., photo={photo_path}")
 
+    # All Runway-hosted models (use underscore versions from UI dropdown)
+    RUNWAY_ENGINES = {
+        "runway", "gen4_5", "gen3a_turbo", "kling_pro", "kling_standard",
+        "veo3", "veo3_1", "veo3_1_fast",
+        # Also accept dot-separated versions from the API
+        "gen4.5", "kling3.0_pro", "kling3.0_standard", "veo3.1", "veo3.1_fast",
+    }
+
     # Dispatch to engine
     if engine == ENGINE_LUMA:
         return _luma_generate_scene(
@@ -1081,7 +1092,9 @@ def generate_scene(scene: dict, index: int, output_dir: str,
         return _openai_generate_scene(
             scene, output_dir, index, progress_cb, cost_cb, photo_path
         )
-    elif engine == ENGINE_RUNWAY:
+    elif engine in RUNWAY_ENGINES or engine == ENGINE_RUNWAY:
+        # Map UI engine IDs to Runway model names
+        scene["runway_model"] = engine  # _runway_generate_scene will map this
         return _runway_generate_scene(
             scene, output_dir, index, progress_cb, cost_cb, photo_path
         )
