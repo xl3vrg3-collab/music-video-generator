@@ -48,7 +48,7 @@ except ImportError:
     pass
 
 from lib.audio_analyzer import analyze
-from lib.scene_planner import plan_scenes, TRANSITION_TYPES
+from lib.scene_planner import plan_scenes, TRANSITION_TYPES, coherence_pass
 from lib.video_generator import (
     generate_scene, generate_all, generate_from_photo,
     describe_photo, CAMERA_PRESETS, CAMERA_PROMPT_SUFFIXES,
@@ -63,10 +63,13 @@ from lib.video_stitcher import (
     generate_credits, apply_watermark, extract_thumbnail,
     mix_audio_tracks, export_for_platform, apply_beat_sync_cuts,
     align_scenes_to_beats, overlay_scene_vocals, add_beat_cuts_to_stitch,
+    _apply_speed_ramp, _apply_reverse, apply_audio_crossfade, SPEED_RAMP_TYPES,
+    apply_loop_boomerang, apply_audio_ducking, export_gif,
 )
 from lib.prompt_assistant import (
     STYLE_PRESETS, get_preset, enhance_prompt, suggest_from_song_name,
     get_preset_names, suggest_style, suggest_genre_from_bpm,
+    extract_palette,
 )
 from lib.storyboard_generator import generate_storyboard
 
@@ -93,6 +96,19 @@ SCENE_VIDEOS_DIR = os.path.join(UPLOADS_DIR, "scene_videos")
 SCENE_VOCALS_DIR = os.path.join(UPLOADS_DIR, "scene_vocals")
 FULL_PROJECTS_DIR = os.path.join(OUTPUT_DIR, "full_projects")
 SETTINGS_PATH = os.path.join(OUTPUT_DIR, "settings.json")
+PROMPT_HISTORY_PATH = os.path.join(OUTPUT_DIR, "prompt_history.json")
+AUTOSAVE_PATH = os.path.join(OUTPUT_DIR, "autosave.json")
+TEMPLATES_DIR = os.path.join(OUTPUT_DIR, "templates")
+GIFS_DIR = os.path.join(OUTPUT_DIR, "gifs")
+
+# Render time estimation constants (seconds per clip by engine)
+RENDER_TIME_ESTIMATES = {
+    "grok": 30,
+    "runway": 60,
+    "luma": 45,
+    "openai": 50,
+}
+STITCH_TIME_PER_CLIP = 5
 
 # Cost defaults
 COST_PER_VIDEO_GEN = 0.15
@@ -113,6 +129,8 @@ os.makedirs(SOCIAL_EXPORTS_DIR, exist_ok=True)
 os.makedirs(SCENE_VIDEOS_DIR, exist_ok=True)
 os.makedirs(SCENE_VOCALS_DIR, exist_ok=True)
 os.makedirs(FULL_PROJECTS_DIR, exist_ok=True)
+os.makedirs(TEMPLATES_DIR, exist_ok=True)
+os.makedirs(GIFS_DIR, exist_ok=True)
 
 # ---- Global generation state ----
 gen_state = {
@@ -153,6 +171,37 @@ def _get_references() -> dict:
                 name = os.path.splitext(fname)[0]
                 refs[name] = fpath
     return refs
+
+
+def _record_prompt_history(prompt: str, scene_index: int = -1):
+    """Record a prompt to the prompt history file."""
+    if not prompt:
+        return
+    if os.path.isfile(PROMPT_HISTORY_PATH):
+        try:
+            with open(PROMPT_HISTORY_PATH, "r") as f:
+                history = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            history = {"prompts": []}
+    else:
+        history = {"prompts": []}
+
+    # Avoid duplicate consecutive entries
+    if history["prompts"] and history["prompts"][0].get("prompt") == prompt:
+        return
+
+    history["prompts"].insert(0, {
+        "prompt": prompt,
+        "starred": False,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "scene_index": scene_index,
+    })
+
+    # Keep last 100 entries
+    history["prompts"] = history["prompts"][:100]
+
+    with open(PROMPT_HISTORY_PATH, "w") as f:
+        json.dump(history, f, indent=2)
 
 
 def _save_scene_plan(scenes, clip_paths, song_path, output_path):
@@ -215,6 +264,10 @@ def _run_generation(song_path: str, style: str):
                     gen_state["progress"][index]["status"] = status
 
         clip_paths = generate_all(scenes, CLIPS_DIR, progress_cb=on_progress, cost_cb=_record_cost)
+
+        # Record prompts to history
+        for i, scene in enumerate(scenes):
+            _record_prompt_history(scene.get("prompt", ""), scene_index=i)
 
         valid = [c for c in clip_paths if c]
         if not valid:
@@ -461,6 +514,11 @@ def _run_manual_generate_scene(scene_id: str):
                 gen_state["error"] = f"Scene {scene_id} not found"
                 gen_state["running"] = False
             return
+
+        # Item 46: Track previous clip for comparison
+        old_clip = scene.get("clip_path", "")
+        if old_clip and os.path.isfile(old_clip):
+            scene["previous_clip_path"] = old_clip
 
         # If user uploaded a video, use it directly as the clip
         video_path = scene.get("video_path", "")
@@ -743,6 +801,9 @@ def _run_manual_stitch():
         scene_color_grades = [s.get("color_grade") for s in plan["scenes"]]
         global_color_grade = plan.get("color_grade", "none")
         audio_viz = plan.get("audio_viz")
+        speed_ramps = [s.get("speed_ramp", "none") for s in plan["scenes"]]
+        reversed_clips = [s.get("reversed", False) for s in plan["scenes"]]
+        audio_crossfade_dur = plan.get("audio_crossfade", 0.0)
 
         stitch(clip_paths, audio, output_path,
                transitions=transitions,
@@ -750,7 +811,10 @@ def _run_manual_stitch():
                text_overlays=text_overlays,
                color_grade=global_color_grade,
                scene_color_grades=scene_color_grades,
-               audio_viz=audio_viz)
+               audio_viz=audio_viz,
+               speed_ramps=speed_ramps,
+               reversed_clips=reversed_clips,
+               audio_crossfade=audio_crossfade_dur)
 
         # Apply per-scene vocal overlays if any exist
         vocal_entries = []
@@ -775,6 +839,25 @@ def _run_manual_stitch():
             except Exception:
                 if os.path.isfile(temp_vocal_out):
                     os.remove(temp_vocal_out)
+
+        # Item 20: Auto-duck audio when vocals exist
+        auto_duck = plan.get("auto_duck", False)
+        if auto_duck and vocal_entries and os.path.isfile(output_path):
+            duck_level = plan.get("duck_level", 0.3)
+            duck_segments = []
+            for ve in vocal_entries:
+                duck_segments.append({
+                    "start_sec": ve["start_sec"],
+                    "end_sec": ve["end_sec"],
+                })
+            if duck_segments:
+                temp_duck_out = output_path + ".duck_tmp.mp4"
+                try:
+                    apply_audio_ducking(output_path, temp_duck_out, duck_segments, duck_level)
+                    os.replace(temp_duck_out, output_path)
+                except Exception:
+                    if os.path.isfile(temp_duck_out):
+                        os.remove(temp_duck_out)
 
         plan["output_path"] = output_path
         _save_manual_plan(plan)
@@ -1190,6 +1273,15 @@ class Handler(BaseHTTPRequestHandler):
             settings = _load_settings()
             self._send_json(settings)
 
+        elif path == "/api/prompt-history":
+            self._handle_get_prompt_history()
+
+        elif path == "/api/render-estimate":
+            self._handle_render_estimate(parsed)
+
+        elif path == "/api/project/autosave":
+            self._handle_get_autosave()
+
         elif path == "/api/character-references":
             char_refs = _get_character_references()
             items = []
@@ -1211,6 +1303,39 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/api/full-projects/"):
             fname = os.path.basename(path[len("/api/full-projects/"):])
             self._send_file(os.path.join(FULL_PROJECTS_DIR, fname))
+
+        # Item 9: Color palette extraction
+        elif re.match(r'^/api/manual/scene/([^/]+)/palette$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/palette$', path)
+            self._handle_get_palette(m.group(1))
+
+        # Item 34: Serve exported GIFs
+        elif path.startswith("/api/gifs/"):
+            fname = os.path.basename(path[len("/api/gifs/"):])
+            self._send_file(os.path.join(GIFS_DIR, fname))
+
+        # Item 42: Template library - list templates
+        elif path == "/api/templates":
+            self._handle_list_templates()
+
+        # Item 46: Project comparison - get previous clip for a scene
+        elif re.match(r'^/api/manual/scene/([^/]+)/previous-clip$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/previous-clip$', path)
+            self._handle_get_previous_clip(m.group(1))
+
+        elif path == "/api/prompt-history":
+            self._handle_prompt_history()
+
+        elif path == "/api/project/autosave":
+            autosave_path = os.path.join(OUTPUT_DIR, "autosave.json")
+            if os.path.isfile(autosave_path):
+                self._send_file(autosave_path, "application/json")
+            else:
+                self._send_json({"exists": False})
+
+        elif path.startswith("/output/gifs/"):
+            filename = os.path.basename(path)
+            self._send_file(os.path.join(OUTPUT_DIR, "gifs", filename), "image/gif")
 
         else:
             self.send_error(404)
@@ -1378,6 +1503,14 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/character-references":
             self._handle_update_character_references()
 
+        # Prompt history star
+        elif path == "/api/prompt-history/star":
+            self._handle_star_prompt()
+
+        # Autosave
+        elif path == "/api/project/autosave":
+            self._handle_autosave()
+
         # Feature: Save full project with clips
         elif path == "/api/project/save-full":
             self._handle_project_save_full()
@@ -1385,6 +1518,67 @@ class Handler(BaseHTTPRequestHandler):
         # Feature: Load full project from zip
         elif path == "/api/project/load-full":
             self._handle_project_load_full()
+
+        # Item 18: Loop / boomerang effect
+        elif re.match(r'^/api/manual/scene/([^/]+)/boomerang$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/boomerang$', path)
+            self._handle_boomerang(m.group(1))
+
+        # Item 20: Audio ducking
+        elif path == "/api/audio-ducking":
+            self._handle_audio_ducking()
+
+        # Item 34: GIF export per scene
+        elif re.match(r'^/api/manual/scene/([^/]+)/export-gif$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/export-gif$', path)
+            self._handle_export_gif(m.group(1))
+
+        # Item 34: Export best GIFs
+        elif path == "/api/export-best-gifs":
+            self._handle_export_best_gifs()
+
+        # Item 42: Template library - save and load
+        elif path == "/api/templates/save":
+            self._handle_save_template()
+
+        elif path == "/api/templates/load":
+            self._handle_load_template()
+
+        # Item 44: AI assistant suggestions
+        elif path == "/api/suggest-prompt":
+            self._handle_suggest_prompt()
+
+        # Roadmap: Reverse clip
+        elif re.match(r'^/api/manual/scene/([^/]+)/reverse$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/reverse$', path)
+            self._handle_reverse_clip(m.group(1))
+
+        # Roadmap: Boomerang clip
+        elif re.match(r'^/api/manual/scene/([^/]+)/boomerang$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/boomerang$', path)
+            self._handle_boomerang_clip(m.group(1))
+
+        # Roadmap: Export GIF
+        elif re.match(r'^/api/manual/scene/([^/]+)/export-gif$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/export-gif$', path)
+            self._handle_export_gif(m.group(1))
+
+        # Roadmap: Color palette from photo
+        elif re.match(r'^/api/manual/scene/([^/]+)/palette$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/palette$', path)
+            self._handle_get_palette(m.group(1))
+
+        # Roadmap: Prompt history
+        elif path == "/api/prompt-history":
+            self._handle_prompt_history()
+
+        # Roadmap: Star a prompt
+        elif path == "/api/prompt-history/star":
+            self._handle_star_prompt()
+
+        # Roadmap: Auto-save
+        elif path == "/api/project/autosave":
+            self._handle_autosave()
 
         else:
             self.send_error(404)
@@ -1692,6 +1886,15 @@ class Handler(BaseHTTPRequestHandler):
             vocal_path = s.get("vocal_path", "")
             entry["has_vocal"] = bool(vocal_path and os.path.isfile(vocal_path))
             entry["vocal_volume"] = s.get("vocal_volume", 80)
+            # Item 18: Loop/boomerang state
+            entry["loop"] = s.get("loop", False)
+            # Item 46: Previous clip for comparison
+            prev_clip = s.get("previous_clip_path", "")
+            entry["has_previous_clip"] = bool(prev_clip and os.path.isfile(prev_clip))
+            if entry["has_previous_clip"]:
+                entry["previous_clip_url"] = f"/api/clips/{os.path.basename(prev_clip)}"
+            else:
+                entry["previous_clip_url"] = None
             scenes_out.append(entry)
         self._send_json({
             "scenes": scenes_out,
@@ -1699,6 +1902,7 @@ class Handler(BaseHTTPRequestHandler):
             "color_grade": plan.get("color_grade", "none"),
             "audio_viz": plan.get("audio_viz"),
             "style_lock": plan.get("style_lock", ""),
+            "audio_crossfade": plan.get("audio_crossfade", 0.0),
         })
 
     def _handle_manual_create_scene(self):
@@ -1723,6 +1927,8 @@ class Handler(BaseHTTPRequestHandler):
             "video_path": None,   # user-uploaded video clip
             "vocal_path": None,   # per-scene voiceover audio
             "vocal_volume": 80,   # voiceover volume 0-100
+            "loop": False,        # boomerang effect
+            "previous_clip_path": None,  # for comparison view
         }
 
         if "multipart/form-data" in content_type:
@@ -1798,6 +2004,14 @@ class Handler(BaseHTTPRequestHandler):
                     engine_val = params["engine"]
                     if engine_val in SUPPORTED_ENGINES or engine_val == "":
                         s["engine"] = engine_val
+                if "reversed" in params:
+                    s["reversed"] = bool(params["reversed"])
+                if "speed_ramp" in params:
+                    ramp = params["speed_ramp"]
+                    if ramp in SPEED_RAMP_TYPES:
+                        s["speed_ramp"] = ramp
+                if "loop" in params:
+                    s["loop"] = bool(params["loop"])
                 _save_manual_plan(plan)
                 self._send_json({"ok": True, "scene": s})
                 return
@@ -2047,6 +2261,18 @@ class Handler(BaseHTTPRequestHandler):
             plan["color_grade"] = params["color_grade"]
         if "audio_viz" in params:
             plan["audio_viz"] = params["audio_viz"]
+        if "audio_crossfade" in params:
+            try:
+                plan["audio_crossfade"] = max(0.0, min(2.0, float(params["audio_crossfade"])))
+            except (ValueError, TypeError):
+                plan["audio_crossfade"] = 0.0
+        if "auto_duck" in params:
+            plan["auto_duck"] = bool(params["auto_duck"])
+        if "duck_level" in params:
+            try:
+                plan["duck_level"] = max(0.0, min(1.0, float(params["duck_level"])))
+            except (ValueError, TypeError):
+                plan["duck_level"] = 0.3
         _save_manual_plan(plan)
         self._send_json({"ok": True})
 
@@ -3522,6 +3748,116 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": f"Failed to load project zip: {e}"}, 500)
 
+    # ---- Prompt History & Favorites (Item 10) ----
+
+    def _handle_get_prompt_history(self):
+        """GET /api/prompt-history - return prompt history with favorites."""
+        if os.path.isfile(PROMPT_HISTORY_PATH):
+            try:
+                with open(PROMPT_HISTORY_PATH, "r") as f:
+                    history = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                history = {"prompts": []}
+        else:
+            history = {"prompts": []}
+        self._send_json(history)
+
+    def _handle_star_prompt(self):
+        """POST /api/prompt-history/star - star/unstar a prompt."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        prompt_text = params.get("prompt", "")
+        starred = params.get("starred", True)
+
+        if os.path.isfile(PROMPT_HISTORY_PATH):
+            try:
+                with open(PROMPT_HISTORY_PATH, "r") as f:
+                    history = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                history = {"prompts": []}
+        else:
+            history = {"prompts": []}
+
+        found = False
+        for entry in history["prompts"]:
+            if entry.get("prompt") == prompt_text:
+                entry["starred"] = starred
+                found = True
+                break
+
+        if not found and prompt_text:
+            history["prompts"].insert(0, {
+                "prompt": prompt_text,
+                "starred": starred,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            })
+
+        with open(PROMPT_HISTORY_PATH, "w") as f:
+            json.dump(history, f, indent=2)
+
+        self._send_json({"ok": True})
+
+    # ---- Render Time Estimation (Item 37) ----
+
+    def _handle_render_estimate(self, parsed):
+        """GET /api/render-estimate?scenes=N&engine=grok - estimate render time."""
+        qs = urllib.parse.parse_qs(parsed.query)
+        try:
+            num_scenes = int(qs.get("scenes", [0])[0])
+        except (ValueError, IndexError):
+            num_scenes = 0
+        engine = qs.get("engine", ["grok"])[0]
+
+        gen_time_per_scene = RENDER_TIME_ESTIMATES.get(engine, 45)
+        total_gen = num_scenes * gen_time_per_scene
+        total_stitch = num_scenes * STITCH_TIME_PER_CLIP
+        total_seconds = total_gen + total_stitch
+        total_minutes = round(total_seconds / 60, 1)
+
+        self._send_json({
+            "scenes": num_scenes,
+            "engine": engine,
+            "gen_time_per_scene": gen_time_per_scene,
+            "stitch_time_per_clip": STITCH_TIME_PER_CLIP,
+            "total_seconds": total_seconds,
+            "total_minutes": total_minutes,
+            "estimate_label": f"~{total_minutes} min" if total_minutes >= 1 else f"~{total_seconds}s",
+        })
+
+    # ---- Autosave (Item 47) ----
+
+    def _handle_autosave(self):
+        """POST /api/project/autosave - save current state."""
+        body = self._read_body()
+        try:
+            state = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        state["saved_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        with open(AUTOSAVE_PATH, "w") as f:
+            json.dump(state, f, indent=2)
+
+        self._send_json({"ok": True, "saved_at": state["saved_at"]})
+
+    def _handle_get_autosave(self):
+        """GET /api/project/autosave - check for autosave."""
+        if os.path.isfile(AUTOSAVE_PATH):
+            try:
+                with open(AUTOSAVE_PATH, "r") as f:
+                    data = json.load(f)
+                self._send_json({"exists": True, "data": data})
+            except (json.JSONDecodeError, IOError):
+                self._send_json({"exists": False})
+        else:
+            self._send_json({"exists": False})
+
     # ---- Feature 10: Social platform export ----
 
     def _handle_social_export(self):
@@ -3559,6 +3895,433 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": f"Export failed: {e}"}, 500)
 
+    # ---- Item 9: Color palette extraction ----
+
+    def _handle_get_palette(self, scene_id: str):
+        """Extract dominant color palette from a scene's photo."""
+        plan = _load_manual_plan()
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                photo_path = s.get("photo_path", "")
+                if not photo_path or not os.path.isfile(photo_path):
+                    self._send_json({"error": "Scene has no photo uploaded"}, 400)
+                    return
+                try:
+                    result = extract_palette(photo_path)
+                    self._send_json({"ok": True, **result})
+                except Exception as e:
+                    self._send_json({"error": f"Palette extraction failed: {e}"}, 500)
+                return
+        self._send_json({"error": "Scene not found"}, 404)
+
+    # ---- Item 18: Loop / boomerang effect ----
+
+    def _handle_boomerang(self, scene_id: str):
+        """Toggle loop/boomerang on a scene's clip."""
+        plan = _load_manual_plan()
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                clip_path = s.get("clip_path", "")
+                if not clip_path or not os.path.isfile(clip_path):
+                    self._send_json({"error": "No clip to apply boomerang to"}, 400)
+                    return
+                is_looped = s.get("loop", False)
+                if is_looped:
+                    self._send_json({"error": "Clip already has boomerang applied"}, 400)
+                    return
+                try:
+                    boom_path = os.path.join(MANUAL_CLIPS_DIR, f"boomerang_{scene_id}.mp4")
+                    apply_loop_boomerang(clip_path, boom_path)
+                    s["clip_path"] = boom_path
+                    s["loop"] = True
+                    s["has_clip"] = True
+                    _save_manual_plan(plan)
+                    self._send_json({"ok": True, "message": "Boomerang effect applied"})
+                except Exception as e:
+                    self._send_json({"error": f"Boomerang failed: {e}"}, 500)
+                return
+        self._send_json({"error": "Scene not found"}, 404)
+
+    # ---- Item 20: Audio ducking ----
+
+    def _handle_audio_ducking(self):
+        """Apply audio ducking to the final video where voiceovers exist."""
+        body = self._read_body()
+        try:
+            params = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            params = {}
+
+        duck_level = params.get("duck_level", 0.3)
+        target = params.get("target", "manual")
+
+        if target == "manual":
+            plan = _load_manual_plan()
+            video_path = plan.get("output_path", os.path.join(OUTPUT_DIR, "manual_final_video.mp4"))
+        else:
+            plan = _load_scene_plan()
+            if not plan:
+                self._send_json({"error": "No scene plan found"}, 404)
+                return
+            video_path = plan.get("output_path", os.path.join(OUTPUT_DIR, "final_video.mp4"))
+
+        if not os.path.isfile(video_path):
+            self._send_json({"error": "Final video not found. Stitch first."}, 400)
+            return
+
+        # Build duck segments from scenes that have vocals
+        duck_segments = []
+        running_time = 0.0
+        for s in plan.get("scenes", []):
+            dur = s.get("duration", 8)
+            vocal_path = s.get("vocal_path", "")
+            if vocal_path and os.path.isfile(vocal_path):
+                duck_segments.append({
+                    "start_sec": running_time,
+                    "end_sec": running_time + dur,
+                })
+            running_time += dur
+
+        if not duck_segments:
+            self._send_json({"error": "No scenes with voiceovers found. Nothing to duck."}, 400)
+            return
+
+        try:
+            temp_out = video_path + ".duck_tmp.mp4"
+            apply_audio_ducking(video_path, temp_out, duck_segments, duck_level)
+            os.replace(temp_out, video_path)
+            self._send_json({
+                "ok": True,
+                "message": f"Audio ducking applied ({len(duck_segments)} segments at {int(duck_level*100)}% volume)",
+                "segments_ducked": len(duck_segments),
+            })
+        except Exception as e:
+            self._send_json({"error": f"Audio ducking failed: {e}"}, 500)
+
+    # ---- Item 34: GIF export ----
+
+    def _handle_export_gif(self, scene_id: str):
+        """Export a single scene's clip as an animated GIF."""
+        plan = _load_manual_plan()
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                clip_path = s.get("clip_path", "")
+                if not clip_path or not os.path.isfile(clip_path):
+                    self._send_json({"error": "No clip to export"}, 400)
+                    return
+                try:
+                    gif_name = f"scene_{scene_id}.gif"
+                    gif_path = os.path.join(GIFS_DIR, gif_name)
+                    export_gif(clip_path, gif_path)
+                    size_kb = os.path.getsize(gif_path) / 1024
+                    self._send_json({
+                        "ok": True,
+                        "url": f"/api/gifs/{gif_name}",
+                        "filename": gif_name,
+                        "size_kb": round(size_kb, 1),
+                    })
+                except Exception as e:
+                    self._send_json({"error": f"GIF export failed: {e}"}, 500)
+                return
+        self._send_json({"error": "Scene not found"}, 404)
+
+    def _handle_export_best_gifs(self):
+        """Auto-pick the 3 highest-energy scenes and export them as GIFs."""
+        plan = _load_manual_plan()
+        scenes = plan.get("scenes", [])
+        if not scenes:
+            self._send_json({"error": "No scenes available"}, 400)
+            return
+
+        # Identify scenes with clips, sorted by energy heuristic
+        # Energy heuristic: shorter duration + higher speed = higher energy
+        candidates = []
+        for s in scenes:
+            cp = s.get("clip_path", "")
+            if cp and os.path.isfile(cp):
+                speed = s.get("speed", 1.0)
+                dur = s.get("duration", 8)
+                # Higher speed and shorter duration = higher energy
+                energy_score = speed / max(dur, 1)
+                candidates.append((energy_score, s))
+
+        if not candidates:
+            self._send_json({"error": "No clips available for GIF export"}, 400)
+            return
+
+        # Sort by energy (highest first), take top 3
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        top3 = candidates[:3]
+
+        results = []
+        for _, s in top3:
+            try:
+                gif_name = f"best_{s['id']}.gif"
+                gif_path = os.path.join(GIFS_DIR, gif_name)
+                export_gif(s["clip_path"], gif_path)
+                size_kb = os.path.getsize(gif_path) / 1024
+                results.append({
+                    "scene_id": s["id"],
+                    "url": f"/api/gifs/{gif_name}",
+                    "filename": gif_name,
+                    "size_kb": round(size_kb, 1),
+                })
+            except Exception:
+                pass
+
+        self._send_json({"ok": True, "gifs": results, "count": len(results)})
+
+    # ---- Item 42: Template library ----
+
+    def _handle_list_templates(self):
+        """List all saved templates."""
+        templates = []
+        if os.path.isdir(TEMPLATES_DIR):
+            for fname in sorted(os.listdir(TEMPLATES_DIR)):
+                if fname.endswith(".json"):
+                    fpath = os.path.join(TEMPLATES_DIR, fname)
+                    try:
+                        with open(fpath, "r") as f:
+                            tpl = json.load(f)
+                        templates.append({
+                            "filename": fname,
+                            "name": tpl.get("name", fname),
+                            "scene_count": len(tpl.get("scenes", [])),
+                            "saved_at": tpl.get("saved_at", ""),
+                        })
+                    except (json.JSONDecodeError, IOError):
+                        pass
+        self._send_json({"templates": templates})
+
+    def _handle_save_template(self):
+        """Save current scene configuration as a named template."""
+        body = self._read_body()
+        try:
+            params = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            params = {}
+
+        template_name = params.get("name", "").strip()
+        if not template_name:
+            template_name = f"template_{time.strftime('%Y%m%d_%H%M%S')}"
+
+        plan = _load_manual_plan()
+        scenes = plan.get("scenes", [])
+        if not scenes:
+            self._send_json({"error": "No scenes to save as template"}, 400)
+            return
+
+        # Strip file paths (only save configuration, not files)
+        template_scenes = []
+        for s in scenes:
+            template_scenes.append({
+                "prompt": s.get("prompt", ""),
+                "duration": s.get("duration", 8),
+                "transition": s.get("transition", "crossfade"),
+                "speed": s.get("speed", 1.0),
+                "camera_movement": s.get("camera_movement", "zoom_in"),
+                "engine": s.get("engine", ""),
+                "color_grade": s.get("color_grade"),
+                "overlay": s.get("overlay"),
+                "loop": s.get("loop", False),
+            })
+
+        template = {
+            "name": template_name,
+            "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "scenes": template_scenes,
+            "color_grade": plan.get("color_grade", "none"),
+            "audio_viz": plan.get("audio_viz"),
+            "style_lock": plan.get("style_lock", ""),
+        }
+
+        safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', template_name)
+        filepath = os.path.join(TEMPLATES_DIR, f"{safe_name}.json")
+        with open(filepath, "w") as f:
+            json.dump(template, f, indent=2)
+
+        self._send_json({
+            "ok": True,
+            "filename": f"{safe_name}.json",
+            "name": template_name,
+            "scene_count": len(template_scenes),
+        })
+
+    def _handle_load_template(self):
+        """Load a template to pre-fill scenes."""
+        body = self._read_body()
+        try:
+            params = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            params = {}
+
+        filename = params.get("filename", "")
+        if not filename:
+            self._send_json({"error": "No template filename specified"}, 400)
+            return
+
+        filepath = os.path.join(TEMPLATES_DIR, os.path.basename(filename))
+        if not os.path.isfile(filepath):
+            self._send_json({"error": "Template not found"}, 404)
+            return
+
+        try:
+            with open(filepath, "r") as f:
+                template = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            self._send_json({"error": f"Failed to read template: {e}"}, 500)
+            return
+
+        # Create new scenes from template
+        plan = _load_manual_plan()
+        for tpl_scene in template.get("scenes", []):
+            scene_id = str(_uuid.uuid4())[:8]
+            scene = {
+                "id": scene_id,
+                "prompt": tpl_scene.get("prompt", ""),
+                "duration": tpl_scene.get("duration", 8),
+                "transition": tpl_scene.get("transition", "crossfade"),
+                "speed": tpl_scene.get("speed", 1.0),
+                "camera_movement": tpl_scene.get("camera_movement", "zoom_in"),
+                "engine": tpl_scene.get("engine", ""),
+                "color_grade": tpl_scene.get("color_grade"),
+                "overlay": tpl_scene.get("overlay"),
+                "loop": tpl_scene.get("loop", False),
+                "photo_path": None,
+                "photo_paths": [],
+                "clip_path": None,
+                "has_clip": False,
+                "video_path": None,
+                "vocal_path": None,
+                "vocal_volume": 80,
+                "previous_clip_path": None,
+            }
+            plan["scenes"].append(scene)
+
+        # Apply template-level settings
+        if template.get("color_grade"):
+            plan["color_grade"] = template["color_grade"]
+        if template.get("style_lock"):
+            plan["style_lock"] = template["style_lock"]
+        if template.get("audio_viz"):
+            plan["audio_viz"] = template["audio_viz"]
+
+        _save_manual_plan(plan)
+        self._send_json({
+            "ok": True,
+            "message": f"Loaded template '{template.get('name', '')}' with {len(template.get('scenes', []))} scenes",
+            "scenes_added": len(template.get("scenes", [])),
+        })
+
+    # ---- Item 44: AI assistant suggestions ----
+
+    def _handle_suggest_prompt(self):
+        """Use Grok text API to suggest a better prompt for a scene."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        current_prompt = params.get("current_prompt", "")
+        context = params.get("context", {})
+        scene_id = params.get("scene_id", "")
+
+        # Build context string
+        section_type = context.get("section_type", "")
+        energy = context.get("energy", "")
+        adjacent_prompts = context.get("adjacent_prompts", [])
+        style_lock = context.get("style_lock", "")
+
+        context_parts = []
+        if section_type:
+            context_parts.append(f"This is a {section_type} section.")
+        if energy:
+            context_parts.append(f"Energy level: {energy}.")
+        if style_lock:
+            context_parts.append(f"Visual style: {style_lock}.")
+        if adjacent_prompts:
+            context_parts.append(f"Adjacent scenes: {'; '.join(adjacent_prompts[:2])}.")
+
+        context_str = " ".join(context_parts)
+
+        # Call Grok text API for suggestion
+        try:
+            api_key = os.environ.get("XAI_API_KEY", "")
+            if not api_key:
+                self._send_json({"error": "XAI_API_KEY not set"}, 500)
+                return
+
+            import requests as req
+            system_msg = (
+                "You are a creative AI video prompt engineer. "
+                "Given a current video scene prompt and its context, "
+                "suggest an enhanced, more detailed and cinematic prompt. "
+                "Keep it concise (under 100 words). "
+                "Focus on visual details, camera movements, lighting, mood, and atmosphere. "
+                "Return ONLY the improved prompt text, nothing else."
+            )
+
+            user_msg = f"Current prompt: \"{current_prompt}\"\n"
+            if context_str:
+                user_msg += f"Context: {context_str}\n"
+            user_msg += "Suggest a better, more detailed prompt:"
+
+            resp = req.post(
+                "https://api.x.ai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "grok-3-mini",
+                    "messages": [
+                        {"role": "system", "content": system_msg},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    "max_tokens": 200,
+                    "temperature": 0.8,
+                },
+                timeout=30,
+            )
+
+            if resp.status_code != 200:
+                self._send_json({"error": f"Grok API error: {resp.status_code}"}, 500)
+                return
+
+            data = resp.json()
+            suggestion = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            suggestion = suggestion.strip().strip('"')
+
+            if not suggestion:
+                self._send_json({"error": "No suggestion received"}, 500)
+                return
+
+            self._send_json({
+                "ok": True,
+                "suggestion": suggestion,
+                "original": current_prompt,
+            })
+
+        except Exception as e:
+            self._send_json({"error": f"Suggestion failed: {e}"}, 500)
+
+    # ---- Item 46: Project comparison ----
+
+    def _handle_get_previous_clip(self, scene_id: str):
+        """Serve a scene's previous clip for comparison."""
+        plan = _load_manual_plan()
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                prev_clip = s.get("previous_clip_path", "")
+                if prev_clip and os.path.isfile(prev_clip):
+                    self._send_file(prev_clip)
+                    return
+                self.send_error(404, "No previous clip available")
+                return
+        self.send_error(404, "Scene not found")
+
 
 def main():
     server = HTTPServer(("0.0.0.0", PORT), Handler)
@@ -3574,3 +4337,92 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+    # ---- Roadmap Feature Handlers ----
+
+    def _handle_reverse_clip(self, scene_id):
+        plan = _load_manual_plan()
+        for s in plan.get("scenes", []):
+            if s.get("id") == scene_id and s.get("clip_path") and os.path.isfile(s["clip_path"]):
+                from lib.video_stitcher import reverse_clip
+                rev_path = s["clip_path"].replace(".mp4", "_rev.mp4")
+                reverse_clip(s["clip_path"], rev_path)
+                os.replace(rev_path, s["clip_path"])  # overwrite original
+                s["reversed"] = not s.get("reversed", False)
+                _save_manual_plan(plan)
+                self._send_json({"ok": True, "reversed": s["reversed"]})
+                return
+        self._send_json({"ok": False, "error": "Scene or clip not found"})
+
+    def _handle_boomerang_clip(self, scene_id):
+        plan = _load_manual_plan()
+        for s in plan.get("scenes", []):
+            if s.get("id") == scene_id and s.get("clip_path") and os.path.isfile(s["clip_path"]):
+                from lib.video_stitcher import boomerang_clip
+                boom_path = s["clip_path"].replace(".mp4", "_boom.mp4")
+                boomerang_clip(s["clip_path"], boom_path)
+                os.replace(boom_path, s["clip_path"])
+                s["boomerang"] = True
+                _save_manual_plan(plan)
+                self._send_json({"ok": True})
+                return
+        self._send_json({"ok": False, "error": "Scene or clip not found"})
+
+    def _handle_export_gif(self, scene_id):
+        plan = _load_manual_plan()
+        for s in plan.get("scenes", []):
+            if s.get("id") == scene_id and s.get("clip_path") and os.path.isfile(s["clip_path"]):
+                from lib.video_stitcher import export_gif
+                gif_dir = os.path.join(OUTPUT_DIR, "gifs")
+                os.makedirs(gif_dir, exist_ok=True)
+                gif_path = os.path.join(gif_dir, f"scene_{scene_id}.gif")
+                export_gif(s["clip_path"], gif_path)
+                self._send_json({"ok": True, "gif_url": f"/output/gifs/scene_{scene_id}.gif"})
+                return
+        self._send_json({"ok": False, "error": "Scene or clip not found"})
+
+    def _handle_get_palette(self, scene_id):
+        plan = _load_manual_plan()
+        for s in plan.get("scenes", []):
+            if s.get("id") == scene_id:
+                photo = s.get("photo_path") or (s.get("photo_paths", [None])[0])
+                if photo and os.path.isfile(photo):
+                    from lib.prompt_assistant import extract_palette, suggest_grade_from_palette
+                    colors = extract_palette(photo)
+                    grade = suggest_grade_from_palette(colors)
+                    self._send_json({"ok": True, "palette": colors, "suggested_grade": grade})
+                    return
+                self._send_json({"ok": False, "error": "No photo found"})
+                return
+        self._send_json({"ok": False, "error": "Scene not found"})
+
+    def _handle_prompt_history(self):
+        history_path = os.path.join(OUTPUT_DIR, "prompt_history.json")
+        if os.path.isfile(history_path):
+            data = json.loads(open(history_path, encoding="utf-8").read())
+        else:
+            data = {"prompts": [], "favorites": []}
+        self._send_json(data)
+
+    def _handle_star_prompt(self):
+        body = self._read_body()
+        params = json.loads(body) if body else {}
+        prompt = params.get("prompt", "")
+        history_path = os.path.join(OUTPUT_DIR, "prompt_history.json")
+        if os.path.isfile(history_path):
+            data = json.loads(open(history_path, encoding="utf-8").read())
+        else:
+            data = {"prompts": [], "favorites": []}
+        if prompt and prompt not in data["favorites"]:
+            data["favorites"].append(prompt)
+        with open(history_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        self._send_json({"ok": True})
+
+    def _handle_autosave(self):
+        body = self._read_body()
+        autosave_path = os.path.join(OUTPUT_DIR, "autosave.json")
+        with open(autosave_path, "w", encoding="utf-8") as f:
+            f.write(body.decode("utf-8") if isinstance(body, bytes) else body)
+        self._send_json({"ok": True})

@@ -905,6 +905,133 @@
   }
   .footer a:hover { color: var(--magenta); }
 
+  /* ---- Timeline view (Item 11) ---- */
+  .timeline-toggle-bar {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 12px; padding: 8px 0;
+  }
+  .timeline-toggle-btn {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 6px 14px;
+    color: var(--text-dim); font-family: inherit; font-size: 10px;
+    letter-spacing: 2px; text-transform: uppercase; cursor: pointer;
+    transition: all var(--transition);
+  }
+  .timeline-toggle-btn.active {
+    border-color: var(--cyan); color: var(--cyan);
+    box-shadow: 0 0 8px var(--cyan-dim);
+  }
+  .timeline-view { display: none; margin-bottom: 16px; }
+  .timeline-view.visible { display: block; }
+  .timeline-track {
+    position: relative; height: 80px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    overflow-x: auto; overflow-y: hidden; white-space: nowrap;
+  }
+  .timeline-block {
+    display: inline-block; height: 60px; margin: 10px 0;
+    border-radius: 3px; cursor: pointer; position: relative;
+    vertical-align: top; transition: all 0.2s; overflow: hidden;
+    border: 1px solid transparent; min-width: 30px;
+  }
+  .timeline-block:hover { border-color: var(--cyan); transform: translateY(-2px); }
+  .timeline-block.selected { border-color: var(--cyan); box-shadow: 0 0 12px var(--cyan-dim); }
+  .timeline-block-label {
+    position: absolute; top: 4px; left: 6px; font-size: 9px;
+    color: rgba(255,255,255,0.9); font-weight: 700; text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+    pointer-events: none;
+  }
+  .timeline-block-dur {
+    position: absolute; bottom: 4px; right: 6px; font-size: 8px;
+    color: rgba(255,255,255,0.7); pointer-events: none;
+  }
+  .timeline-block-resize {
+    position: absolute; top: 0; right: 0; width: 8px; height: 100%;
+    cursor: ew-resize; background: rgba(255,255,255,0.1);
+  }
+  .timeline-total {
+    font-size: 10px; color: var(--text-dim); margin-top: 6px;
+    letter-spacing: 1px; text-align: right;
+  }
+  .tl-section-colors { }
+
+  /* ---- Prompt History panel (Item 10) ---- */
+  .prompt-history-panel { display: none; }
+  .prompt-history-panel.visible { display: block; }
+  .prompt-history-list {
+    max-height: 300px; overflow-y: auto;
+    font-size: 11px; line-height: 1.6;
+  }
+  .prompt-history-item {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 6px 0; border-bottom: 1px solid var(--border);
+    cursor: pointer; transition: background 0.2s;
+  }
+  .prompt-history-item:hover { background: rgba(255,255,255,0.02); }
+  .prompt-history-star {
+    background: none; border: none; font-size: 14px; cursor: pointer;
+    color: var(--text-dim); transition: color 0.2s; flex-shrink: 0; padding: 0;
+  }
+  .prompt-history-star.starred { color: var(--amber); }
+  .prompt-history-star:hover { color: var(--amber); }
+  .prompt-history-text { flex: 1; color: var(--text); word-break: break-word; }
+  .prompt-history-time { color: var(--text-dim); font-size: 9px; flex-shrink: 0; min-width: 60px; text-align: right; }
+
+  /* ---- Speed Ramp / Reverse (Items 16, 17) ---- */
+  .msc-ramp-row {
+    display: flex; align-items: center; gap: 8px; margin-top: 4px;
+  }
+  .reverse-toggle {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 4px 10px;
+    color: var(--text-dim); font-family: inherit; font-size: 10px;
+    cursor: pointer; transition: all 0.2s; letter-spacing: 1px;
+  }
+  .reverse-toggle.active {
+    border-color: var(--magenta); color: var(--magenta);
+    box-shadow: 0 0 8px var(--magenta-dim);
+  }
+
+  /* ---- Render estimate (Item 37) ---- */
+  .render-estimate {
+    font-size: 11px; color: var(--amber); letter-spacing: 1px;
+    padding: 8px 12px; background: var(--amber-dim);
+    border-radius: var(--radius); margin-bottom: 12px;
+    display: none;
+  }
+  .render-estimate.visible { display: block; }
+
+  /* ---- Autosave indicator (Item 47) ---- */
+  .autosave-indicator {
+    position: fixed; top: 12px; right: 16px; z-index: 1000;
+    font-size: 9px; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--text-dim); padding: 4px 10px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); opacity: 0; transition: opacity 0.5s;
+    pointer-events: none;
+  }
+  .autosave-indicator.visible { opacity: 1; }
+  .autosave-indicator.unsaved { color: var(--amber); border-color: var(--amber-dim); }
+  .autosave-restore-banner {
+    background: var(--amber-dim); border: 1px solid var(--amber);
+    border-radius: var(--radius); padding: 12px 16px;
+    margin-bottom: 16px; display: none; align-items: center; gap: 12px;
+    font-size: 11px; color: var(--amber); letter-spacing: 1px;
+  }
+  .autosave-restore-banner.visible { display: flex; }
+
+  /* ---- Roadmap completed items ---- */
+  .roadmap-panel ol li.completed {
+    text-decoration: line-through; color: var(--green); opacity: 0.7;
+  }
+  .roadmap-panel ol li.completed::marker { color: var(--green); }
+  .completed-tag {
+    font-size: 8px; background: var(--green-dim); color: var(--green);
+    padding: 1px 5px; border-radius: 2px; margin-left: 4px;
+    letter-spacing: 1px; text-transform: uppercase; text-decoration: none;
+    display: inline-block;
+  }
+
   /* ---- Roadmap panel ---- */
   .roadmap-panel { display: none; }
   .roadmap-panel.visible { display: block; }
@@ -966,7 +1093,17 @@
 <input type="file" id="projectLoadInput" accept=".json">
 <input type="file" id="fullProjectLoadInput" accept=".zip">
 
+<!-- Autosave indicator -->
+<div class="autosave-indicator" id="autosaveIndicator">Saved</div>
+
 <div class="container">
+  <!-- Autosave restore banner -->
+  <div class="autosave-restore-banner" id="autosaveRestoreBanner">
+    <span>&#9888; Unsaved session found from a previous visit.</span>
+    <button class="btn btn-small btn-amber" onclick="window._restoreAutosave()">Restore</button>
+    <button class="btn btn-small btn-red" onclick="window._dismissAutosave()">Dismiss</button>
+  </div>
+
   <div class="header">
     <h1>Music Video Generator</h1>
     <div class="sub">Grok AI &middot; Video Synthesis Engine</div>
@@ -988,6 +1125,15 @@
     <div class="toolbar-sep"></div>
     <div class="toolbar-group">
       <button class="btn-toolbar btn-tb-magenta" id="exportStoryboardBtn" data-tooltip="Export storyboard as PNG">Export Storyboard</button>
+    </div>
+    <div class="toolbar-sep"></div>
+    <div class="toolbar-group">
+      <button class="btn-toolbar btn-tb-green" onclick="window._saveTemplate()" data-tooltip="Save scene layout as reusable template">Save Template</button>
+      <button class="btn-toolbar btn-tb-amber" onclick="window._loadTemplate()" data-tooltip="Load scenes from a saved template">Load Template</button>
+    </div>
+    <div class="toolbar-sep"></div>
+    <div class="toolbar-group">
+      <button class="btn-toolbar btn-tb-magenta" onclick="window._exportBestGifs()" data-tooltip="Export GIFs from 3 highest-energy scenes">Best GIFs</button>
     </div>
   </div>
 
@@ -1231,7 +1377,35 @@
         <div class="hint" style="margin-bottom:14px;">
           Build your video scene by scene. Upload a photo, write a prompt, configure controls. Generate clips individually or all at once, then stitch into final video.
         </div>
-        <div class="manual-scene-list" id="manualSceneList"></div>
+
+        <!-- Render time estimate -->
+        <div class="render-estimate" id="renderEstimate"></div>
+
+        <!-- Timeline / Card view toggle -->
+        <div class="timeline-toggle-bar">
+          <button class="timeline-toggle-btn active" id="cardViewBtn" onclick="window._setViewMode('card')">Card View</button>
+          <button class="timeline-toggle-btn" id="timelineViewBtn" onclick="window._setViewMode('timeline')">Timeline View</button>
+          <button class="timeline-toggle-btn" id="historyViewBtn" onclick="document.getElementById('promptHistoryPanel').classList.toggle('visible')">History</button>
+        </div>
+
+        <!-- Prompt History panel -->
+        <div class="prompt-history-panel panel" id="promptHistoryPanel">
+          <div class="panel-body">
+            <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;letter-spacing:1px;">PROMPT HISTORY &mdash; Click to reuse, star to favorite</div>
+            <div class="prompt-history-list" id="promptHistoryList"></div>
+          </div>
+        </div>
+
+        <!-- Timeline view -->
+        <div class="timeline-view" id="timelineView">
+          <div class="timeline-track" id="timelineTrack"></div>
+          <div class="timeline-total" id="timelineTotal"></div>
+        </div>
+
+        <!-- Card view (existing) -->
+        <div id="cardView">
+          <div class="manual-scene-list" id="manualSceneList"></div>
+        </div>
         <button class="manual-add-btn" id="manualAddSceneBtn">+ Add Scene</button>
 
         <div class="manual-progress-wrap hidden" id="manualProgressWrap">
@@ -1274,6 +1448,25 @@
               <option value="spectrum">Spectrum</option>
               <option value="both">Both</option>
             </select>
+          </div>
+          <div class="stitch-setting-group">
+            <span class="msc-label">Audio Crossfade:</span>
+            <div class="slider-group" style="flex:1;">
+              <input type="range" class="styled-slider" id="audioCrossfadeSlider" min="0" max="2" step="0.1" value="0"
+                     oninput="this.nextElementSibling.textContent=this.value+'s'" onchange="window._updateStitchSettings()">
+              <span class="slider-val" id="audioCrossfadeVal">0s</span>
+            </div>
+          </div>
+          <div class="stitch-setting-group">
+            <label class="stitch-checkbox-label">
+              <input type="checkbox" id="autoDuckCheckbox" onchange="window._updateStitchSettings()">
+              Auto Duck
+            </label>
+            <div class="slider-group" style="flex:1;">
+              <input type="range" class="styled-slider" id="duckLevelSlider" min="10" max="80" step="5" value="30"
+                     oninput="this.nextElementSibling.textContent=this.value+'%'" onchange="window._updateStitchSettings()">
+              <span class="slider-val" id="duckLevelVal">30%</span>
+            </div>
           </div>
         </div>
 
@@ -1462,34 +1655,34 @@
   <div class="panel roadmap-panel" id="roadmapPanel">
     <div class="panel-header">
       <span class="dot dot-magenta"></span>
-      <span class="panel-title">Roadmap &mdash; 50 Future Improvements</span>
+      <span class="panel-title">Roadmap &mdash; 50 Active + 8 Completed</span>
     </div>
     <div class="panel-body">
       <h4>AI &amp; Generation (1-10)</h4>
       <ol>
         <li>Better prompt engineering with per-scene context awareness and adaptive detail levels</li>
         <li>Style mixing: blend two or more style presets with weighted percentages</li>
+        <li class="completed">Scene-to-scene flow: coherence pass ensures adjacent scenes share visual elements, color palette, and recurring motifs <span class="completed-tag">done</span></li>
         <li>Character consistency: maintain face and body features across all scenes using embeddings</li>
-        <li>Scene-to-scene flow: analyze previous scene output to inform next scene for visual coherence</li>
         <li>Emotion detection from lyrics: parse lyrics sentiment to auto-adjust scene mood and color</li>
         <li>Automatic scene transitions based on audio energy: high energy = fast cuts, low = slow dissolves</li>
         <li>AI upscale via dedicated model (Real-ESRGAN / Topaz integration) instead of ffmpeg lanczos</li>
         <li>Reference video style transfer: upload a video clip and extract its visual style for generation</li>
         <li>Automatic color palette extraction from uploaded reference photos</li>
-        <li>Prompt history and favorites: save, tag, and reuse successful prompt+style combinations</li>
+        <li class="completed">Prompt history and favorites: save, star, and reuse prompts from history panel <span class="completed-tag">done</span></li>
       </ol>
 
       <h4>Editing (11-20)</h4>
       <ol start="11">
-        <li>Timeline view: horizontal drag-and-drop timeline with zoom and scroll</li>
+        <li class="completed">Timeline view: horizontal colored blocks on time axis, click to select, drag edges to resize, duration display <span class="completed-tag">done</span></li>
         <li>Frame-by-frame editor: step through generated clips and mark in/out points</li>
         <li>Green screen / chroma key: remove background color from uploaded video clips</li>
         <li>Picture-in-picture: overlay a small video (e.g. webcam) on a corner of the main video</li>
         <li>Split screen: show two scenes side-by-side with configurable layout ratios</li>
-        <li>Slow motion ramp: gradual speed change within a single scene (ease in/out)</li>
-        <li>Reverse clip: play a scene's clip backwards for creative effect</li>
+        <li class="completed">Slow motion ramp: per-scene speed ramp with slow-in, slow-out, slow-mid options via ffmpeg setpts <span class="completed-tag">done</span></li>
+        <li class="completed">Reverse clip: per-scene reverse toggle via ffmpeg reverse filter <span class="completed-tag">done</span></li>
         <li>Loop / boomerang effect: auto-loop a scene clip forward and backward</li>
-        <li>Crossfade audio between scenes: smooth audio transitions independent of video transitions</li>
+        <li class="completed">Crossfade audio between scenes: global audio crossfade slider (0-2s) using ffmpeg acrossfade <span class="completed-tag">done</span></li>
         <li>Audio ducking: automatically lower music volume during vocal overlay segments</li>
       </ol>
 
@@ -1516,7 +1709,7 @@
         <li>Shareable preview link: host a temporary preview URL for collaboration review</li>
         <li>Version history: keep all previous exports with diff comparison</li>
         <li>Batch render queue: queue multiple videos with different settings for sequential rendering</li>
-        <li>Render time estimation: predict generation time based on scene count and complexity</li>
+        <li class="completed">Render time estimation: shows estimated time before generation based on scene count and engine speed <span class="completed-tag">done</span></li>
         <li>Notification when render completes: browser push notification or webhook callback</li>
         <li>Cloud storage integration: auto-upload final videos to Google Drive, Dropbox, or S3</li>
       </ol>
@@ -1529,10 +1722,22 @@
         <li>AI assistant chat: ask for style suggestions, troubleshoot errors, get creative ideas</li>
         <li>Analytics dashboard: track which styles and prompts produce the best results</li>
         <li>Project comparison: side-by-side two versions of the same video for A/B testing</li>
-        <li>Auto-save every 30 seconds: prevent data loss with periodic background saves</li>
+        <li class="completed">Auto-save every 30 seconds: background autosave with restore banner on page load <span class="completed-tag">done</span></li>
         <li>Import from other tools: support Premiere XML, Final Cut Pro XML project import</li>
         <li>Export storyboard as PDF: generate a printable storyboard document</li>
         <li>Dark / light mode toggle: switch between dark cyberpunk theme and clean light theme</li>
+      </ol>
+
+      <h4 style="color:var(--green);">New Items (51-58)</h4>
+      <ol start="51">
+        <li>AI scene continuation: after generating a clip, use its last frame as input for the next scene's generation for true visual continuity</li>
+        <li>Prompt template variables: define reusable variables like {character}, {location}, {mood} that expand differently per scene</li>
+        <li>Waveform scrubber: visual audio waveform in the timeline view with beat markers and section boundaries</li>
+        <li>Scene grouping and nesting: group multiple scenes into a "sequence" that can be collapsed, duplicated, or moved as a unit</li>
+        <li>Motion tracking overlay: track a point in a generated clip and anchor text or image overlays to follow it</li>
+        <li>AI-powered scene suggestion: given the style and audio analysis, auto-suggest scene prompts with one-click accept</li>
+        <li>Render queue with priority: queue multiple render jobs with priority levels, pause/resume, and estimated completion times</li>
+        <li>Plugin system: allow third-party extensions for new video engines, filters, transitions, and export targets via a simple JS/Python plugin API</li>
       </ol>
     </div>
   </div>
@@ -2194,7 +2399,15 @@
         if (slToggle) slToggle.checked = true;
         if (slInput) { slInput.value = data.style_lock; slInput.style.color = 'var(--cyan)'; }
       }
+      if (data.audio_crossfade) {
+        const acSlider = $('audioCrossfadeSlider');
+        const acVal = $('audioCrossfadeVal');
+        if (acSlider) acSlider.value = data.audio_crossfade;
+        if (acVal) acVal.textContent = data.audio_crossfade + 's';
+      }
       renderManualScenes();
+      updateRenderEstimate();
+      renderTimeline();
     } catch (e) { manualScenes = []; renderManualScenes(); }
   }
 
@@ -2363,6 +2576,18 @@
                   <select class="styled-select" style="flex:1;" onchange="window._manualUpdateScene('${s.id}', {engine: this.value})">
                     ${engineOptions}
                   </select>
+                </div>
+                <div class="msc-ramp-row">
+                  <span class="msc-label">Ramp:</span>
+                  <select class="styled-select" style="flex:1;" onchange="window._manualUpdateScene('${s.id}', {speed_ramp: this.value})">
+                    <option value="none" ${(s.speed_ramp||'none')==='none'?'selected':''}>None</option>
+                    <option value="slow_in" ${s.speed_ramp==='slow_in'?'selected':''}>Slow In</option>
+                    <option value="slow_out" ${s.speed_ramp==='slow_out'?'selected':''}>Slow Out</option>
+                    <option value="slow_mid" ${s.speed_ramp==='slow_mid'?'selected':''}>Slow Mid</option>
+                  </select>
+                  <button class="reverse-toggle ${s.reversed?'active':''}"
+                          onclick="this.classList.toggle('active'); window._manualUpdateScene('${s.id}', {reversed: this.classList.contains('active')})"
+                          data-tooltip="Reverse clip playback">&#8634; Rev</button>
                 </div>
               </div>
             </div>
@@ -2615,10 +2840,15 @@
     const colorGrade = $('globalColorGradeSelect').value;
     const vizEnabled = $('audioVizCheckbox').checked;
     const vizStyle = $('audioVizStyleSelect').value;
+    const audioCrossfade = parseFloat($('audioCrossfadeSlider').value) || 0;
     try {
       await fetch('/api/manual/stitch-settings', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ color_grade: colorGrade, audio_viz: vizEnabled ? vizStyle : null }),
+        body: JSON.stringify({
+          color_grade: colorGrade,
+          audio_viz: vizEnabled ? vizStyle : null,
+          audio_crossfade: audioCrossfade,
+        }),
       });
     } catch (e) { /* ignore */ }
   };
@@ -3441,6 +3671,308 @@
       else alert('Error: ' + (data.error || 'failed'));
     } catch (e) { alert('Error: ' + e.message); }
   };
+
+  // ===================== TIMELINE VIEW (Item 11) =====================
+
+  const TIMELINE_COLORS = {
+    intro: '#00d4ff', verse: '#7b68ee', chorus: '#ff2d7b',
+    bridge: '#ffaa00', outro: '#00ff88', default: '#6a6a7a',
+  };
+  let timelineSelectedIdx = -1;
+
+  window._setViewMode = function(mode) {
+    const cardView = $('cardView');
+    const timelineView = $('timelineView');
+    const cardBtn = $('cardViewBtn');
+    const tlBtn = $('timelineViewBtn');
+    if (mode === 'timeline') {
+      cardView.style.display = 'none';
+      timelineView.classList.add('visible');
+      cardBtn.classList.remove('active');
+      tlBtn.classList.add('active');
+      renderTimeline();
+    } else {
+      cardView.style.display = 'block';
+      timelineView.classList.remove('visible');
+      cardBtn.classList.add('active');
+      tlBtn.classList.remove('active');
+    }
+  };
+
+  function renderTimeline() {
+    if (!manualScenes.length) return;
+    const track = $('timelineTrack');
+    const totalEl = $('timelineTotal');
+    if (!track) return;
+
+    const totalDur = manualScenes.reduce((sum, s) => sum + (s.duration || 8), 0);
+    const trackWidth = Math.max(track.clientWidth - 20, 600);
+    let html = '';
+
+    manualScenes.forEach((s, i) => {
+      const dur = s.duration || 8;
+      const pct = (dur / totalDur) * 100;
+      const w = Math.max(30, (dur / totalDur) * trackWidth);
+      const stype = s.section_type || 'default';
+      const color = TIMELINE_COLORS[stype] || TIMELINE_COLORS['default'];
+      const bg = s.clip_exists ? color : color + '44';
+      const sel = (i === timelineSelectedIdx) ? 'selected' : '';
+      const reversed = s.reversed ? ' &#8634;' : '';
+      const ramp = (s.speed_ramp && s.speed_ramp !== 'none') ? ' ~' : '';
+
+      html += `<div class="timeline-block ${sel}" style="width:${w}px;background:${bg};"
+                    onclick="window._timelineSelect(${i})"
+                    data-idx="${i}">
+        <span class="timeline-block-label">${i+1}${reversed}${ramp}</span>
+        <span class="timeline-block-dur">${dur}s</span>
+        <div class="timeline-block-resize" onmousedown="window._timelineResizeStart(event, ${i})"></div>
+      </div>`;
+    });
+
+    track.innerHTML = html;
+    if (totalEl) {
+      const mins = Math.floor(totalDur / 60);
+      const secs = Math.round(totalDur % 60);
+      totalEl.textContent = `Total: ${mins}m ${secs}s (${totalDur}s) \u2022 ${manualScenes.length} scenes`;
+    }
+  }
+
+  window._timelineSelect = function(idx) {
+    timelineSelectedIdx = idx;
+    renderTimeline();
+    // Also scroll to the card in card view
+    const scene = manualScenes[idx];
+    if (scene) {
+      const el = document.getElementById('msc-' + scene.id);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
+
+  // Drag-resize timeline blocks
+  let _resizingIdx = -1;
+  let _resizeStartX = 0;
+  let _resizeStartDur = 0;
+
+  window._timelineResizeStart = function(e, idx) {
+    e.stopPropagation();
+    _resizingIdx = idx;
+    _resizeStartX = e.clientX;
+    _resizeStartDur = manualScenes[idx].duration || 8;
+    document.addEventListener('mousemove', _timelineResizeMove);
+    document.addEventListener('mouseup', _timelineResizeEnd);
+  };
+
+  function _timelineResizeMove(e) {
+    if (_resizingIdx < 0) return;
+    const dx = e.clientX - _resizeStartX;
+    const totalDur = manualScenes.reduce((s, sc) => s + (sc.duration || 8), 0);
+    const track = $('timelineTrack');
+    const trackW = track ? track.clientWidth : 600;
+    const secPerPx = totalDur / trackW;
+    const newDur = Math.max(2, Math.min(20, Math.round(_resizeStartDur + dx * secPerPx)));
+    manualScenes[_resizingIdx].duration = newDur;
+    renderTimeline();
+  }
+
+  function _timelineResizeEnd() {
+    if (_resizingIdx >= 0 && manualScenes[_resizingIdx]) {
+      window._manualUpdateScene(manualScenes[_resizingIdx].id, { duration: manualScenes[_resizingIdx].duration });
+    }
+    _resizingIdx = -1;
+    document.removeEventListener('mousemove', _timelineResizeMove);
+    document.removeEventListener('mouseup', _timelineResizeEnd);
+  }
+
+  // ===================== PROMPT HISTORY (Item 10) =====================
+
+  async function loadPromptHistory() {
+    try {
+      const resp = await fetch('/api/prompt-history');
+      const data = await resp.json();
+      renderPromptHistory(data.prompts || []);
+    } catch (e) { /* ignore */ }
+  }
+
+  function renderPromptHistory(prompts) {
+    const list = $('promptHistoryList');
+    if (!list) return;
+    if (!prompts.length) {
+      list.innerHTML = '<div style="color:var(--text-dim);padding:10px;font-size:10px;">No prompt history yet. Generate some scenes to populate this.</div>';
+      return;
+    }
+    // Show favorites first, then recent
+    const sorted = [...prompts].sort((a, b) => {
+      if (a.starred && !b.starred) return -1;
+      if (!a.starred && b.starred) return 1;
+      return 0;
+    });
+    // Store prompts in a lookup for safe event handling
+    window._promptHistoryCache = sorted.slice(0, 50);
+    list.innerHTML = sorted.slice(0, 50).map((p, i) => {
+      const starClass = p.starred ? 'starred' : '';
+      const timeStr = p.timestamp ? p.timestamp.substring(5, 16).replace('T', ' ') : '';
+      return `<div class="prompt-history-item">
+        <button class="prompt-history-star ${starClass}" onclick="event.stopPropagation(); window._togglePromptStarByIdx(${i})">&#9733;</button>
+        <span class="prompt-history-text" onclick="window._reusePromptByIdx(${i})">${escHtml(p.prompt.length > 120 ? p.prompt.substring(0, 120) + '...' : p.prompt)}</span>
+        <span class="prompt-history-time">${escHtml(timeStr)}</span>
+      </div>`;
+    }).join('');
+  }
+
+  window._togglePromptStarByIdx = async function(idx) {
+    const cache = window._promptHistoryCache || [];
+    if (idx >= cache.length) return;
+    const p = cache[idx];
+    try {
+      await fetch('/api/prompt-history/star', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: p.prompt, starred: !p.starred }),
+      });
+      loadPromptHistory();
+    } catch (e) { /* ignore */ }
+  };
+
+  window._reusePromptByIdx = function(idx) {
+    const cache = window._promptHistoryCache || [];
+    if (idx >= cache.length) return;
+    window._reusePrompt(cache[idx].prompt);
+  };
+
+  window._reusePrompt = function(prompt) {
+    // Find the first scene with an empty prompt, or the selected timeline scene
+    let targetScene = null;
+    if (timelineSelectedIdx >= 0 && manualScenes[timelineSelectedIdx]) {
+      targetScene = manualScenes[timelineSelectedIdx];
+    } else {
+      targetScene = manualScenes.find(s => !s.prompt) || manualScenes[0];
+    }
+    if (targetScene) {
+      const el = document.getElementById('msc-prompt-' + targetScene.id);
+      if (el) {
+        el.value = prompt;
+        window._manualUpdateScene(targetScene.id, { prompt });
+      }
+    }
+    $('promptHistoryPanel').classList.remove('visible');
+  };
+
+  // ===================== RENDER TIME ESTIMATION (Item 37) =====================
+
+  async function updateRenderEstimate() {
+    if (!manualScenes.length) {
+      const el = $('renderEstimate');
+      if (el) el.classList.remove('visible');
+      return;
+    }
+    const engine = (globalSettings && globalSettings.default_engine) || 'grok';
+    try {
+      const resp = await fetch('/api/render-estimate?scenes=' + manualScenes.length + '&engine=' + engine);
+      const data = await resp.json();
+      const el = $('renderEstimate');
+      if (el) {
+        el.textContent = '\u23F1 Estimated generation time: ' + data.estimate_label +
+          ' (' + data.scenes + ' scenes \u00D7 ' + data.gen_time_per_scene + 's + stitch)';
+        el.classList.add('visible');
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  // ===================== AUTOSAVE (Item 47) =====================
+
+  let _autosaveTimer = null;
+  let _lastAutosaveHash = '';
+  let _hasUnsavedChanges = false;
+
+  function _getSceneStateHash() {
+    return JSON.stringify(manualScenes.map(s => ({
+      id: s.id, prompt: s.prompt, duration: s.duration,
+      transition: s.transition, speed: s.speed,
+      speed_ramp: s.speed_ramp, reversed: s.reversed,
+    })));
+  }
+
+  async function _doAutosave() {
+    const currentHash = _getSceneStateHash();
+    if (currentHash === _lastAutosaveHash) return;
+    _lastAutosaveHash = currentHash;
+
+    const indicator = $('autosaveIndicator');
+    try {
+      await fetch('/api/project/autosave', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scenes: manualScenes,
+          song_filename: manualSongFilename,
+        }),
+      });
+      if (indicator) {
+        indicator.textContent = 'Saved';
+        indicator.classList.remove('unsaved');
+        indicator.classList.add('visible');
+        setTimeout(() => indicator.classList.remove('visible'), 2000);
+      }
+      _hasUnsavedChanges = false;
+    } catch (e) { /* ignore */ }
+  }
+
+  function _startAutosave() {
+    if (_autosaveTimer) clearInterval(_autosaveTimer);
+    _autosaveTimer = setInterval(_doAutosave, 30000); // 30 seconds
+  }
+
+  // Mark unsaved on any scene change
+  const _origUpdateScene = window._manualUpdateScene;
+  window._manualUpdateScene = async function(sceneId, fields) {
+    _hasUnsavedChanges = true;
+    const indicator = $('autosaveIndicator');
+    if (indicator) {
+      indicator.textContent = 'Unsaved changes';
+      indicator.classList.add('unsaved', 'visible');
+    }
+    if (_origUpdateScene) return _origUpdateScene(sceneId, fields);
+  };
+
+  // Check for autosave on load
+  async function _checkAutosave() {
+    try {
+      const resp = await fetch('/api/project/autosave');
+      const data = await resp.json();
+      if (data.exists && data.data && data.data.scenes && data.data.scenes.length > 0) {
+        const banner = $('autosaveRestoreBanner');
+        if (banner) banner.classList.add('visible');
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  window._restoreAutosave = async function() {
+    try {
+      const resp = await fetch('/api/project/autosave');
+      const data = await resp.json();
+      if (data.exists && data.data) {
+        // Restore scenes by creating them via API
+        for (const s of (data.data.scenes || [])) {
+          if (s.prompt) {
+            await fetch('/api/manual/scene', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ prompt: s.prompt, duration: s.duration || 8, transition: s.transition || 'crossfade' }),
+            });
+          }
+        }
+        await loadManualScenes();
+      }
+    } catch (e) { alert('Restore failed: ' + e.message); }
+    $('autosaveRestoreBanner').classList.remove('visible');
+  };
+
+  window._dismissAutosave = function() {
+    $('autosaveRestoreBanner').classList.remove('visible');
+  };
+
+  // ===================== INIT NEW FEATURES =====================
+
+  _checkAutosave();
+  _startAutosave();
+  loadPromptHistory();
 
   // ===================== SAVE/LOAD FULL PROJECT =====================
 

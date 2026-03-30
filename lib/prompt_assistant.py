@@ -335,3 +335,187 @@ def get_preset_names() -> list:
 def get_preset(name: str) -> str | None:
     """Get the prompt text for a preset by name. Returns None if not found."""
     return STYLE_PRESETS.get(name.lower().strip())
+
+
+# ---- Color palette extraction (Item 9) ----
+
+# Mapping from dominant color hue/saturation/value to color grade presets
+_PALETTE_TO_GRADE = {
+    "warm": ["warm"],
+    "cold": ["cold"],
+    "dark": ["noir", "dark_cinematic"],
+    "neon": ["cyberpunk"],
+    "vintage": ["vintage", "sepia"],
+    "neutral": ["none"],
+}
+
+
+def extract_palette(image_path: str, n_colors: int = 5) -> dict:
+    """
+    Extract the dominant color palette from an image using PIL.
+
+    Args:
+        image_path: path to an image file (jpg, png, etc.)
+        n_colors: number of dominant colors to extract (default 5)
+
+    Returns:
+        dict with keys:
+            colors: list of hex color strings (e.g. ["#ff2d7b", "#00d4ff", ...])
+            rgb_colors: list of (r, g, b) tuples
+            suggested_grade: name of the best-matching color grade preset
+            palette_description: human-readable description of the palette mood
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return {
+            "colors": [],
+            "rgb_colors": [],
+            "suggested_grade": "none",
+            "palette_description": "PIL not available",
+        }
+
+    import os
+    if not os.path.isfile(image_path):
+        return {
+            "colors": [],
+            "rgb_colors": [],
+            "suggested_grade": "none",
+            "palette_description": "Image not found",
+        }
+
+    img = Image.open(image_path).convert("RGB")
+    # Resize to small for fast processing
+    img = img.resize((150, 150), Image.LANCZOS)
+
+    # Quantize to n_colors using PIL's built-in quantization
+    quantized = img.quantize(colors=n_colors, method=Image.Quantize.MEDIANCUT)
+    palette_data = quantized.getpalette()  # flat list [r, g, b, r, g, b, ...]
+
+    # Count pixels per palette index to sort by dominance
+    pixel_counts = {}
+    for pixel in quantized.getdata():
+        pixel_counts[pixel] = pixel_counts.get(pixel, 0) + 1
+
+    # Sort by frequency (most dominant first)
+    sorted_indices = sorted(pixel_counts.keys(), key=lambda k: pixel_counts[k], reverse=True)
+
+    rgb_colors = []
+    hex_colors = []
+    for idx in sorted_indices[:n_colors]:
+        r = palette_data[idx * 3]
+        g = palette_data[idx * 3 + 1]
+        b = palette_data[idx * 3 + 2]
+        rgb_colors.append((r, g, b))
+        hex_colors.append(f"#{r:02x}{g:02x}{b:02x}")
+
+    # Analyze palette mood and suggest color grade
+    suggested_grade, description = _analyze_palette_mood(rgb_colors)
+
+    return {
+        "colors": hex_colors,
+        "rgb_colors": rgb_colors,
+        "suggested_grade": suggested_grade,
+        "palette_description": description,
+    }
+
+
+def _analyze_palette_mood(rgb_colors: list) -> tuple:
+    """
+    Analyze RGB color list and suggest a color grade preset + description.
+
+    Returns:
+        (grade_name, description_string)
+    """
+    if not rgb_colors:
+        return "none", "No colors detected"
+
+    # Calculate averages
+    avg_r = sum(c[0] for c in rgb_colors) / len(rgb_colors)
+    avg_g = sum(c[1] for c in rgb_colors) / len(rgb_colors)
+    avg_b = sum(c[2] for c in rgb_colors) / len(rgb_colors)
+    avg_brightness = (avg_r + avg_g + avg_b) / 3.0
+    avg_saturation = max(avg_r, avg_g, avg_b) - min(avg_r, avg_g, avg_b)
+
+    descriptions = []
+
+    # Dark palette
+    if avg_brightness < 80:
+        descriptions.append("dark")
+        if avg_b > avg_r and avg_b > avg_g:
+            descriptions.append("moody blue")
+            return "cold", "Dark, moody blue tones"
+        if avg_r > avg_g and avg_r > avg_b:
+            descriptions.append("dramatic red")
+            return "noir", "Dark, dramatic with red undertones"
+        return "noir", "Dark, high-contrast palette"
+
+    # Very bright
+    if avg_brightness > 200:
+        descriptions.append("bright")
+        if avg_r > avg_b:
+            return "warm", "Bright, warm palette"
+        return "none", "Bright, clean palette"
+
+    # Warm palette (reds/oranges/yellows dominate)
+    if avg_r > avg_b + 30 and avg_r > avg_g:
+        descriptions.append("warm")
+        if avg_saturation < 60:
+            return "sepia", "Warm, desaturated vintage tones"
+        return "warm", "Warm tones with rich oranges and reds"
+
+    # Cold palette (blues dominate)
+    if avg_b > avg_r + 30:
+        descriptions.append("cold")
+        if avg_saturation > 120:
+            return "cyberpunk", "Vivid cold neon tones"
+        return "cold", "Cool blue palette"
+
+    # High saturation / neon
+    if avg_saturation > 150:
+        descriptions.append("vivid")
+        return "high_contrast", "Vivid, high-saturation palette"
+
+    # Low saturation
+    if avg_saturation < 40:
+        descriptions.append("muted")
+        return "vintage", "Muted, vintage-style palette"
+
+    return "none", "Balanced, neutral palette"
+
+
+# ---- Color Palette Extraction (Roadmap Item 9) ----
+
+def extract_palette(image_path: str, n_colors: int = 5) -> list:
+    """Extract dominant colors from an image. Returns list of hex color strings."""
+    try:
+        from PIL import Image
+        img = Image.open(image_path).convert("RGB")
+        img = img.resize((100, 100))  # small for speed
+        pixels = list(img.getdata())
+        
+        # Simple k-means-like clustering
+        from collections import Counter
+        # Quantize to reduce colors
+        quantized = [(r // 32 * 32, g // 32 * 32, b // 32 * 32) for r, g, b in pixels]
+        counts = Counter(quantized).most_common(n_colors)
+        return [f"#{r:02x}{g:02x}{b:02x}" for (r, g, b), _ in counts]
+    except Exception as e:
+        print(f"[palette] Error: {e}")
+        return ["#333333"] * n_colors
+
+
+def suggest_grade_from_palette(palette: list) -> str:
+    """Suggest a color grade preset based on dominant palette colors."""
+    if not palette:
+        return "none"
+    # Simple heuristic based on average warmth
+    avg_r = sum(int(c[1:3], 16) for c in palette) / len(palette)
+    avg_b = sum(int(c[5:7], 16) for c in palette) / len(palette)
+    if avg_r > avg_b + 40:
+        return "warm"
+    elif avg_b > avg_r + 40:
+        return "cold"
+    elif avg_r < 80 and avg_b < 80:
+        return "noir"
+    return "none"

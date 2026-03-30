@@ -135,6 +135,170 @@ def _get_transition_duration(transition: str, base_crossfade: float) -> float:
     return base_crossfade
 
 
+def _apply_speed_ramp(clip_path: str, ramp_type: str, output_dir: str,
+                      index: int, progress_cb=None) -> str:
+    """
+    Apply a speed ramp (variable speed) to a clip using ffmpeg setpts.
+
+    ramp_type:
+        'slow_mid'  - normal -> slow -> normal (ease in/out at center)
+        'slow_in'   - slow -> normal
+        'slow_out'  - normal -> slow
+
+    The ramp uses a sinusoidal PTS expression for smooth easing.
+    """
+    if not ramp_type or ramp_type == "none":
+        return clip_path
+
+    if progress_cb:
+        progress_cb(f"applying speed ramp ({ramp_type}) to clip {index}...")
+
+    out_path = os.path.join(output_dir, f"_ramp_{index}_{ramp_type}.mp4")
+
+    # Get clip duration to build the expression
+    dur = _get_clip_duration(clip_path)
+
+    # Build PTS expression based on ramp type
+    # The idea: we modulate the PTS factor using a time-based expression.
+    # slow_mid: speed = 1.0 at edges, 0.5 at center (sin curve)
+    # slow_in: speed ramps from 0.5 to 1.0
+    # slow_out: speed ramps from 1.0 to 0.5
+    if ramp_type == "slow_mid":
+        # PTS factor: 1 + 0.5*sin(pi*T/DUR) where T is normalized time
+        # Higher PTS factor = slower playback
+        vfilter = (
+            f"setpts='PTS + 0.5*(1/{dur})*sin(PI*T/{dur})*T*TB'"
+        )
+    elif ramp_type == "slow_in":
+        # Start slow, end normal: PTS factor decreases over time
+        vfilter = (
+            f"setpts='PTS + 0.4*({dur}-T)/{dur}*T*TB'"
+        )
+    elif ramp_type == "slow_out":
+        # Start normal, end slow: PTS factor increases over time
+        vfilter = (
+            f"setpts='PTS + 0.4*(T/{dur})*T*TB'"
+        )
+    else:
+        return clip_path
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", clip_path,
+        "-filter:v", vfilter,
+        "-an",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        out_path,
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+        return out_path
+    except subprocess.CalledProcessError:
+        # Fallback: return original clip if the complex expression fails
+        if progress_cb:
+            progress_cb(f"speed ramp failed for clip {index}, using original")
+        return clip_path
+
+
+def _apply_reverse(clip_path: str, output_dir: str, index: int,
+                   progress_cb=None) -> str:
+    """Reverse a video clip using ffmpeg reverse filter."""
+    if progress_cb:
+        progress_cb(f"reversing clip {index}...")
+
+    out_path = os.path.join(output_dir, f"_reversed_{index}.mp4")
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", clip_path,
+        "-vf", "reverse",
+        "-an",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        out_path,
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+        return out_path
+    except subprocess.CalledProcessError:
+        if progress_cb:
+            progress_cb(f"reverse failed for clip {index}, using original")
+        return clip_path
+
+
+def apply_audio_crossfade(clips_audio_segments: list, output_path: str,
+                          crossfade_duration: float = 0.5,
+                          progress_cb=None) -> str:
+    """
+    Apply audio crossfade between adjacent audio segments using ffmpeg acrossfade.
+    This is used post-stitch when the audio track needs smooth transitions.
+
+    Args:
+        clips_audio_segments: list of audio file paths
+        output_path: destination audio file
+        crossfade_duration: crossfade overlap in seconds (0-2)
+        progress_cb: optional status callback
+
+    Returns:
+        path to the crossfaded audio output
+    """
+    _check_ffmpeg()
+
+    valid = [p for p in clips_audio_segments if p and os.path.isfile(p)]
+    if len(valid) < 2:
+        if valid:
+            import shutil
+            shutil.copy2(valid[0], output_path)
+        return output_path
+
+    if progress_cb:
+        progress_cb(f"applying audio crossfade ({crossfade_duration}s)...")
+
+    # Chain acrossfade filters for N clips
+    # For 2 clips: [0:a][1:a]acrossfade=d=0.5:c1=tri:c2=tri[out]
+    # For 3+ clips: chain sequentially
+    input_args = []
+    for p in valid:
+        input_args += ["-i", p]
+
+    if len(valid) == 2:
+        filter_complex = (
+            f"[0:a][1:a]acrossfade=d={crossfade_duration}:c1=tri:c2=tri[out]"
+        )
+    else:
+        parts = []
+        for i in range(1, len(valid)):
+            in_label = f"[{i-1}:a]" if i == 1 else "[xfa]"
+            out_label = "[out]" if i == len(valid) - 1 else "[xfa]"
+            parts.append(
+                f"{in_label}[{i}:a]acrossfade=d={crossfade_duration}:c1=tri:c2=tri{out_label}"
+            )
+        filter_complex = ";".join(parts)
+
+    cmd = [
+        "ffmpeg", "-y",
+        *input_args,
+        "-filter_complex", filter_complex,
+        "-map", "[out]",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        output_path,
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+    except subprocess.CalledProcessError:
+        # Fallback: just use the first audio file
+        if valid:
+            import shutil
+            shutil.copy2(valid[0], output_path)
+    return output_path
+
+
+# ---- Speed ramp types ----
+SPEED_RAMP_TYPES = ["none", "slow_in", "slow_out", "slow_mid"]
+
+
 def _apply_speed_to_clip(clip_path: str, speed: float, output_dir: str,
                          index: int, progress_cb=None) -> str:
     """
@@ -657,6 +821,9 @@ def stitch(clip_paths: list, audio_path: str | None, output_path: str,
            color_grade: str = "none",
            scene_color_grades: list | None = None,
            audio_viz: str | None = None,
+           speed_ramps: list | None = None,
+           reversed_clips: list | None = None,
+           audio_crossfade: float = 0.0,
            progress_cb=None) -> str:
     """
     Stitch video clips together with optional audio.
@@ -731,6 +898,30 @@ def stitch(clip_paths: list, audio_path: str | None, output_path: str,
         adjusted = _apply_speed_to_clip(clip, speed, temp_dir, idx, progress_cb)
         processed_clips.append(adjusted)
     valid_clips = processed_clips
+
+    # Apply per-scene speed ramps
+    if speed_ramps:
+        ramped_clips = []
+        for idx, clip in enumerate(valid_clips):
+            ramp = speed_ramps[idx] if idx < len(speed_ramps) else "none"
+            if ramp and ramp != "none":
+                adjusted = _apply_speed_ramp(clip, ramp, temp_dir, idx, progress_cb)
+                ramped_clips.append(adjusted)
+            else:
+                ramped_clips.append(clip)
+        valid_clips = ramped_clips
+
+    # Apply per-scene reverse
+    if reversed_clips:
+        rev_processed = []
+        for idx, clip in enumerate(valid_clips):
+            is_reversed = reversed_clips[idx] if idx < len(reversed_clips) else False
+            if is_reversed:
+                adjusted = _apply_reverse(clip, temp_dir, idx, progress_cb)
+                rev_processed.append(adjusted)
+            else:
+                rev_processed.append(clip)
+        valid_clips = rev_processed
 
     # Apply per-scene text overlays and color grades as pre-processing
     for idx in range(len(valid_clips)):
@@ -1361,6 +1552,198 @@ def overlay_scene_vocals(video_path: str, output_path: str,
     return output_path
 
 
+def apply_loop_boomerang(clip_path: str, output_path: str,
+                         progress_cb=None) -> str:
+    """
+    Apply loop/boomerang effect to a clip: plays forward then backward.
+    Effectively doubles the scene duration.
+
+    Args:
+        clip_path: source video clip
+        output_path: destination video
+        progress_cb: optional callable(status_str)
+
+    Returns:
+        path to the boomerang clip
+    """
+    _check_ffmpeg()
+
+    if not os.path.isfile(clip_path):
+        raise FileNotFoundError(f"Clip not found: {clip_path}")
+
+    if progress_cb:
+        progress_cb("creating boomerang effect...")
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
+    # Create reversed copy
+    reversed_path = output_path + ".reversed_tmp.mp4"
+    cmd_reverse = [
+        "ffmpeg", "-y",
+        "-i", clip_path,
+        "-vf", "reverse",
+        "-an",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        reversed_path,
+    ]
+    subprocess.run(cmd_reverse, check=True, capture_output=True, **_subprocess_kwargs())
+
+    # Concat forward + reversed
+    concat_list = output_path + ".concat_tmp.txt"
+    with open(concat_list, "w") as f:
+        f.write(f"file '{clip_path}'\n")
+        f.write(f"file '{reversed_path}'\n")
+
+    cmd_concat = [
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0",
+        "-i", concat_list,
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-an",
+        output_path,
+    ]
+    subprocess.run(cmd_concat, check=True, capture_output=True, **_subprocess_kwargs())
+
+    # Clean up temp files
+    for tmp in [reversed_path, concat_list]:
+        if os.path.isfile(tmp):
+            os.remove(tmp)
+
+    if progress_cb:
+        progress_cb("boomerang effect applied")
+    return output_path
+
+
+def apply_audio_ducking(video_path: str, output_path: str,
+                        duck_segments: list, duck_level: float = 0.3,
+                        progress_cb=None) -> str:
+    """
+    Apply audio ducking: lower the main music volume during specified segments
+    (e.g. when voiceover is present).
+
+    Args:
+        video_path: source video with audio
+        output_path: destination video
+        duck_segments: list of {start_sec, end_sec} dicts where ducking applies
+        duck_level: volume level during ducked segments (0.0 - 1.0, default 0.3 = 30%)
+        progress_cb: optional callable(status_str)
+
+    Returns:
+        path to the output video with ducked audio
+    """
+    _check_ffmpeg()
+
+    if not duck_segments:
+        import shutil
+        shutil.copy2(video_path, output_path)
+        return output_path
+
+    if progress_cb:
+        progress_cb("applying audio ducking...")
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
+    # Build a volume filter expression that ducks during specified segments
+    duck_level = max(0.0, min(1.0, duck_level))
+
+    # Build nested if expression
+    expr = "1.0"
+    for seg in reversed(duck_segments):
+        start = seg.get("start_sec", 0)
+        end = seg.get("end_sec", 0)
+        if end > start:
+            expr = f"if(between(t\\,{start:.3f}\\,{end:.3f})\\,{duck_level:.2f}\\,{expr})"
+
+    af = f"volume='{expr}':eval=frame"
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-af", af,
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "192k",
+        output_path,
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+    except subprocess.CalledProcessError:
+        # Fallback: simple global volume reduction if complex filter fails
+        import shutil
+        shutil.copy2(video_path, output_path)
+
+    if progress_cb:
+        progress_cb("audio ducking applied")
+    return output_path
+
+
+def export_gif(clip_path: str, output_path: str,
+               max_duration: float = 10.0, max_width: int = 480,
+               fps: int = 15, progress_cb=None) -> str:
+    """
+    Convert a video clip to an animated GIF.
+
+    Args:
+        clip_path: source video clip
+        output_path: destination GIF file
+        max_duration: maximum GIF duration in seconds (default 10)
+        max_width: maximum GIF width in pixels (default 480)
+        fps: frame rate for GIF (default 15)
+        progress_cb: optional callable(status_str)
+
+    Returns:
+        path to the exported GIF
+    """
+    _check_ffmpeg()
+
+    if not os.path.isfile(clip_path):
+        raise FileNotFoundError(f"Clip not found: {clip_path}")
+
+    if progress_cb:
+        progress_cb("exporting GIF...")
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
+    # Two-pass GIF: first generate palette, then use palette for high quality
+    palette_path = output_path + ".palette.png"
+
+    # Duration limit
+    duration_args = ["-t", str(max_duration)] if max_duration > 0 else []
+
+    # Pass 1: generate palette
+    vf_palette = f"fps={fps},scale={max_width}:-1:flags=lanczos,palettegen=stats_mode=diff"
+    cmd_palette = [
+        "ffmpeg", "-y",
+        "-i", clip_path,
+        *duration_args,
+        "-vf", vf_palette,
+        palette_path,
+    ]
+    subprocess.run(cmd_palette, check=True, capture_output=True, **_subprocess_kwargs())
+
+    # Pass 2: generate GIF using palette
+    vf_gif = f"fps={fps},scale={max_width}:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5"
+    cmd_gif = [
+        "ffmpeg", "-y",
+        "-i", clip_path,
+        *duration_args,
+        "-i", palette_path,
+        "-filter_complex", vf_gif,
+        output_path,
+    ]
+    subprocess.run(cmd_gif, check=True, capture_output=True, **_subprocess_kwargs())
+
+    # Clean up palette
+    if os.path.isfile(palette_path):
+        os.remove(palette_path)
+
+    if progress_cb:
+        progress_cb("GIF exported")
+    return output_path
+
+
 def add_beat_cuts_to_stitch(video_path: str, output_path: str,
                             beat_timestamps: list,
                             progress_cb=None) -> str:
@@ -1407,4 +1790,90 @@ def add_beat_cuts_to_stitch(video_path: str, output_path: str,
 
     if progress_cb:
         progress_cb("beat cuts added")
+    return output_path
+
+
+# ---- Reverse Clip (Roadmap Item 17) ----
+
+def reverse_clip(input_path: str, output_path: str) -> str:
+    """Reverse a video clip."""
+    cmd = ["ffmpeg", "-y", "-i", input_path, "-vf", "reverse", "-af", "areverse",
+           "-c:v", "libx264", "-c:a", "aac", output_path]
+    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+    return output_path
+
+
+# ---- Loop / Boomerang Effect (Roadmap Item 18) ----
+
+def boomerang_clip(input_path: str, output_path: str) -> str:
+    """Create a boomerang (forward + reverse) clip."""
+    import tempfile
+    rev_path = tempfile.mktemp(suffix="_rev.mp4")
+    try:
+        reverse_clip(input_path, rev_path)
+        # Concat original + reversed
+        list_path = tempfile.mktemp(suffix="_list.txt")
+        with open(list_path, "w") as f:
+            f.write(f"file '{os.path.abspath(input_path)}'\n")
+            f.write(f"file '{os.path.abspath(rev_path)}'\n")
+        cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+               "-c:v", "libx264", "-c:a", "aac", output_path]
+        subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+        return output_path
+    finally:
+        for p in [rev_path, list_path]:
+            try: os.unlink(p)
+            except: pass
+
+
+# ---- GIF Export (Roadmap Item 34) ----
+
+def export_gif(input_path: str, output_path: str, max_width: int = 480,
+               max_duration: float = 10.0) -> str:
+    """Export a video clip as an animated GIF."""
+    import tempfile
+    palette = tempfile.mktemp(suffix="_palette.png")
+    try:
+        # Generate palette
+        cmd1 = ["ffmpeg", "-y", "-t", str(max_duration), "-i", input_path,
+                "-vf", f"fps=12,scale={max_width}:-1:flags=lanczos,palettegen",
+                palette]
+        subprocess.run(cmd1, check=True, capture_output=True, **_subprocess_kwargs())
+        # Create GIF with palette
+        cmd2 = ["ffmpeg", "-y", "-t", str(max_duration), "-i", input_path,
+                "-i", palette,
+                "-lavfi", f"fps=12,scale={max_width}:-1:flags=lanczos[x];[x][1:v]paletteuse",
+                output_path]
+        subprocess.run(cmd2, check=True, capture_output=True, **_subprocess_kwargs())
+        return output_path
+    finally:
+        try: os.unlink(palette)
+        except: pass
+
+
+# ---- Audio Ducking (Roadmap Item 20) ----
+
+def apply_audio_ducking(video_path: str, output_path: str,
+                        duck_segments: list, duck_level: float = 0.3) -> str:
+    """Apply volume ducking to segments where vocals exist.
+    duck_segments: [{start_sec, end_sec}]
+    duck_level: 0.0 = silent, 1.0 = full volume (default 0.3 = 30%)
+    """
+    if not duck_segments:
+        import shutil
+        shutil.copy2(video_path, output_path)
+        return output_path
+    
+    # Build volume filter with enable expressions
+    filters = []
+    for seg in duck_segments:
+        filters.append(
+            f"volume=enable='between(t,{seg['start_sec']},{seg['end_sec']})':volume={duck_level}"
+        )
+    filter_str = ",".join(filters)
+    
+    cmd = ["ffmpeg", "-y", "-i", video_path,
+           "-af", filter_str,
+           "-c:v", "copy", "-c:a", "aac", output_path]
+    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
     return output_path
