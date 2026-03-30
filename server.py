@@ -72,17 +72,15 @@ from lib.prompt_assistant import (
     extract_palette,
 )
 from lib.storyboard_generator import generate_storyboard
-from lib.prompt_os import PromptOS
-
-# Prompt OS singleton
-_prompt_os = PromptOS()
-PROMPT_OS_DATA_DIR = os.path.join(OUTPUT_DIR, "prompt_os")
-os.makedirs(PROMPT_OS_DATA_DIR, exist_ok=True)
-
 PORT = 3849
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOADS_DIR = os.path.join(PROJECT_DIR, "uploads")
 OUTPUT_DIR = os.path.join(PROJECT_DIR, "output")
+
+from lib.prompt_os import PromptOS
+_prompt_os = PromptOS()
+PROMPT_OS_DATA_DIR = os.path.join(OUTPUT_DIR, "prompt_os")
+os.makedirs(PROMPT_OS_DATA_DIR, exist_ok=True)
 CLIPS_DIR = os.path.join(OUTPUT_DIR, "clips")
 REFERENCES_DIR = os.path.join(PROJECT_DIR, "references")
 SCENE_PLAN_PATH = os.path.join(OUTPUT_DIR, "scene_plan.json")
