@@ -114,6 +114,14 @@
     background: var(--magenta);
     box-shadow: 0 0 8px var(--magenta);
   }
+  .panel-header .dot-amber {
+    background: var(--amber);
+    box-shadow: 0 0 8px var(--amber);
+  }
+  .panel-header .dot-green {
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+  }
   .panel-header .panel-title { flex: 1; }
   .panel-header .collapse-icon {
     font-size: 10px; transition: transform var(--transition);
@@ -170,9 +178,9 @@
   /* ---- Buttons ---- */
   .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    padding: 12px 28px;
-    font-family: inherit; font-size: 12px;
-    letter-spacing: 3px; text-transform: uppercase;
+    padding: 8px 20px;
+    font-family: inherit; font-size: 11px;
+    letter-spacing: 2px; text-transform: uppercase;
     border: 1px solid var(--cyan);
     background: transparent;
     color: var(--cyan);
@@ -181,7 +189,7 @@
     transition: all var(--transition);
     text-decoration: none;
     white-space: nowrap;
-    min-height: 40px;
+    min-height: 32px;
   }
   .btn:hover {
     background: rgba(0,212,255,0.1);
@@ -199,8 +207,9 @@
   .btn-green { border-color: var(--green); color: var(--green); }
   .btn-green:hover { background: rgba(0,255,136,0.1); box-shadow: 0 0 20px var(--green-dim); }
 
-  .btn-small { padding: 6px 14px; font-size: 10px; letter-spacing: 2px; min-height: 32px; }
-  .btn-row { display: flex; gap: 12px; justify-content: center; margin-top: 20px; flex-wrap: wrap; }
+  .btn-small { padding: 4px 12px; font-size: 10px; letter-spacing: 1px; min-height: 28px; }
+  .btn-icon { padding: 4px 8px; font-size: 12px; min-height: 28px; min-width: 28px; letter-spacing: 0; }
+  .btn-row { display: flex; gap: 8px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
   .btn-enhance {
     padding: 14px 16px; font-size: 10px; letter-spacing: 2px;
     white-space: nowrap; flex-shrink: 0; align-self: flex-start;
@@ -379,6 +388,7 @@
     background-repeat: no-repeat;
     background-position: right 8px center;
     transition: border-color var(--transition);
+    min-height: 28px;
   }
   .styled-select:focus, .se-transition-select:focus, .msc-select:focus, .aspect-select:focus {
     outline: none; border-color: var(--cyan);
@@ -395,14 +405,14 @@
   }
   .styled-slider:hover { background: #3a3a4a; }
   .styled-slider::-webkit-slider-thumb {
-    -webkit-appearance: none; width: 16px; height: 16px;
+    -webkit-appearance: none; width: 14px; height: 14px;
     border-radius: 50%; background: var(--cyan); cursor: pointer;
     border: 2px solid var(--bg); box-shadow: 0 0 6px var(--cyan-dim);
     transition: box-shadow var(--transition);
   }
   .styled-slider::-webkit-slider-thumb:hover { box-shadow: 0 0 12px var(--cyan); }
   .styled-slider::-moz-range-thumb {
-    width: 16px; height: 16px; border-radius: 50%;
+    width: 14px; height: 14px; border-radius: 50%;
     background: var(--cyan); cursor: pointer;
     border: 2px solid var(--bg);
   }
@@ -618,7 +628,7 @@
   }
 
   .msc-actions {
-    display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px;
+    display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 4px;
   }
   .msc-status {
     font-size: 10px; margin-left: auto;
@@ -656,7 +666,7 @@
   }
 
   .manual-bottom-bar {
-    display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
+    display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;
     margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border);
   }
   .manual-progress-wrap { margin-top: 16px; }
@@ -701,18 +711,19 @@
 
   /* ---- Toolbar ---- */
   .toolbar {
-    display: flex; align-items: center; gap: 8px;
+    display: flex; align-items: center; gap: 6px;
     justify-content: center; margin-bottom: 20px; flex-wrap: wrap;
   }
   .toolbar-group { display: flex; gap: 4px; align-items: center; }
-  .toolbar-sep { width: 1px; height: 24px; background: var(--border); margin: 0 8px; }
+  .toolbar-sep { width: 1px; height: 24px; background: var(--border); margin: 0 6px; }
   .btn-toolbar {
     display: inline-flex; align-items: center; justify-content: center;
-    padding: 6px 12px; font-family: inherit; font-size: 10px;
-    letter-spacing: 2px; text-transform: uppercase;
+    padding: 5px 10px; font-family: inherit; font-size: 10px;
+    letter-spacing: 1px; text-transform: uppercase;
     border: 1px solid var(--border); background: var(--surface);
     color: var(--text-dim); border-radius: 3px;
-    cursor: pointer; transition: all 0.2s; gap: 5px;
+    cursor: pointer; transition: all 0.2s; gap: 4px;
+    min-height: 28px;
   }
   .btn-toolbar:hover:not(:disabled) { border-color: var(--cyan); color: var(--cyan); background: rgba(0,212,255,0.05); }
   .btn-toolbar:disabled { opacity: 0.3; cursor: not-allowed; }
@@ -727,7 +738,7 @@
     letter-spacing: 1px; text-transform: uppercase;
     border: 1px solid var(--magenta); background: transparent;
     color: var(--magenta); border-radius: 3px;
-    cursor: pointer; transition: all 0.2s;
+    cursor: pointer; transition: all 0.2s; min-height: 28px;
   }
   .btn-gen-photo:hover { background: rgba(255,45,123,0.12); box-shadow: 0 0 8px var(--magenta-dim); }
   .btn-gen-photo:disabled { opacity: 0.3; cursor: not-allowed; }
@@ -738,7 +749,7 @@
     letter-spacing: 1px; text-transform: uppercase;
     border: 1px solid var(--amber); background: transparent;
     color: var(--amber); border-radius: 3px;
-    cursor: pointer; transition: all 0.2s; font-weight: 700;
+    cursor: pointer; transition: all 0.2s; font-weight: 700; min-height: 28px;
   }
   .btn-upscale:hover { background: rgba(255,170,0,0.12); box-shadow: 0 0 8px var(--amber-dim); }
   .btn-upscale:disabled { opacity: 0.3; cursor: not-allowed; }
@@ -753,19 +764,20 @@
   #projectLoadInput, #fullProjectLoadInput { display: none; }
 
   /* ---- Preview All Modal ---- */
-  .preview-modal-overlay {
+  .modal-overlay {
     display: none; position: fixed; inset: 0;
     background: rgba(0,0,0,0.85); z-index: 10000;
     align-items: center; justify-content: center;
   }
-  .preview-modal-overlay.open { display: flex; }
-  .preview-modal {
+  .modal-overlay.open { display: flex; }
+  .modal-content {
     background: var(--surface); border: 1px solid var(--cyan);
     border-radius: var(--radius-lg); padding: 20px;
     max-width: 800px; width: 90%; position: relative;
     box-shadow: 0 0 40px var(--cyan-dim);
+    max-height: 90vh; overflow-y: auto;
   }
-  .preview-modal-close {
+  .modal-close {
     position: absolute; top: 10px; right: 14px;
     background: transparent; border: 1px solid var(--red);
     color: var(--red); font-size: 14px; width: 24px; height: 24px;
@@ -773,12 +785,12 @@
     display: flex; align-items: center; justify-content: center;
     transition: all 0.2s;
   }
-  .preview-modal-close:hover { background: var(--red); color: #fff; }
-  .preview-modal-title {
+  .modal-close:hover { background: var(--red); color: #fff; }
+  .modal-title {
     font-size: 11px; color: var(--cyan); text-transform: uppercase;
     letter-spacing: 3px; margin-bottom: 14px;
   }
-  .preview-modal video {
+  .modal-content video {
     width: 100%; border-radius: var(--radius); border: 1px solid var(--border);
   }
 
@@ -891,6 +903,33 @@
     border-radius: 50%; margin-right: 4px; vertical-align: middle;
   }
 
+  /* ---- Palette dots ---- */
+  .palette-dots { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+  .palette-dot {
+    width: 18px; height: 18px; border-radius: 50%;
+    border: 2px solid var(--surface); cursor: pointer;
+    transition: transform 0.2s;
+  }
+  .palette-dot:hover { transform: scale(1.3); }
+
+  /* ---- Emotion badges ---- */
+  .emotion-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .emotion-badge {
+    padding: 3px 10px; font-size: 9px; letter-spacing: 1px;
+    text-transform: uppercase; border-radius: 12px;
+    border: 1px solid var(--magenta); color: var(--magenta);
+    background: rgba(255,45,123,0.08);
+  }
+
+  /* ---- Frames grid ---- */
+  .frames-grid { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
+  .frames-grid img {
+    width: 80px; height: 60px; object-fit: cover;
+    border: 1px solid var(--border); border-radius: 3px;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .frames-grid img:hover { border-color: var(--cyan); transform: scale(1.05); }
+
   /* ---- Footer ---- */
   .footer {
     text-align: center; padding: 30px 20px;
@@ -905,7 +944,7 @@
   }
   .footer a:hover { color: var(--magenta); }
 
-  /* ---- Timeline view (Item 11) ---- */
+  /* ---- Timeline view ---- */
   .timeline-toggle-bar {
     display: flex; align-items: center; gap: 12px;
     margin-bottom: 12px; padding: 8px 0;
@@ -953,9 +992,8 @@
     font-size: 10px; color: var(--text-dim); margin-top: 6px;
     letter-spacing: 1px; text-align: right;
   }
-  .tl-section-colors { }
 
-  /* ---- Prompt History panel (Item 10) ---- */
+  /* ---- Prompt History panel ---- */
   .prompt-history-panel { display: none; }
   .prompt-history-panel.visible { display: block; }
   .prompt-history-list {
@@ -977,22 +1015,27 @@
   .prompt-history-text { flex: 1; color: var(--text); word-break: break-word; }
   .prompt-history-time { color: var(--text-dim); font-size: 9px; flex-shrink: 0; min-width: 60px; text-align: right; }
 
-  /* ---- Speed Ramp / Reverse (Items 16, 17) ---- */
+  /* ---- Speed Ramp / Reverse ---- */
   .msc-ramp-row {
     display: flex; align-items: center; gap: 8px; margin-top: 4px;
   }
-  .reverse-toggle {
+  .reverse-toggle, .boomerang-toggle {
     background: var(--bg); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 4px 10px;
+    border-radius: var(--radius); padding: 4px 8px;
     color: var(--text-dim); font-family: inherit; font-size: 10px;
     cursor: pointer; transition: all 0.2s; letter-spacing: 1px;
+    min-height: 28px;
   }
   .reverse-toggle.active {
     border-color: var(--magenta); color: var(--magenta);
     box-shadow: 0 0 8px var(--magenta-dim);
   }
+  .boomerang-toggle.active {
+    border-color: var(--cyan); color: var(--cyan);
+    box-shadow: 0 0 8px var(--cyan-dim);
+  }
 
-  /* ---- Render estimate (Item 37) ---- */
+  /* ---- Render estimate ---- */
   .render-estimate {
     font-size: 11px; color: var(--amber); letter-spacing: 1px;
     padding: 8px 12px; background: var(--amber-dim);
@@ -1001,17 +1044,19 @@
   }
   .render-estimate.visible { display: block; }
 
-  /* ---- Autosave indicator (Item 47) ---- */
+  /* ---- Autosave indicator ---- */
   .autosave-indicator {
-    position: fixed; top: 12px; right: 16px; z-index: 1000;
+    display: flex; align-items: center; gap: 4px;
     font-size: 9px; letter-spacing: 1px; text-transform: uppercase;
-    color: var(--text-dim); padding: 4px 10px;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); opacity: 0; transition: opacity 0.5s;
-    pointer-events: none;
+    color: var(--text-dim);
   }
-  .autosave-indicator.visible { opacity: 1; }
-  .autosave-indicator.unsaved { color: var(--amber); border-color: var(--amber-dim); }
+  .autosave-indicator .unsaved-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--amber);
+    display: none;
+  }
+  .autosave-indicator.unsaved .unsaved-dot { display: block; }
+  .autosave-indicator.unsaved { color: var(--amber); }
+
   .autosave-restore-banner {
     background: var(--amber-dim); border: 1px solid var(--amber);
     border-radius: var(--radius); padding: 12px 16px;
@@ -1020,35 +1065,22 @@
   }
   .autosave-restore-banner.visible { display: flex; }
 
-  /* ---- Roadmap completed items ---- */
-  .roadmap-panel ol li.completed {
-    text-decoration: line-through; color: var(--green); opacity: 0.7;
+  /* ---- Shortcuts modal ---- */
+  .shortcuts-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 11px; }
+  .shortcuts-grid .shortcut-key {
+    color: var(--cyan); font-weight: 700; text-align: right;
+    padding: 4px 8px; background: var(--bg); border-radius: 3px;
+    border: 1px solid var(--border);
   }
-  .roadmap-panel ol li.completed::marker { color: var(--green); }
-  .completed-tag {
-    font-size: 8px; background: var(--green-dim); color: var(--green);
-    padding: 1px 5px; border-radius: 2px; margin-left: 4px;
-    letter-spacing: 1px; text-transform: uppercase; text-decoration: none;
-    display: inline-block;
-  }
+  .shortcuts-grid .shortcut-desc { color: var(--text); padding: 4px 0; }
 
-  /* ---- Roadmap panel ---- */
-  .roadmap-panel { display: none; }
-  .roadmap-panel.visible { display: block; }
-  .roadmap-panel h3 {
-    font-size: 14px; color: var(--cyan); letter-spacing: 4px;
-    text-transform: uppercase; margin-bottom: var(--gap-md);
+  /* ---- Version list ---- */
+  .version-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .version-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: var(--radius); font-size: 11px;
   }
-  .roadmap-panel h4 {
-    font-size: 11px; color: var(--amber); letter-spacing: 3px;
-    text-transform: uppercase; margin: var(--gap-md) 0 var(--gap-sm);
-  }
-  .roadmap-panel ol {
-    padding-left: 24px; font-size: 11px; color: var(--text-dim);
-    line-height: 2; letter-spacing: 0.5px;
-  }
-  .roadmap-panel ol li { margin-bottom: 2px; }
-  .roadmap-panel ol li::marker { color: var(--cyan); }
 
   /* ---- Responsive ---- */
   @media (max-width: 1200px) {
@@ -1093,9 +1125,6 @@
 <input type="file" id="projectLoadInput" accept=".json">
 <input type="file" id="fullProjectLoadInput" accept=".zip">
 
-<!-- Autosave indicator -->
-<div class="autosave-indicator" id="autosaveIndicator">Saved</div>
-
 <div class="container">
   <!-- Autosave restore banner -->
   <div class="autosave-restore-banner" id="autosaveRestoreBanner">
@@ -1106,10 +1135,10 @@
 
   <div class="header">
     <h1>Music Video Generator</h1>
-    <div class="sub">Grok AI &middot; Video Synthesis Engine</div>
+    <div class="sub">AI Video Synthesis Engine</div>
   </div>
 
-  <!-- Toolbar -->
+  <!-- ============ TOOLBAR ============ -->
   <div class="toolbar">
     <div class="toolbar-group">
       <button class="btn-toolbar" id="undoBtn" disabled data-tooltip="Undo (Ctrl+Z)">Undo</button>
@@ -1117,23 +1146,25 @@
     </div>
     <div class="toolbar-sep"></div>
     <div class="toolbar-group">
-      <button class="btn-toolbar btn-tb-green" id="saveProjectBtn" data-tooltip="Save project metadata to JSON">Save Project</button>
-      <button class="btn-toolbar btn-tb-green" id="saveFullProjectBtn" data-tooltip="Save project with all clips as zip">Save Full</button>
-      <button class="btn-toolbar btn-tb-amber" id="loadProjectBtn" data-tooltip="Load project from JSON">Load Project</button>
-      <button class="btn-toolbar btn-tb-amber" id="loadFullProjectBtn" data-tooltip="Load full project from zip">Load Full</button>
+      <button class="btn-toolbar btn-tb-green" id="saveProjectBtn" data-tooltip="Save project to JSON">Save</button>
+      <button class="btn-toolbar btn-tb-green" id="saveFullProjectBtn" data-tooltip="Save project+clips as ZIP">Full Save</button>
+      <button class="btn-toolbar btn-tb-amber" id="loadProjectBtn" data-tooltip="Load project from JSON">Load</button>
+      <button class="btn-toolbar btn-tb-amber" id="loadFullProjectBtn" data-tooltip="Load full project from ZIP">Full Load</button>
     </div>
     <div class="toolbar-sep"></div>
     <div class="toolbar-group">
-      <button class="btn-toolbar btn-tb-magenta" id="exportStoryboardBtn" data-tooltip="Export storyboard as PNG">Export Storyboard</button>
+      <button class="btn-toolbar btn-tb-green" onclick="window._saveTemplate()" data-tooltip="Save as reusable template">Template Save</button>
+      <button class="btn-toolbar btn-tb-amber" onclick="window._loadTemplate()" data-tooltip="Load from template">Template Load</button>
     </div>
     <div class="toolbar-sep"></div>
     <div class="toolbar-group">
-      <button class="btn-toolbar btn-tb-green" onclick="window._saveTemplate()" data-tooltip="Save scene layout as reusable template">Save Template</button>
-      <button class="btn-toolbar btn-tb-amber" onclick="window._loadTemplate()" data-tooltip="Load scenes from a saved template">Load Template</button>
+      <button class="btn-toolbar btn-tb-magenta" onclick="window._showAnalytics()" data-tooltip="Show project analytics">Analytics</button>
+      <button class="btn-toolbar" onclick="window._showShortcuts()" data-tooltip="Keyboard shortcuts">?</button>
     </div>
     <div class="toolbar-sep"></div>
-    <div class="toolbar-group">
-      <button class="btn-toolbar btn-tb-magenta" onclick="window._exportBestGifs()" data-tooltip="Export GIFs from 3 highest-energy scenes">Best GIFs</button>
+    <div class="autosave-indicator" id="autosaveIndicator">
+      <span class="unsaved-dot"></span>
+      <span id="autosaveText">Saved</span>
     </div>
   </div>
 
@@ -1179,7 +1210,7 @@
       </div>
       <div class="hint" style="margin-top:10px;">
         Upload character, location, or object references. Use their names in your style prompt.<br>
-        <em style="color:var(--amber);">Note: Reference names are embedded as descriptive keywords in prompts for stylistic consistency.</em>
+        <em style="color:var(--amber);">Note: Reference names are embedded as descriptive keywords in prompts.</em>
       </div>
     </div>
   </div>
@@ -1203,7 +1234,7 @@
         Tip: select a preset above or type your own. Click "Enhance" to add cinematic keywords.
       </div>
       <div style="margin-top:8px;">
-        <button class="btn btn-small btn-amber" onclick="window._suggestGenre()" data-tooltip="Auto-suggest style based on BPM and energy">Auto-Suggest from Audio</button>
+        <button class="btn btn-small btn-amber" onclick="window._suggestGenre()" data-tooltip="Auto-suggest style from BPM and energy">Auto-Suggest from Audio</button>
       </div>
     </div>
   </div>
@@ -1302,8 +1333,8 @@
         <div class="btn-row" style="justify-content:flex-start;gap:8px;">
           <button class="btn btn-small" onclick="window._applyBeatSync('auto')" data-tooltip="Add beat-synced flash cuts">Beat Sync</button>
           <button class="btn btn-small" onclick="window._uploadWatermark()" data-tooltip="Upload a PNG watermark">Upload Watermark</button>
-          <button class="btn btn-small btn-amber" onclick="window._applyWatermark('auto')" data-tooltip="Apply watermark to video">Apply Watermark</button>
-          <button class="btn btn-small btn-magenta" onclick="window._addCredits('auto')" data-tooltip="Add scrolling credits">Add Credits</button>
+          <button class="btn btn-small btn-amber" onclick="window._applyWatermark('auto')" data-tooltip="Apply watermark">Apply Watermark</button>
+          <button class="btn btn-small btn-magenta" onclick="window._addCredits('auto')" data-tooltip="Add scrolling credits">Credits</button>
           <button class="btn btn-small" onclick="window._extractThumbnail('auto')" data-tooltip="Extract frame as thumbnail">Thumbnail</button>
         </div>
         <div style="margin-top:12px;">
@@ -1350,11 +1381,11 @@
   <!-- ============ MANUAL MODE ============ -->
   <div id="manualModeContainer" class="hidden">
 
-    <!-- Manual Audio Upload -->
+    <!-- ======= AUDIO PANEL ======= -->
     <div class="panel">
       <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
         <span class="dot"></span>
-        <span class="panel-title">Audio Track (Optional)</span>
+        <span class="panel-title">Audio Track</span>
         <span class="collapse-icon">&#9660;</span>
       </div>
       <div class="panel-body">
@@ -1364,10 +1395,67 @@
           <div class="filename hidden" id="manualUploadFilename"></div>
           <input type="file" id="manualFileInput" accept="audio/*">
         </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center;">
+          <span class="msc-label">Key:</span>
+          <span id="audioKeyDisplay" style="color:var(--cyan);font-size:12px;font-weight:700;">--</span>
+          <span class="msc-label" style="margin-left:12px;">BPM:</span>
+          <span id="audioBpmDisplay" style="color:var(--cyan);font-size:12px;font-weight:700;">--</span>
+          <button class="btn btn-small" onclick="window._detectKey()" data-tooltip="Detect musical key">Detect Key</button>
+          <button class="btn btn-small btn-amber" onclick="window._alignToBeats()" data-tooltip="Snap scene boundaries to beats">Align to Beats</button>
+          <button class="btn btn-small" onclick="window._generateClickTrack()" data-tooltip="Generate metronome click track">Click Track</button>
+          <button class="btn btn-small btn-magenta" onclick="window._autoMixMaster()" data-tooltip="Apply EQ/compression to audio">Auto-Mix</button>
+        </div>
       </div>
     </div>
 
-    <!-- Manual Scene Builder -->
+    <!-- ======= REFERENCES (MANUAL) ======= -->
+    <div class="panel">
+      <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
+        <span class="dot dot-magenta"></span>
+        <span class="panel-title">Character References</span>
+        <span class="collapse-icon">&#9660;</span>
+      </div>
+      <div class="panel-body">
+        <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;">
+          Map character names to reference photos. When a prompt mentions the name, the photo auto-attaches as a keyframe.
+        </div>
+        <div id="charRefList"></div>
+        <div style="display:flex;gap:6px;margin-top:8px;">
+          <input type="text" id="charRefNameInput" class="msc-overlay-input" placeholder="Name (e.g. TB)" style="width:80px;">
+          <select id="charRefImageSelect" class="styled-select" style="flex:1;"><option value="">Select reference image...</option></select>
+          <button class="btn btn-small btn-magenta" onclick="window._addCharRef()">Add</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======= STYLE PANEL (MANUAL) ======= -->
+    <div class="panel">
+      <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
+        <span class="dot"></span>
+        <span class="panel-title">Style &amp; Consistency</span>
+        <span class="collapse-icon">&#9660;</span>
+      </div>
+      <div class="panel-body">
+        <div class="msc-label" style="margin-bottom:8px;">Style Presets</div>
+        <div class="preset-grid" id="manualPresetGrid"></div>
+        <div class="style-lock-bar" id="manualStyleLockBar">
+          <span class="style-lock-label">Lock</span>
+          <label class="style-lock-toggle">
+            <input type="checkbox" id="manualStyleLockToggle" onchange="window._toggleStyleLock('manual')">
+            <span class="slider"></span>
+          </label>
+          <input type="text" class="style-lock-input" id="manualStyleLockInput" placeholder="e.g. cyberpunk, neon rain, dark moody, cinematic 4k">
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+          <button class="btn btn-small btn-magenta" onclick="window._showStyleMixModal()" data-tooltip="Blend two style presets">Mix Styles</button>
+          <button class="btn btn-small btn-amber" onclick="window._detectEmotion()" data-tooltip="Analyze lyrics for emotion">Emotion from Lyrics</button>
+          <button class="btn btn-small" onclick="window._autoTransitionsEnergy()" data-tooltip="Set transitions by energy">Auto Transitions</button>
+        </div>
+        <div class="emotion-badges" id="emotionBadges"></div>
+      </div>
+    </div>
+
+    <!-- ======= SCENE BUILDER ======= -->
     <div class="panel">
       <div class="panel-header">
         <span class="dot dot-magenta"></span>
@@ -1402,20 +1490,23 @@
           <div class="timeline-total" id="timelineTotal"></div>
         </div>
 
-        <!-- Card view (existing) -->
+        <!-- Card view -->
         <div id="cardView">
           <div class="manual-scene-list" id="manualSceneList"></div>
         </div>
         <button class="manual-add-btn" id="manualAddSceneBtn">+ Add Scene</button>
+      </div>
+    </div>
 
-        <div class="manual-progress-wrap hidden" id="manualProgressWrap">
-          <div class="phase-label" id="manualPhaseLabel">...</div>
-          <div class="progress-bar-track">
-            <div class="progress-bar-fill" id="manualProgressFill"></div>
-          </div>
-        </div>
-
-        <div class="stitch-settings-bar">
+    <!-- ======= STITCH SETTINGS ======= -->
+    <div class="panel">
+      <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
+        <span class="dot dot-amber"></span>
+        <span class="panel-title">Stitch Settings</span>
+        <span class="collapse-icon">&#9660;</span>
+      </div>
+      <div class="panel-body">
+        <div class="stitch-settings-bar" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">
           <div class="stitch-setting-group">
             <span class="msc-label">Default Engine:</span>
             <select class="styled-select" id="globalEngineSelect" onchange="window._updateGlobalEngine(this.value)">
@@ -1441,7 +1532,7 @@
           <div class="stitch-setting-group">
             <label class="stitch-checkbox-label">
               <input type="checkbox" id="audioVizCheckbox" onchange="window._updateStitchSettings()">
-              Audio Visualization
+              Audio Viz
             </label>
             <select class="styled-select" id="audioVizStyleSelect" onchange="window._updateStitchSettings()">
               <option value="waveform">Waveform</option>
@@ -1450,7 +1541,7 @@
             </select>
           </div>
           <div class="stitch-setting-group">
-            <span class="msc-label">Audio Crossfade:</span>
+            <span class="msc-label">Crossfade:</span>
             <div class="slider-group" style="flex:1;">
               <input type="range" class="styled-slider" id="audioCrossfadeSlider" min="0" max="2" step="0.1" value="0"
                      oninput="this.nextElementSibling.textContent=this.value+'s'" onchange="window._updateStitchSettings()">
@@ -1468,31 +1559,31 @@
               <span class="slider-val" id="duckLevelVal">30%</span>
             </div>
           </div>
-        </div>
-
-        <!-- Character References -->
-        <div class="panel" style="margin:12px 0;border-color:var(--magenta-dim);">
-          <div class="panel-header" style="cursor:pointer;" onclick="$('charRefBody').classList.toggle('hidden')">
-            <span style="color:var(--magenta);">CHAR</span>
-            <span style="flex:1;">Character References</span>
-            <span style="font-size:10px;color:var(--text-dim);">click to toggle</span>
-          </div>
-          <div id="charRefBody" class="hidden" style="padding:12px;">
-            <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;">
-              Map character names to reference photos. When a prompt mentions the name, the photo auto-attaches as a keyframe.
-            </div>
-            <div id="charRefList"></div>
-            <div style="display:flex;gap:6px;margin-top:8px;">
-              <input type="text" id="charRefNameInput" class="msc-overlay-input" placeholder="Name (e.g. TB)" style="width:80px;">
-              <select id="charRefImageSelect" class="styled-select" style="flex:1;"><option value="">Select reference image...</option></select>
-              <button class="btn btn-small btn-magenta" onclick="window._addCharRef()">Add</button>
-            </div>
+          <div class="stitch-setting-group">
+            <label class="stitch-checkbox-label">
+              <input type="checkbox" id="beatSyncCheckbox" onchange="window._updateStitchSettings()">
+              Beat Sync
+            </label>
           </div>
         </div>
+      </div>
+    </div>
 
-        <div class="manual-bottom-bar">
+    <!-- ======= ACTIONS BAR ======= -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="dot dot-green"></span>
+        <span class="panel-title">Actions</span>
+      </div>
+      <div class="panel-body">
+        <div class="manual-progress-wrap hidden" id="manualProgressWrap">
+          <div class="phase-label" id="manualPhaseLabel">...</div>
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" id="manualProgressFill"></div>
+          </div>
+        </div>
+        <div class="manual-bottom-bar" style="border-top:none;margin-top:0;padding-top:0;">
           <button class="btn" id="manualGenerateAllBtn">Generate All</button>
-          <button class="btn btn-amber" id="manualAlignBeatsBtn" onclick="window._alignToBeats()" data-tooltip="Snap scene boundaries to beat timestamps">Align to Beats</button>
           <button class="btn btn-amber" id="manualPreviewAllBtn" onclick="window._previewAll()">Preview All</button>
           <button class="btn btn-amber" id="manualStitchBtn">Stitch Video</button>
           <a class="btn btn-magenta hidden" id="manualDownloadBtn" href="#" download="music_video.mp4">Download</a>
@@ -1500,30 +1591,74 @@
       </div>
     </div>
 
-    <!-- Style Lock (Manual Mode) -->
+    <!-- ======= EXPORT PANEL ======= -->
     <div class="panel">
       <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
         <span class="dot"></span>
-        <span class="panel-title">Style Consistency Lock</span>
+        <span class="panel-title">Export &amp; Share</span>
+        <span class="collapse-icon">&#9660;</span>
+      </div>
+      <div class="panel-body">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+          <span class="msc-label">Aspect:</span>
+          <select class="styled-select" id="manualAspectSelect">
+            <option value="16:9" selected>16:9 (1920x1080)</option>
+            <option value="9:16">9:16 (1080x1920)</option>
+            <option value="1:1">1:1 (1080x1080)</option>
+            <option value="4:5">4:5 (1080x1350)</option>
+          </select>
+          <button class="btn btn-small btn-amber" onclick="window._batchExport()">Batch Export</button>
+        </div>
+        <div class="msc-label" style="margin-bottom:8px;">Social Platforms</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+          <button class="btn btn-small" onclick="window._socialExport('youtube','manual')">YouTube</button>
+          <button class="btn btn-small btn-magenta" onclick="window._socialExport('tiktok','manual')">TikTok</button>
+          <button class="btn btn-small btn-amber" onclick="window._socialExport('instagram','manual')">Instagram</button>
+          <button class="btn btn-small" onclick="window._socialExport('twitter','manual')">Twitter/X</button>
+        </div>
+        <div class="msc-label" style="margin-bottom:8px;">Post-Production</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+          <button class="btn btn-small" onclick="window._applyBeatSync('manual')" data-tooltip="Beat-synced flash cuts">Beat Sync</button>
+          <button class="btn btn-small" onclick="window._uploadWatermark()" data-tooltip="Upload PNG watermark">Watermark</button>
+          <button class="btn btn-small btn-amber" onclick="window._applyWatermark('manual')" data-tooltip="Apply watermark">Apply WM</button>
+          <button class="btn btn-small btn-magenta" onclick="window._addCredits('manual')" data-tooltip="Add scrolling credits">Credits</button>
+          <button class="btn btn-small" onclick="window._extractThumbnail('manual')" data-tooltip="Extract thumbnail">Thumbnail</button>
+          <button class="btn btn-small btn-amber" onclick="window._generateThumbnail()" data-tooltip="AI thumbnail">AI Thumb</button>
+        </div>
+        <div class="msc-label" style="margin-bottom:8px;">Extra</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+          <button class="btn btn-small" onclick="window._generateQRCode()" data-tooltip="Generate QR code for video">QR Code</button>
+          <button class="btn btn-small" onclick="window._getEmbedCode()" data-tooltip="Get HTML embed snippet">Embed Code</button>
+          <button class="btn btn-small btn-amber" onclick="window._exportStoryboardPdf()" data-tooltip="Export storyboard as printable HTML">Storyboard</button>
+          <button class="btn btn-small btn-magenta" onclick="window._showVersions()" data-tooltip="View version history">Versions</button>
+          <button class="btn btn-small btn-magenta" onclick="window._exportBestGifs()" data-tooltip="Export GIFs from top scenes">Best GIFs</button>
+          <button class="btn btn-small btn-tb-magenta" id="exportStoryboardBtn" onclick="window._exportStoryboardPng()" data-tooltip="Storyboard PNG">Storyboard PNG</button>
+        </div>
+        <div class="export-list" id="manualExportList"></div>
+        <div class="export-list" id="socialExportList" style="margin-top:8px;"></div>
+      </div>
+    </div>
+
+    <!-- ======= MULTI-TRACK AUDIO ======= -->
+    <div class="panel collapsed">
+      <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
+        <span class="dot dot-magenta"></span>
+        <span class="panel-title">Multi-Track Audio</span>
         <span class="collapse-icon">&#9660;</span>
       </div>
       <div class="panel-body">
         <div class="hint" style="margin-bottom:10px;">
-          Lock a style string that will be appended to all scene prompts for visual consistency.
+          Upload separate vocal and instrumental tracks. Set mix levels per track.
         </div>
-        <div class="style-lock-bar" id="manualStyleLockBar">
-          <span class="style-lock-label">Lock</span>
-          <label class="style-lock-toggle">
-            <input type="checkbox" id="manualStyleLockToggle" onchange="window._toggleStyleLock('manual')">
-            <span class="slider"></span>
-          </label>
-          <input type="text" class="style-lock-input" id="manualStyleLockInput" placeholder="e.g. cyberpunk, neon rain, dark moody, cinematic 4k">
+        <div class="btn-row" style="justify-content:flex-start;">
+          <button class="btn btn-small" onclick="window._uploadAudioTracks()">Upload Vocal + Instrumental</button>
+          <button class="btn btn-small btn-amber" onclick="window._mixAudioTracks()">Mix Audio</button>
         </div>
       </div>
     </div>
 
-    <!-- Lyrics Panel (Manual Mode) -->
-    <div class="panel">
+    <!-- ======= LYRICS PANEL (MANUAL) ======= -->
+    <div class="panel collapsed">
       <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
         <span class="dot"></span>
         <span class="panel-title">Lyrics Sync</span>
@@ -1542,93 +1677,6 @@
       </div>
     </div>
 
-    <!-- Export (Manual Mode) -->
-    <div class="panel">
-      <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
-        <span class="dot"></span>
-        <span class="panel-title">Export Options</span>
-        <span class="collapse-icon">&#9660;</span>
-      </div>
-      <div class="panel-body">
-        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
-          <div class="slider-group">
-            <span class="msc-label">Aspect Ratio:</span>
-            <select class="styled-select" id="manualAspectSelect">
-              <option value="16:9" selected>16:9 (1920x1080)</option>
-              <option value="9:16">9:16 (1080x1920)</option>
-              <option value="1:1">1:1 (1080x1080)</option>
-              <option value="4:5">4:5 (1080x1350)</option>
-            </select>
-          </div>
-          <button class="btn btn-small btn-amber" onclick="window._batchExport()">Export All Formats</button>
-        </div>
-        <div class="export-list" id="manualExportList"></div>
-      </div>
-    </div>
-
-    <!-- Multi-Track Audio -->
-    <div class="panel">
-      <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
-        <span class="dot dot-magenta"></span>
-        <span class="panel-title">Multi-Track Audio</span>
-        <span class="collapse-icon">&#9660;</span>
-      </div>
-      <div class="panel-body">
-        <div class="hint" style="margin-bottom:10px;">
-          Upload separate vocal and instrumental tracks. Set mix levels per track.
-        </div>
-        <div class="btn-row" style="justify-content:flex-start;">
-          <button class="btn btn-small" onclick="window._uploadAudioTracks()">Upload Vocal + Instrumental</button>
-          <button class="btn btn-small btn-amber" onclick="window._mixAudioTracks()">Mix Audio</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Post-Production -->
-    <div class="panel">
-      <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
-        <span class="dot"></span>
-        <span class="panel-title">Post-Production</span>
-        <span class="collapse-icon">&#9660;</span>
-      </div>
-      <div class="panel-body">
-        <div class="hint" style="margin-bottom:10px;">
-          Apply finishing touches to your final video after stitching.
-        </div>
-        <div class="btn-row" style="justify-content:flex-start;gap:8px;">
-          <button class="btn btn-small" onclick="window._applyBeatSync('manual')" data-tooltip="Add beat-synced flash cuts">Beat Sync</button>
-          <button class="btn btn-small" onclick="window._uploadWatermark()" data-tooltip="Upload a PNG watermark">Upload Watermark</button>
-          <button class="btn btn-small btn-amber" onclick="window._applyWatermark('manual')" data-tooltip="Apply watermark">Apply Watermark</button>
-          <button class="btn btn-small btn-magenta" onclick="window._addCredits('manual')" data-tooltip="Add scrolling credits">Add Credits</button>
-        </div>
-        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-small" onclick="window._extractThumbnail('manual')" data-tooltip="Extract a frame as thumbnail">Extract Thumbnail</button>
-          <button class="btn btn-small btn-amber" onclick="window._generateThumbnail()" data-tooltip="Generate custom thumbnail with AI">AI Thumbnail</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Social Export -->
-    <div class="panel">
-      <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
-        <span class="dot dot-magenta"></span>
-        <span class="panel-title">Share / Social Export</span>
-        <span class="collapse-icon">&#9660;</span>
-      </div>
-      <div class="panel-body">
-        <div class="hint" style="margin-bottom:10px;">
-          Export your video optimized for each social platform.
-        </div>
-        <div class="btn-row" style="justify-content:flex-start;gap:8px;">
-          <button class="btn btn-small" onclick="window._socialExport('youtube','manual')">YouTube (16:9)</button>
-          <button class="btn btn-small btn-magenta" onclick="window._socialExport('tiktok','manual')">TikTok (9:16)</button>
-          <button class="btn btn-small btn-amber" onclick="window._socialExport('instagram','manual')">Instagram Reels</button>
-          <button class="btn btn-small" onclick="window._socialExport('twitter','manual')">Twitter/X</button>
-        </div>
-        <div class="export-list" id="socialExportList" style="margin-top:12px;"></div>
-      </div>
-    </div>
-
     <!-- Manual Preview -->
     <div class="panel hidden" id="manualPreviewPanel">
       <div class="panel-header">
@@ -1644,112 +1692,112 @@
 
   </div><!-- /manualModeContainer -->
 
-  <!-- Footer with Roadmap link -->
   <div class="footer">
-    <span>Music Video Generator v2.0</span>
-    &middot;
-    <a href="#" id="roadmapToggle" onclick="event.preventDefault(); document.getElementById('roadmapPanel').classList.toggle('visible');">Roadmap</a>
-  </div>
-
-  <!-- Roadmap Panel -->
-  <div class="panel roadmap-panel" id="roadmapPanel">
-    <div class="panel-header">
-      <span class="dot dot-magenta"></span>
-      <span class="panel-title">Roadmap &mdash; 50 Active + 8 Completed</span>
-    </div>
-    <div class="panel-body">
-      <h4>AI &amp; Generation (1-10)</h4>
-      <ol>
-        <li>Better prompt engineering with per-scene context awareness and adaptive detail levels</li>
-        <li>Style mixing: blend two or more style presets with weighted percentages</li>
-        <li class="completed">Scene-to-scene flow: coherence pass ensures adjacent scenes share visual elements, color palette, and recurring motifs <span class="completed-tag">done</span></li>
-        <li>Character consistency: maintain face and body features across all scenes using embeddings</li>
-        <li>Emotion detection from lyrics: parse lyrics sentiment to auto-adjust scene mood and color</li>
-        <li>Automatic scene transitions based on audio energy: high energy = fast cuts, low = slow dissolves</li>
-        <li>AI upscale via dedicated model (Real-ESRGAN / Topaz integration) instead of ffmpeg lanczos</li>
-        <li>Reference video style transfer: upload a video clip and extract its visual style for generation</li>
-        <li>Automatic color palette extraction from uploaded reference photos</li>
-        <li class="completed">Prompt history and favorites: save, star, and reuse prompts from history panel <span class="completed-tag">done</span></li>
-      </ol>
-
-      <h4>Editing (11-20)</h4>
-      <ol start="11">
-        <li class="completed">Timeline view: horizontal colored blocks on time axis, click to select, drag edges to resize, duration display <span class="completed-tag">done</span></li>
-        <li>Frame-by-frame editor: step through generated clips and mark in/out points</li>
-        <li>Green screen / chroma key: remove background color from uploaded video clips</li>
-        <li>Picture-in-picture: overlay a small video (e.g. webcam) on a corner of the main video</li>
-        <li>Split screen: show two scenes side-by-side with configurable layout ratios</li>
-        <li class="completed">Slow motion ramp: per-scene speed ramp with slow-in, slow-out, slow-mid options via ffmpeg setpts <span class="completed-tag">done</span></li>
-        <li class="completed">Reverse clip: per-scene reverse toggle via ffmpeg reverse filter <span class="completed-tag">done</span></li>
-        <li>Loop / boomerang effect: auto-loop a scene clip forward and backward</li>
-        <li class="completed">Crossfade audio between scenes: global audio crossfade slider (0-2s) using ffmpeg acrossfade <span class="completed-tag">done</span></li>
-        <li>Audio ducking: automatically lower music volume during vocal overlay segments</li>
-      </ol>
-
-      <h4>Audio (21-30)</h4>
-      <ol start="21">
-        <li>BPM detection accuracy improvement: use multiple algorithms and take consensus</li>
-        <li>Key detection: identify the musical key for harmonic scene matching</li>
-        <li>Audio normalization: auto-level audio across all tracks to prevent clipping</li>
-        <li>Noise reduction on vocals: remove background noise from voiceover tracks</li>
-        <li>Auto-mix master: apply EQ, compression, and limiting to final audio output</li>
-        <li>Stem separation: split uploaded audio into vocal, drums, bass, and other tracks</li>
-        <li>Tempo adjustment without pitch change: time-stretch audio to match desired BPM</li>
-        <li>Pitch shift: transpose audio up or down by semitones</li>
-        <li>Audio effects: add reverb, echo, or delay to individual tracks</li>
-        <li>Click track generation: create a metronome track for timing reference</li>
-      </ol>
-
-      <h4>Export &amp; Sharing (31-40)</h4>
-      <ol start="31">
-        <li>Direct upload to YouTube and TikTok via OAuth API integration</li>
-        <li>QR code generation: create a scannable QR code linking to the video</li>
-        <li>Embed code for websites: generate HTML embed snippet for sharing</li>
-        <li>GIF export of best moments: auto-detect high-energy segments and export as animated GIF</li>
-        <li>Shareable preview link: host a temporary preview URL for collaboration review</li>
-        <li>Version history: keep all previous exports with diff comparison</li>
-        <li>Batch render queue: queue multiple videos with different settings for sequential rendering</li>
-        <li class="completed">Render time estimation: shows estimated time before generation based on scene count and engine speed <span class="completed-tag">done</span></li>
-        <li>Notification when render completes: browser push notification or webhook callback</li>
-        <li>Cloud storage integration: auto-upload final videos to Google Drive, Dropbox, or S3</li>
-      </ol>
-
-      <h4>Workflow (41-50)</h4>
-      <ol start="41">
-        <li>Keyboard shortcuts reference panel: show all shortcuts in a modal overlay</li>
-        <li>Template library: save and load scene configurations as reusable templates</li>
-        <li>Collaboration: multiple users editing the same project with real-time sync</li>
-        <li>AI assistant chat: ask for style suggestions, troubleshoot errors, get creative ideas</li>
-        <li>Analytics dashboard: track which styles and prompts produce the best results</li>
-        <li>Project comparison: side-by-side two versions of the same video for A/B testing</li>
-        <li class="completed">Auto-save every 30 seconds: background autosave with restore banner on page load <span class="completed-tag">done</span></li>
-        <li>Import from other tools: support Premiere XML, Final Cut Pro XML project import</li>
-        <li>Export storyboard as PDF: generate a printable storyboard document</li>
-        <li>Dark / light mode toggle: switch between dark cyberpunk theme and clean light theme</li>
-      </ol>
-
-      <h4 style="color:var(--green);">New Items (51-58)</h4>
-      <ol start="51">
-        <li>AI scene continuation: after generating a clip, use its last frame as input for the next scene's generation for true visual continuity</li>
-        <li>Prompt template variables: define reusable variables like {character}, {location}, {mood} that expand differently per scene</li>
-        <li>Waveform scrubber: visual audio waveform in the timeline view with beat markers and section boundaries</li>
-        <li>Scene grouping and nesting: group multiple scenes into a "sequence" that can be collapsed, duplicated, or moved as a unit</li>
-        <li>Motion tracking overlay: track a point in a generated clip and anchor text or image overlays to follow it</li>
-        <li>AI-powered scene suggestion: given the style and audio analysis, auto-suggest scene prompts with one-click accept</li>
-        <li>Render queue with priority: queue multiple render jobs with priority levels, pause/resume, and estimated completion times</li>
-        <li>Plugin system: allow third-party extensions for new video engines, filters, transitions, and export targets via a simple JS/Python plugin API</li>
-      </ol>
-    </div>
+    <span>Music Video Generator v3.0</span>
   </div>
 
 </div>
 
+<!-- ============ MODALS ============ -->
+
 <!-- Preview All Modal -->
-<div class="preview-modal-overlay" id="previewModalOverlay">
-  <div class="preview-modal">
-    <button class="preview-modal-close" onclick="window._closePreviewModal()">&times;</button>
-    <div class="preview-modal-title">Full Preview (480p)</div>
+<div class="modal-overlay" id="previewModalOverlay">
+  <div class="modal-content">
+    <button class="modal-close" onclick="window._closeModal('previewModalOverlay')">&times;</button>
+    <div class="modal-title">Full Preview (480p)</div>
     <video id="previewModalVideo" controls></video>
+  </div>
+</div>
+
+<!-- Keyboard Shortcuts Modal -->
+<div class="modal-overlay" id="shortcutsModal">
+  <div class="modal-content" style="max-width:500px;">
+    <button class="modal-close" onclick="window._closeModal('shortcutsModal')">&times;</button>
+    <div class="modal-title">Keyboard Shortcuts</div>
+    <div class="shortcuts-grid">
+      <span class="shortcut-key">Ctrl+Z</span><span class="shortcut-desc">Undo last action</span>
+      <span class="shortcut-key">Ctrl+Y</span><span class="shortcut-desc">Redo last action</span>
+      <span class="shortcut-key">Ctrl+S</span><span class="shortcut-desc">Save project</span>
+      <span class="shortcut-key">Ctrl+Shift+S</span><span class="shortcut-desc">Save full project</span>
+      <span class="shortcut-key">Ctrl+G</span><span class="shortcut-desc">Generate all scenes</span>
+      <span class="shortcut-key">Ctrl+Enter</span><span class="shortcut-desc">Stitch video</span>
+      <span class="shortcut-key">Escape</span><span class="shortcut-desc">Close modal / preview</span>
+      <span class="shortcut-key">N</span><span class="shortcut-desc">Add new scene</span>
+      <span class="shortcut-key">Space</span><span class="shortcut-desc">Play/pause preview</span>
+    </div>
+  </div>
+</div>
+
+<!-- Style Mix Modal -->
+<div class="modal-overlay" id="styleMixModal">
+  <div class="modal-content" style="max-width:500px;">
+    <button class="modal-close" onclick="window._closeModal('styleMixModal')">&times;</button>
+    <div class="modal-title">Mix Styles</div>
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div>
+        <span class="msc-label">Style A:</span>
+        <select class="styled-select" id="mixStyleA" style="width:100%;margin-top:4px;"></select>
+      </div>
+      <div>
+        <span class="msc-label">Style B:</span>
+        <select class="styled-select" id="mixStyleB" style="width:100%;margin-top:4px;"></select>
+      </div>
+      <div>
+        <span class="msc-label">Weight (A &rarr; B):</span>
+        <div class="slider-group" style="margin-top:4px;">
+          <input type="range" class="styled-slider magenta-slider" id="mixStyleWeight" min="0" max="100" value="50" style="flex:1;"
+                 oninput="document.getElementById('mixStyleWeightVal').textContent=this.value+'%'">
+          <span class="slider-val magenta" id="mixStyleWeightVal">50%</span>
+        </div>
+      </div>
+      <div id="mixStyleResult" style="font-size:11px;color:var(--text);background:var(--bg);padding:10px;border-radius:var(--radius);border:1px solid var(--border);min-height:40px;display:none;"></div>
+      <div class="btn-row">
+        <button class="btn btn-small btn-magenta" onclick="window._doMixStyles()">Mix</button>
+        <button class="btn btn-small btn-green" id="mixApplyBtn" onclick="window._applyMixedStyle()" style="display:none;">Apply to Style Lock</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Analytics Modal -->
+<div class="modal-overlay" id="analyticsModal">
+  <div class="modal-content" style="max-width:500px;">
+    <button class="modal-close" onclick="window._closeModal('analyticsModal')">&times;</button>
+    <div class="modal-title">Project Analytics</div>
+    <div id="analyticsContent" style="font-size:11px;color:var(--text);"></div>
+  </div>
+</div>
+
+<!-- Embed Code Modal -->
+<div class="modal-overlay" id="embedModal">
+  <div class="modal-content" style="max-width:600px;">
+    <button class="modal-close" onclick="window._closeModal('embedModal')">&times;</button>
+    <div class="modal-title">Embed Code</div>
+    <textarea id="embedCodeArea" readonly style="width:100%;height:120px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--green);font-family:inherit;font-size:11px;padding:10px;resize:none;"></textarea>
+    <div class="btn-row">
+      <button class="btn btn-small btn-green" onclick="navigator.clipboard.writeText(document.getElementById('embedCodeArea').value);this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
+    </div>
+  </div>
+</div>
+
+<!-- Versions Modal -->
+<div class="modal-overlay" id="versionsModal">
+  <div class="modal-content" style="max-width:500px;">
+    <button class="modal-close" onclick="window._closeModal('versionsModal')">&times;</button>
+    <div class="modal-title">Version History</div>
+    <div id="versionsContent"></div>
+    <div class="btn-row" style="margin-top:12px;">
+      <button class="btn btn-small btn-green" onclick="window._saveVersion()">Save Current Version</button>
+    </div>
+  </div>
+</div>
+
+<!-- Frames Modal -->
+<div class="modal-overlay" id="framesModal">
+  <div class="modal-content" style="max-width:700px;">
+    <button class="modal-close" onclick="window._closeModal('framesModal')">&times;</button>
+    <div class="modal-title">Extracted Frames</div>
+    <div class="frames-grid" id="framesGrid"></div>
   </div>
 </div>
 
@@ -1780,6 +1828,44 @@
     err.classList.add('visible');
     setTimeout(() => err.classList.remove('visible'), 5000);
   }
+
+  async function apiPost(url, data) {
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data || {}),
+      });
+      return await resp.json();
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+
+  async function apiGet(url) {
+    try {
+      const resp = await fetch(url);
+      return await resp.json();
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+
+  // Modal helpers
+  window._closeModal = function(id) {
+    const el = $(id);
+    if (el) el.classList.remove('open');
+    const vid = el ? el.querySelector('video') : null;
+    if (vid) { vid.pause(); vid.src = ''; }
+  };
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.modal-overlay.open').forEach(m => {
+        m.classList.remove('open');
+        const v = m.querySelector('video');
+        if (v) { v.pause(); v.src = ''; }
+      });
+    }
+  });
+  document.querySelectorAll('.modal-overlay').forEach(m => {
+    m.addEventListener('click', function(e) { if (e.target === this) window._closeModal(this.id); });
+  });
 
   // ---- Elements ----
   const uploadZone = $('uploadZone');
@@ -1837,11 +1923,16 @@
 
   // ===================== PRESETS =====================
 
+  let presetsList = [];
+
   async function loadPresets() {
     try {
       const resp = await fetch('/api/presets');
       const data = await resp.json();
-      renderPresets(data.presets || []);
+      presetsList = data.presets || [];
+      renderPresets(presetsList);
+      renderManualPresets(presetsList);
+      populateStyleMixDropdowns(presetsList);
     } catch (e) { /* ignore */ }
   }
 
@@ -1869,7 +1960,7 @@
           selectedPreset = name;
           card.classList.add('selected');
           const current = styleInput.value.trim();
-          if (!current || presets.some(p => current === p.prompt)) {
+          if (!current || presetsList.some(p => current === p.prompt)) {
             styleInput.value = prompt;
           } else {
             styleInput.value = current + ', ' + prompt;
@@ -1879,26 +1970,45 @@
     });
   }
 
+  function renderManualPresets(presets) {
+    const grid = $('manualPresetGrid');
+    if (!grid) return;
+    grid.innerHTML = presets.map(p => {
+      const color = PRESET_COLORS[p.name] || 'linear-gradient(135deg, #333, #666)';
+      return `<div class="preset-card" data-preset="${escHtml(p.name)}" data-prompt="${escHtml(p.prompt)}" title="${escHtml(p.prompt)}" onclick="window._applyManualPreset(this)">
+        <div class="preset-swatch" style="background:${color};"></div>
+        <div class="preset-name">${escHtml(p.name.replace(/_/g, ' '))}</div>
+      </div>`;
+    }).join('');
+  }
+
+  window._applyManualPreset = function(card) {
+    const prompt = card.dataset.prompt;
+    const lockInput = $('manualStyleLockInput');
+    if (lockInput) lockInput.value = prompt;
+  };
+
+  function populateStyleMixDropdowns(presets) {
+    ['mixStyleA', 'mixStyleB'].forEach(id => {
+      const sel = $(id);
+      if (!sel) return;
+      sel.innerHTML = presets.map(p => `<option value="${escHtml(p.name)}">${escHtml(p.name.replace(/_/g, ' '))}</option>`).join('');
+    });
+  }
+
   loadPresets();
 
   // ===================== ENHANCE =====================
 
   enhanceBtn.addEventListener('click', async () => {
     const prompt = styleInput.value.trim();
-    if (!prompt) { alert('Please enter a style description first, then click Enhance.'); return; }
-    enhanceBtn.disabled = true;
-    enhanceBtn.textContent = '...';
+    if (!prompt) { alert('Please enter a style description first.'); return; }
+    enhanceBtn.disabled = true; enhanceBtn.textContent = '...';
     try {
-      const resp = await fetch('/api/enhance-prompt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
-      });
-      const data = await resp.json();
+      const data = await apiPost('/api/enhance-prompt', { prompt });
       if (data.enhanced) { styleInput.value = data.enhanced; flashSuccess(enhanceBtn); }
     } catch (e) { /* ignore */ }
-    enhanceBtn.disabled = false;
-    enhanceBtn.textContent = 'ENHANCE';
+    enhanceBtn.disabled = false; enhanceBtn.textContent = 'ENHANCE';
   });
 
   // ===================== REFERENCES =====================
@@ -1940,7 +2050,7 @@
     const file = refFileInput.files[0];
     if (!file) return;
     const name = refNameInput.value.trim();
-    if (!name) { alert('Please enter a name for this reference (e.g. "hero", "city")'); return; }
+    if (!name) { alert('Please enter a name for this reference.'); return; }
     const form = new FormData();
     form.append('name', name);
     form.append('file', file);
@@ -1992,12 +2102,7 @@
     generateBtn.disabled = true;
     generateBtn.classList.add('loading');
     try {
-      const resp = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: uploadedFilename, style }),
-      });
-      const data = await resp.json();
+      const data = await apiPost('/api/generate', { filename: uploadedFilename, style });
       if (!data.ok) {
         alert('Error: ' + (data.error || 'Failed to start'));
         generateBtn.disabled = false;
@@ -2025,8 +2130,7 @@
 
   async function pollProgress() {
     try {
-      const resp = await fetch('/api/progress');
-      const data = await resp.json();
+      const data = await apiGet('/api/progress');
       gen_state_cache = data;
       updateUI(data);
       if (!data.running && data.phase !== 'starting') {
@@ -2092,8 +2196,7 @@
 
   async function loadSceneEditor() {
     try {
-      const resp = await fetch('/api/scenes');
-      const data = await resp.json();
+      const data = await apiGet('/api/scenes');
       if (data.error) return;
       editorScenes = data.scenes || [];
       renderSceneEditor();
@@ -2165,18 +2268,12 @@
   };
 
   window._updateTransition = async function(index, value) {
-    try {
-      const resp = await fetch(`/api/scenes/${index}/transition`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transition: value }),
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        if (editorScenes[index]) editorScenes[index].transition = data.transition;
-        const label = document.getElementById('se-trans-label-' + index);
-        if (label) label.textContent = data.transition.replace(/_/g, ' ');
-      }
-    } catch (e) { /* ignore */ }
+    const data = await apiPost(`/api/scenes/${index}/transition`, { transition: value });
+    if (data.ok) {
+      if (editorScenes[index]) editorScenes[index].transition = data.transition;
+      const label = document.getElementById('se-trans-label-' + index);
+      if (label) label.textContent = data.transition.replace(/_/g, ' ');
+    }
   };
 
   window._regenScene = async function(index) {
@@ -2185,80 +2282,56 @@
     if (!promptEl) return;
     const newPrompt = promptEl.value.trim();
     if (!newPrompt) { alert('Please enter a prompt.'); return; }
-
-    statusEl.textContent = 'SUBMITTING...';
-    statusEl.style.color = 'var(--amber)';
-    try {
-      const resp = await fetch(`/api/scenes/${index}/regenerate`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: newPrompt }),
-      });
-      const data = await resp.json();
-      if (!data.ok) { statusEl.textContent = 'ERROR: ' + (data.error || 'failed'); statusEl.style.color = 'var(--red)'; return; }
-
-      statusEl.textContent = 'GENERATING...';
-      const regenPoll = setInterval(async () => {
-        try {
-          const pr = await fetch('/api/progress');
-          const pd = await pr.json();
-          const st = pd.progress && pd.progress[0] ? pd.progress[0].status : '';
-          statusEl.textContent = st.toUpperCase();
-          if (pd.phase === 'done' || pd.phase === 'error') {
-            clearInterval(regenPoll);
-            if (pd.phase === 'done') {
-              statusEl.textContent = 'DONE'; statusEl.style.color = 'var(--green)';
-              await loadSceneEditor();
-              const el = document.getElementById('se-scene-' + index);
-              if (el) el.classList.add('expanded');
-            } else { statusEl.textContent = 'ERROR: ' + (pd.error || ''); statusEl.style.color = 'var(--red)'; }
-          }
-        } catch (e) { /* ignore */ }
-      }, 2000);
-    } catch (e) { statusEl.textContent = 'ERROR: ' + e.message; statusEl.style.color = 'var(--red)'; }
+    statusEl.textContent = 'SUBMITTING...'; statusEl.style.color = 'var(--amber)';
+    const data = await apiPost(`/api/scenes/${index}/regenerate`, { prompt: newPrompt });
+    if (!data.ok) { statusEl.textContent = 'ERROR: ' + (data.error || 'failed'); statusEl.style.color = 'var(--red)'; return; }
+    statusEl.textContent = 'GENERATING...';
+    const regenPoll = setInterval(async () => {
+      const pd = await apiGet('/api/progress');
+      const st = pd.progress && pd.progress[0] ? pd.progress[0].status : '';
+      statusEl.textContent = st.toUpperCase();
+      if (pd.phase === 'done' || pd.phase === 'error') {
+        clearInterval(regenPoll);
+        if (pd.phase === 'done') {
+          statusEl.textContent = 'DONE'; statusEl.style.color = 'var(--green)';
+          await loadSceneEditor();
+          const el = document.getElementById('se-scene-' + index);
+          if (el) el.classList.add('expanded');
+        } else { statusEl.textContent = 'ERROR: ' + (pd.error || ''); statusEl.style.color = 'var(--red)'; }
+      }
+    }, 2000);
   };
 
   // ===================== RESTITCH =====================
 
   restitchBtn.addEventListener('click', async () => {
-    restitchBtn.disabled = true;
-    restitchBtn.textContent = 'STITCHING...';
-    restitchBtn.classList.add('loading');
-    try {
-      const resp = await fetch('/api/restitch', { method: 'POST' });
-      const data = await resp.json();
-      if (!data.ok) {
-        alert('Error: ' + (data.error || 'failed'));
-        restitchBtn.disabled = false; restitchBtn.textContent = 'RESTITCH FINAL VIDEO'; restitchBtn.classList.remove('loading');
-        return;
-      }
-      const stitchPoll = setInterval(async () => {
-        try {
-          const pr = await fetch('/api/progress');
-          const pd = await pr.json();
-          if (pd.phase === 'done') {
-            clearInterval(stitchPoll);
-            restitchBtn.disabled = false; restitchBtn.textContent = 'RESTITCH FINAL VIDEO'; restitchBtn.classList.remove('loading');
-            previewVideo.src = '/api/download?t=' + Date.now();
-            previewPanel.classList.remove('hidden');
-            flashSuccess(previewPanel);
-          } else if (pd.phase === 'error') {
-            clearInterval(stitchPoll);
-            restitchBtn.disabled = false; restitchBtn.textContent = 'RESTITCH FINAL VIDEO'; restitchBtn.classList.remove('loading');
-            alert('Restitch error: ' + (pd.error || 'unknown'));
-          }
-        } catch (e) { /* ignore */ }
-      }, 2000);
-    } catch (e) {
-      alert('Error: ' + e.message);
+    restitchBtn.disabled = true; restitchBtn.textContent = 'STITCHING...'; restitchBtn.classList.add('loading');
+    const data = await apiPost('/api/restitch');
+    if (!data.ok) {
+      alert('Error: ' + (data.error || 'failed'));
       restitchBtn.disabled = false; restitchBtn.textContent = 'RESTITCH FINAL VIDEO'; restitchBtn.classList.remove('loading');
+      return;
     }
+    const stitchPoll = setInterval(async () => {
+      const pd = await apiGet('/api/progress');
+      if (pd.phase === 'done') {
+        clearInterval(stitchPoll);
+        restitchBtn.disabled = false; restitchBtn.textContent = 'RESTITCH FINAL VIDEO'; restitchBtn.classList.remove('loading');
+        previewVideo.src = '/api/download?t=' + Date.now();
+        previewPanel.classList.remove('hidden');
+        flashSuccess(previewPanel);
+      } else if (pd.phase === 'error') {
+        clearInterval(stitchPoll);
+        restitchBtn.disabled = false; restitchBtn.textContent = 'RESTITCH FINAL VIDEO'; restitchBtn.classList.remove('loading');
+        alert('Restitch error: ' + (pd.error || 'unknown'));
+      }
+    }, 2000);
   });
 
   // Check existing plan on load
   (async function checkExistingPlan() {
     try {
-      const resp = await fetch('/api/scenes');
-      const data = await resp.json();
+      const data = await apiGet('/api/scenes');
       if (data.scenes && data.scenes.length) {
         editorScenes = data.scenes;
         renderSceneEditor();
@@ -2315,8 +2388,6 @@
   let globalSettings = { default_engine: 'grok', character_references: {} };
 
   const MANUAL_TRANSITIONS = ['crossfade','hard_cut','fade_black','wipe_left','wipe_right','dissolve','zoom_in','glitch'];
-  const MANUAL_DURATIONS = [4, 6, 8, 10, 12, 15];
-  const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
   const COLOR_GRADES = ['none','warm','cold','vintage','high_contrast','noir','cyberpunk','sepia'];
   const OVERLAY_POSITIONS = ['top','center','bottom'];
   const OVERLAY_SIZES = ['small','medium','large'];
@@ -2324,7 +2395,6 @@
   const CAMERA_PRESETS = ['static','pan_left','pan_right','zoom_in','zoom_out','orbit','tracking'];
   const ENGINE_LABELS = { grok: 'Grok', luma: 'Luma Ray2', openai: 'OpenAI GPT', runway: 'Runway Gen-3' };
   const ENGINE_COLORS = { grok: 'var(--cyan)', luma: 'var(--magenta)', openai: 'var(--green)', runway: '#d4a017' };
-
   const CAMERA_ICONS = { static: '&#9632;', pan_left: '&#8592;', pan_right: '&#8594;', zoom_in: '&#8853;', zoom_out: '&#8854;', orbit: '&#10227;', tracking: '&#10132;' };
 
   // ---- Manual audio upload ----
@@ -2353,18 +2423,12 @@
     } catch (err) { manualUploadFilename.textContent = 'Error: ' + err.message; }
   }
 
-  // ---- Load manual scenes ----
+  // ---- Load engines and settings ----
   async function loadEnginesAndSettings() {
     try {
-      const [engResp, setResp] = await Promise.all([
-        fetch('/api/engines'),
-        fetch('/api/settings'),
-      ]);
-      const engData = await engResp.json();
+      const [engData, setData] = await Promise.all([apiGet('/api/engines'), apiGet('/api/settings')]);
       availableEngines = engData.engines || [];
-      const setData = await setResp.json();
       globalSettings = { default_engine: 'grok', character_references: {}, ...setData };
-      // Update global engine selector if present
       const geSel = $('globalEngineSelect');
       if (geSel) geSel.value = globalSettings.default_engine;
       renderCharacterReferences();
@@ -2374,8 +2438,7 @@
   async function loadManualScenes() {
     try {
       await loadEnginesAndSettings();
-      const resp = await fetch('/api/manual/scenes');
-      const data = await resp.json();
+      const data = await apiGet('/api/manual/scenes');
       manualScenes = data.scenes || [];
       if (data.song_path) {
         const parts = data.song_path.replace(/\\/g, '/').split('/');
@@ -2425,14 +2488,8 @@
       let stateClass = 'state-pending';
       if (hasClip) stateClass = 'state-generated';
 
-      const transOptions = MANUAL_TRANSITIONS.map(t => {
-        const sel = (t === (s.transition || 'crossfade')) ? 'selected' : '';
-        return `<option value="${t}" ${sel}>${t.replace(/_/g, ' ')}</option>`;
-      }).join('');
-
       const sceneGradeOptions = COLOR_GRADES.map(g => {
         const sel = (g === (s.color_grade || 'none')) ? 'selected' : '';
-        const dot = COLOR_GRADE_DOTS[g] || '#666';
         return `<option value="${g}" ${sel}>${g.replace(/_/g, ' ')}</option>`;
       }).join('');
 
@@ -2519,7 +2576,7 @@
           <div class="msc-header">
             <span class="msc-drag-handle" data-tooltip="Drag to reorder">&#8801;</span>
             <span class="msc-title">Scene ${i + 1}</span>
-            ${!isLast ? `<button class="msc-merge-btn" onclick="window._manualMergeScene('${s.id}')" data-tooltip="Merge with next scene">Merge Next</button>` : ''}
+            ${!isLast ? `<button class="msc-merge-btn" onclick="window._manualMergeScene('${s.id}')" data-tooltip="Merge with next scene">Merge</button>` : ''}
             <button class="msc-delete-btn" onclick="window._manualDeleteScene('${s.id}')">Delete</button>
           </div>
           <div class="msc-body">
@@ -2532,15 +2589,16 @@
                        onchange="window._manualUploadPhoto('${s.id}', this.files[0])">
                 <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">
                   ${(s.photo_urls || []).map((url, pi) => '<img src="' + url + '&t=' + Date.now() + '" style="width:32px;height:32px;object-fit:cover;border-radius:3px;border:1px solid var(--border);" alt="Mood ' + (pi+1) + '">').join('')}
-                  ${(s.photo_urls || []).length < 4 ? '<button class="btn btn-small" style="padding:2px 6px;font-size:9px;" onclick="document.getElementById(\'msc-photos-input-' + s.id + '\').click()" data-tooltip="Add mood board photos (up to 4)">+</button>' : ''}
+                  ${(s.photo_urls || []).length < 4 ? '<button class="btn btn-small" style="padding:2px 6px;font-size:9px;" onclick="document.getElementById(\'msc-photos-input-' + s.id + '\').click()" data-tooltip="Add mood board photos">+</button>' : ''}
                 </div>
                 <input type="file" class="msc-photo-input" id="msc-photos-input-${s.id}" accept="image/*" multiple
                        onchange="window._manualUploadMoodPhotos('${s.id}', this.files)">
+                <div class="palette-dots" id="palette-${s.id}"></div>
               </div>
               <div class="msc-prompt-col">
                 <textarea class="msc-prompt-input" id="msc-prompt-${s.id}" placeholder="Describe what this scene should look like..."
                           onchange="window._manualUpdateScene('${s.id}', {prompt: this.value})">${escHtml(s.prompt || '')}</textarea>
-                ${hasPhoto ? `<div class="msc-grok-note"><em>grok-imagine-video</em> does not accept image input. Use <em>"Generate from Photo"</em> for photo-to-video.</div>` : ''}
+                ${hasPhoto ? `<div class="msc-grok-note"><em>grok-imagine-video</em> does not accept image input. Use <em>"Gen Photo"</em> for photo-to-video.</div>` : ''}
               </div>
               <div class="msc-controls-col">
                 <div class="msc-control-item">
@@ -2577,7 +2635,7 @@
                     ${engineOptions}
                   </select>
                 </div>
-                <div class="msc-ramp-row">
+                <div class="msc-control-item">
                   <span class="msc-label">Ramp:</span>
                   <select class="styled-select" style="flex:1;" onchange="window._manualUpdateScene('${s.id}', {speed_ramp: this.value})">
                     <option value="none" ${(s.speed_ramp||'none')==='none'?'selected':''}>None</option>
@@ -2585,9 +2643,6 @@
                     <option value="slow_out" ${s.speed_ramp==='slow_out'?'selected':''}>Slow Out</option>
                     <option value="slow_mid" ${s.speed_ramp==='slow_mid'?'selected':''}>Slow Mid</option>
                   </select>
-                  <button class="reverse-toggle ${s.reversed?'active':''}"
-                          onclick="this.classList.toggle('active'); window._manualUpdateScene('${s.id}', {reversed: this.classList.contains('active')})"
-                          data-tooltip="Reverse clip playback">&#8634; Rev</button>
                 </div>
               </div>
             </div>
@@ -2602,26 +2657,31 @@
             </div>
             <div class="msc-badge-row">
               ${hasClip ? `<span class="msc-badge" style="background:${ENGINE_COLORS[effectiveEngine] || 'var(--cyan)'}20;color:${ENGINE_COLORS[effectiveEngine] || 'var(--cyan)'};">${ENGINE_LABELS[effectiveEngine] || effectiveEngine}</span>` : ''}
-              ${s.has_video ? '<span class="msc-badge msc-badge-video">VIDEO UPLOADED</span>' : ''}
-              ${s.has_vocal ? '<span class="msc-badge msc-badge-vocal">VOICEOVER</span>' : ''}
+              ${s.has_video ? '<span class="msc-badge msc-badge-video">VIDEO</span>' : ''}
+              ${s.has_vocal ? '<span class="msc-badge msc-badge-vocal">VOCAL</span>' : ''}
               ${s.has_vocal ? `<div class="slider-group"><input type="range" class="styled-slider magenta-slider" min="0" max="100" value="${s.vocal_volume || 80}" style="width:60px;"
                 onchange="window._manualUpdateScene('${s.id}', {vocal_volume: parseInt(this.value)}); this.nextElementSibling.textContent=this.value+'%'"
                 data-tooltip="Voiceover volume">
                 <span class="slider-val magenta">${s.vocal_volume || 80}%</span></div>` : ''}
             </div>
             <div class="msc-actions">
-              <button class="btn btn-small" onclick="window._manualGenerateScene('${s.id}')">Generate Clip</button>
-              <button class="btn btn-small" onclick="document.getElementById('msc-video-input-${s.id}').click()" data-tooltip="Upload video clip (.mp4/.webm/.mov, max 100MB)">Upload Video</button>
+              <button class="btn btn-small" onclick="window._manualGenerateScene('${s.id}')">Generate</button>
+              <button class="btn btn-small" onclick="document.getElementById('msc-video-input-${s.id}').click()" data-tooltip="Upload video clip">Upload Vid</button>
               <input type="file" style="display:none" id="msc-video-input-${s.id}" accept=".mp4,.webm,.mov"
                      onchange="window._manualUploadVideo('${s.id}', this.files[0])">
-              <button class="btn btn-small btn-magenta" onclick="document.getElementById('msc-vocal-input-${s.id}').click()" data-tooltip="Upload voiceover audio">Upload Voiceover</button>
+              <button class="btn btn-small btn-magenta" onclick="document.getElementById('msc-vocal-input-${s.id}').click()" data-tooltip="Upload voiceover">Vocal</button>
               <input type="file" style="display:none" id="msc-vocal-input-${s.id}" accept=".mp3,.wav,.m4a,.ogg"
                      onchange="window._manualUploadVocal('${s.id}', this.files[0])">
-              ${hasPhoto ? `<button class="btn-gen-photo" onclick="window._generateFromPhoto('${s.id}')" data-tooltip="Photo-to-video via styled image + Ken Burns">Generate from Photo</button>` : ''}
-              ${hasPhoto ? `<button class="btn btn-small btn-amber" onclick="window._autoDescribePhoto('${s.id}')" data-tooltip="AI describes photo for prompt">Auto Describe</button>` : ''}
-              <button class="btn btn-small btn-amber" onclick="window._toggleSplitSlider('${s.id}')" data-tooltip="Split scene at a precise point">Split</button>
-              ${hasClip ? `<button class="btn btn-small btn-amber" onclick="window._manualPreviewClip('${s.id}')">Preview</button>` : ''}
-              ${hasClip ? `<button class="btn-upscale" onclick="window._upscaleScene('${s.id}', this)" data-tooltip="Upscale clip 2x with lanczos">2x</button>` : ''}
+              ${hasPhoto ? `<button class="btn-gen-photo" onclick="window._generateFromPhoto('${s.id}')" data-tooltip="Photo-to-video">Gen Photo</button>` : ''}
+              ${hasPhoto ? `<button class="btn btn-small btn-amber" onclick="window._autoDescribePhoto('${s.id}')" data-tooltip="AI describes photo">Describe</button>` : ''}
+              ${hasPhoto ? `<button class="btn-icon btn-small" onclick="window._getPalette('${s.id}')" data-tooltip="Extract color palette">&#127912;</button>` : ''}
+              <button class="btn btn-small btn-amber" onclick="window._toggleSplitSlider('${s.id}')" data-tooltip="Split scene">Split</button>
+              ${hasClip ? `<button class="btn-icon btn-small" onclick="window._reverseClip('${s.id}', this)" data-tooltip="Reverse clip" ${s.reversed?'style="color:var(--magenta);border-color:var(--magenta);"':''}>&#8634;</button>` : ''}
+              ${hasClip ? `<button class="btn-icon btn-small" onclick="window._boomerangClip('${s.id}', this)" data-tooltip="Boomerang effect">&#8734;</button>` : ''}
+              ${hasClip ? `<button class="btn-icon btn-small" onclick="window._exportGif('${s.id}')" data-tooltip="Export as GIF">GIF</button>` : ''}
+              ${hasClip ? `<button class="btn-icon btn-small" onclick="window._extractFrames('${s.id}')" data-tooltip="Extract frames">&#127902;</button>` : ''}
+              ${hasClip ? `<button class="btn-upscale" onclick="window._upscaleScene('${s.id}', this)" data-tooltip="Upscale 2x">2x</button>` : ''}
+              ${hasClip ? `<button class="btn btn-small" onclick="window._manualPreviewClip('${s.id}')">Preview</button>` : ''}
               ${(window._sceneCosts && window._sceneCosts[s.id]) ? `<span class="msc-cost-badge">$` + window._sceneCosts[s.id].toFixed(2) + `</span>` : ''}
               <span class="msc-status" id="msc-status-${s.id}"></span>
             </div>
@@ -2631,8 +2691,9 @@
                      id="split-range-${s.id}"
                      oninput="document.getElementById('split-pct-${s.id}').textContent=this.value+'%'">
               <span class="split-pct-label" id="split-pct-${s.id}">50%</span>
-              <button class="split-confirm-btn" onclick="window._manualSplitSceneAt('${s.id}')">Confirm Split</button>
+              <button class="split-confirm-btn" onclick="window._manualSplitSceneAt('${s.id}')">Confirm</button>
             </div>
+            <div id="frames-inline-${s.id}"></div>
             ${clipHtml}
           </div>
         </div>`;
@@ -2643,14 +2704,8 @@
 
   // ---- Add scene ----
   manualAddSceneBtn.addEventListener('click', async () => {
-    try {
-      const resp = await fetch('/api/manual/scene', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: '', duration: 8, transition: 'crossfade' }),
-      });
-      const data = await resp.json();
-      if (data.ok) await loadManualScenes();
-    } catch (e) { alert('Failed to add scene: ' + e.message); }
+    const data = await apiPost('/api/manual/scene', { prompt: '', duration: 8, transition: 'crossfade' });
+    if (data.ok) await loadManualScenes();
   });
 
   // ---- Update scene ----
@@ -2666,10 +2721,8 @@
   // ---- Delete scene ----
   window._manualDeleteScene = async function(sceneId) {
     if (!confirm('Delete this scene?')) return;
-    try {
-      await fetch(`/api/manual/scene/${sceneId}`, { method: 'DELETE' });
-      await loadManualScenes();
-    } catch (e) { alert('Failed to delete: ' + e.message); }
+    await fetch(`/api/manual/scene/${sceneId}`, { method: 'DELETE' });
+    await loadManualScenes();
   };
 
   // ---- Upload photo ----
@@ -2680,8 +2733,8 @@
     try {
       const resp = await fetch(`/api/manual/scene/${sceneId}/photo`, { method: 'POST', body: form });
       const data = await resp.json();
-      if (data.ok) { await loadManualScenes(); }
-      else { alert('Photo upload failed: ' + (data.error || 'unknown')); }
+      if (data.ok) await loadManualScenes();
+      else alert('Photo upload failed: ' + (data.error || 'unknown'));
     } catch (e) { alert('Photo upload failed: ' + e.message); }
   };
 
@@ -2689,43 +2742,34 @@
   window._manualGenerateScene = async function(sceneId) {
     const promptEl = document.getElementById('msc-prompt-' + sceneId);
     if (promptEl) await window._manualUpdateScene(sceneId, { prompt: promptEl.value });
-
     const statusEl = document.getElementById('msc-status-' + sceneId);
     const card = document.getElementById('msc-' + sceneId);
     if (statusEl) { statusEl.textContent = 'STARTING...'; statusEl.style.color = 'var(--amber)'; }
     if (card) { card.className = card.className.replace(/state-\w+/g, '') + ' state-generating'; }
-
-    try {
-      const resp = await fetch(`/api/manual/scene/${sceneId}/generate`, { method: 'POST' });
-      const data = await resp.json();
-      if (!data.ok) {
-        if (statusEl) { statusEl.textContent = data.error || 'ERROR'; statusEl.style.color = 'var(--red)'; }
-        if (card) { card.className = card.className.replace(/state-\w+/g, '') + ' state-failed'; }
-        return;
+    const data = await apiPost(`/api/manual/scene/${sceneId}/generate`);
+    if (!data.ok) {
+      if (statusEl) { statusEl.textContent = data.error || 'ERROR'; statusEl.style.color = 'var(--red)'; }
+      if (card) { card.className = card.className.replace(/state-\w+/g, '') + ' state-failed'; }
+      return;
+    }
+    const poll = setInterval(async () => {
+      const pd = await apiGet('/api/progress');
+      const st = pd.progress && pd.progress[0] ? pd.progress[0].status : '';
+      if (statusEl) statusEl.textContent = st.toUpperCase();
+      if (pd.phase === 'done' || pd.phase === 'error') {
+        clearInterval(poll);
+        if (pd.phase === 'done') {
+          if (statusEl) { statusEl.textContent = 'DONE'; statusEl.style.color = 'var(--green)'; }
+          await loadManualScenes();
+          flashSuccess(document.getElementById('msc-' + sceneId));
+        } else {
+          if (statusEl) { statusEl.textContent = 'FAILED'; statusEl.style.color = 'var(--red)'; }
+          if (card) { card.className = card.className.replace(/state-\w+/g, '') + ' state-failed'; }
+        }
       }
-      const poll = setInterval(async () => {
-        try {
-          const pr = await fetch('/api/progress');
-          const pd = await pr.json();
-          const st = pd.progress && pd.progress[0] ? pd.progress[0].status : '';
-          if (statusEl) statusEl.textContent = st.toUpperCase();
-          if (pd.phase === 'done' || pd.phase === 'error') {
-            clearInterval(poll);
-            if (pd.phase === 'done') {
-              if (statusEl) { statusEl.textContent = 'DONE'; statusEl.style.color = 'var(--green)'; }
-              await loadManualScenes();
-              flashSuccess(document.getElementById('msc-' + sceneId));
-            } else {
-              if (statusEl) { statusEl.textContent = 'FAILED'; statusEl.style.color = 'var(--red)'; }
-              if (card) { card.className = card.className.replace(/state-\w+/g, '') + ' state-failed'; }
-            }
-          }
-        } catch (e) { /* ignore */ }
-      }, 2000);
-    } catch (e) { if (statusEl) { statusEl.textContent = 'ERROR'; statusEl.style.color = 'var(--red)'; } }
+    }, 2000);
   };
 
-  // ---- Preview clip inline ----
   window._manualPreviewClip = function(sceneId) {
     const card = document.getElementById('msc-' + sceneId);
     if (!card) return;
@@ -2733,18 +2777,13 @@
     if (video) { video.scrollIntoView({ behavior: 'smooth', block: 'center' }); video.play(); }
   };
 
-  // ---- Merge scene ----
   window._manualMergeScene = async function(sceneId) {
-    if (!confirm('Merge this scene with the next one? This cannot be undone.')) return;
-    try {
-      const resp = await fetch('/api/manual/scene/' + sceneId + '/merge', { method: 'POST' });
-      const data = await resp.json();
-      if (data.ok) await loadManualScenes();
-      else alert('Merge failed: ' + (data.error || 'unknown'));
-    } catch (e) { alert('Merge failed: ' + e.message); }
+    if (!confirm('Merge this scene with the next one?')) return;
+    const data = await apiPost('/api/manual/scene/' + sceneId + '/merge');
+    if (data.ok) await loadManualScenes();
+    else alert('Merge failed: ' + (data.error || 'unknown'));
   };
 
-  // ---- Update text overlay ----
   window._updateOverlay = function(sceneId) {
     const text = (document.getElementById('msc-overlay-text-' + sceneId) || {}).value || '';
     const position = (document.getElementById('msc-overlay-pos-' + sceneId) || {}).value || 'bottom';
@@ -2754,28 +2793,16 @@
     window._manualUpdateScene(sceneId, { overlay });
   };
 
-  // ---- Global engine selector ----
   window._updateGlobalEngine = async function(engine) {
-    try {
-      const resp = await fetch('/api/settings', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ default_engine: engine }),
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        globalSettings.default_engine = engine;
-        renderManualScenes();
-      }
-    } catch (e) { console.error('Failed to update engine:', e); }
+    const data = await apiPost('/api/settings', { default_engine: engine });
+    if (data.ok) { globalSettings.default_engine = engine; renderManualScenes(); }
   };
 
-  // ---- Character reference management ----
+  // ---- Character references ----
   function renderCharacterReferences() {
     const list = $('charRefList');
     const sel = $('charRefImageSelect');
     if (!list || !sel) return;
-
-    // Render current character references
     const refs = globalSettings.character_references || {};
     const names = Object.keys(refs);
     if (names.length === 0) {
@@ -2791,8 +2818,6 @@
         </div>`;
       }).join('');
     }
-
-    // Populate reference image dropdown from /api/references
     fetch('/api/references').then(r => r.json()).then(data => {
       const items = data.references || [];
       sel.innerHTML = '<option value="">Select reference image...</option>' +
@@ -2801,38 +2826,23 @@
   }
 
   window._addCharRef = async function() {
-    const nameInput = $('charRefNameInput');
-    const imgSel = $('charRefImageSelect');
-    if (!nameInput || !imgSel) return;
-    const name = nameInput.value.trim();
-    const refName = imgSel.value;
+    const name = $('charRefNameInput').value.trim();
+    const refName = $('charRefImageSelect').value;
     if (!name || !refName) { alert('Enter a character name and select a reference image.'); return; }
-    try {
-      const resp = await fetch('/api/character-references', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, reference_name: refName }),
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        globalSettings.character_references = data.character_references;
-        nameInput.value = '';
-        renderCharacterReferences();
-      } else { alert(data.error || 'Failed'); }
-    } catch (e) { alert('Error: ' + e); }
+    const data = await apiPost('/api/character-references', { name, reference_name: refName });
+    if (data.ok) {
+      globalSettings.character_references = data.character_references;
+      $('charRefNameInput').value = '';
+      renderCharacterReferences();
+    } else { alert(data.error || 'Failed'); }
   };
 
   window._removeCharRef = async function(name) {
-    try {
-      const resp = await fetch('/api/character-references', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, path: '' }),
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        globalSettings.character_references = data.character_references;
-        renderCharacterReferences();
-      }
-    } catch (e) { console.error(e); }
+    const data = await apiPost('/api/character-references', { name, path: '' });
+    if (data.ok) {
+      globalSettings.character_references = data.character_references;
+      renderCharacterReferences();
+    }
   };
 
   // ---- Stitch settings ----
@@ -2841,16 +2851,11 @@
     const vizEnabled = $('audioVizCheckbox').checked;
     const vizStyle = $('audioVizStyleSelect').value;
     const audioCrossfade = parseFloat($('audioCrossfadeSlider').value) || 0;
-    try {
-      await fetch('/api/manual/stitch-settings', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          color_grade: colorGrade,
-          audio_viz: vizEnabled ? vizStyle : null,
-          audio_crossfade: audioCrossfade,
-        }),
-      });
-    } catch (e) { /* ignore */ }
+    await apiPost('/api/manual/stitch-settings', {
+      color_grade: colorGrade,
+      audio_viz: vizEnabled ? vizStyle : null,
+      audio_crossfade: audioCrossfade,
+    });
   };
 
   // ---- Generate all ----
@@ -2861,79 +2866,57 @@
         await window._manualUpdateScene(s.id, { prompt: promptEl.value });
       }
     }
-    manualGenerateAllBtn.disabled = true;
-    manualGenerateAllBtn.classList.add('loading');
+    manualGenerateAllBtn.disabled = true; manualGenerateAllBtn.classList.add('loading');
     manualProgressWrap.classList.remove('hidden');
-    manualPhaseLabel.textContent = 'STARTING...';
-    manualProgressFill.style.width = '0%';
-    try {
-      const resp = await fetch('/api/manual/generate-all', { method: 'POST' });
-      const data = await resp.json();
-      if (!data.ok) { alert('Error: ' + (data.error || 'failed')); manualGenerateAllBtn.disabled = false; manualGenerateAllBtn.classList.remove('loading'); return; }
-      const poll = setInterval(async () => {
-        try {
-          const pr = await fetch('/api/progress');
-          const pd = await pr.json();
-          manualPhaseLabel.textContent = pd.phase.toUpperCase();
-          if (pd.progress && pd.total_scenes > 0) {
-            let done = 0;
-            pd.progress.forEach(p => { const st = (p.status || '').toLowerCase(); if (st.includes('done') || st.includes('fail')) done++; });
-            manualProgressFill.style.width = Math.round((done / pd.total_scenes) * 100) + '%';
-          }
-          if (pd.phase === 'done' || pd.phase === 'error') {
-            clearInterval(poll);
-            manualGenerateAllBtn.disabled = false;
-            manualGenerateAllBtn.classList.remove('loading');
-            manualPhaseLabel.textContent = pd.phase === 'done' ? 'ALL CLIPS GENERATED' : 'ERROR: ' + (pd.error || '');
-            await loadManualScenes();
-          }
-        } catch (e) { /* ignore */ }
-      }, 2000);
-    } catch (e) { alert('Error: ' + e.message); manualGenerateAllBtn.disabled = false; manualGenerateAllBtn.classList.remove('loading'); }
+    manualPhaseLabel.textContent = 'STARTING...'; manualProgressFill.style.width = '0%';
+    const data = await apiPost('/api/manual/generate-all');
+    if (!data.ok) { alert('Error: ' + (data.error || 'failed')); manualGenerateAllBtn.disabled = false; manualGenerateAllBtn.classList.remove('loading'); return; }
+    const poll = setInterval(async () => {
+      const pd = await apiGet('/api/progress');
+      manualPhaseLabel.textContent = pd.phase.toUpperCase();
+      if (pd.progress && pd.total_scenes > 0) {
+        let done = 0;
+        pd.progress.forEach(p => { const st = (p.status || '').toLowerCase(); if (st.includes('done') || st.includes('fail')) done++; });
+        manualProgressFill.style.width = Math.round((done / pd.total_scenes) * 100) + '%';
+      }
+      if (pd.phase === 'done' || pd.phase === 'error') {
+        clearInterval(poll);
+        manualGenerateAllBtn.disabled = false; manualGenerateAllBtn.classList.remove('loading');
+        manualPhaseLabel.textContent = pd.phase === 'done' ? 'ALL CLIPS GENERATED' : 'ERROR: ' + (pd.error || '');
+        await loadManualScenes();
+      }
+    }, 2000);
   });
 
   // ---- Stitch ----
   manualStitchBtn.addEventListener('click', async () => {
     if (manualSongFilename) {
-      try {
-        await fetch('/api/manual/reorder', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order: manualScenes.map(s => s.id), song_filename: manualSongFilename }),
-        });
-      } catch (e) { /* ignore */ }
+      await apiPost('/api/manual/reorder', { order: manualScenes.map(s => s.id), song_filename: manualSongFilename });
     }
-    manualStitchBtn.disabled = true;
-    manualStitchBtn.textContent = 'STITCHING...';
-    manualStitchBtn.classList.add('loading');
+    manualStitchBtn.disabled = true; manualStitchBtn.textContent = 'STITCHING...'; manualStitchBtn.classList.add('loading');
     manualProgressWrap.classList.remove('hidden');
     manualPhaseLabel.textContent = 'STITCHING...';
-    try {
-      const resp = await fetch('/api/manual/stitch', { method: 'POST' });
-      const data = await resp.json();
-      if (!data.ok) { alert('Error: ' + (data.error || 'failed')); manualStitchBtn.disabled = false; manualStitchBtn.textContent = 'STITCH VIDEO'; manualStitchBtn.classList.remove('loading'); return; }
-      const poll = setInterval(async () => {
-        try {
-          const pr = await fetch('/api/progress');
-          const pd = await pr.json();
-          manualPhaseLabel.textContent = pd.phase.toUpperCase();
-          if (pd.phase === 'done') {
-            clearInterval(poll);
-            manualStitchBtn.disabled = false; manualStitchBtn.textContent = 'STITCH VIDEO'; manualStitchBtn.classList.remove('loading');
-            manualPhaseLabel.textContent = 'COMPLETE';
-            manualProgressFill.style.width = '100%';
-            manualPreviewPanel.classList.remove('hidden');
-            manualPreviewVideo.src = '/api/download?t=' + Date.now();
-            manualDownloadBtn.classList.remove('hidden');
-            manualDownloadBtn.href = '/api/download';
-            flashSuccess(manualPreviewPanel);
-          } else if (pd.phase === 'error') {
-            clearInterval(poll);
-            manualStitchBtn.disabled = false; manualStitchBtn.textContent = 'STITCH VIDEO'; manualStitchBtn.classList.remove('loading');
-            manualPhaseLabel.textContent = 'ERROR: ' + (pd.error || '');
-          }
-        } catch (e) { /* ignore */ }
-      }, 2000);
-    } catch (e) { alert('Error: ' + e.message); manualStitchBtn.disabled = false; manualStitchBtn.textContent = 'STITCH VIDEO'; manualStitchBtn.classList.remove('loading'); }
+    const data = await apiPost('/api/manual/stitch');
+    if (!data.ok) { alert('Error: ' + (data.error || 'failed')); manualStitchBtn.disabled = false; manualStitchBtn.textContent = 'STITCH VIDEO'; manualStitchBtn.classList.remove('loading'); return; }
+    const poll = setInterval(async () => {
+      const pd = await apiGet('/api/progress');
+      manualPhaseLabel.textContent = pd.phase.toUpperCase();
+      if (pd.phase === 'done') {
+        clearInterval(poll);
+        manualStitchBtn.disabled = false; manualStitchBtn.textContent = 'STITCH VIDEO'; manualStitchBtn.classList.remove('loading');
+        manualPhaseLabel.textContent = 'COMPLETE';
+        manualProgressFill.style.width = '100%';
+        manualPreviewPanel.classList.remove('hidden');
+        manualPreviewVideo.src = '/api/download?t=' + Date.now();
+        manualDownloadBtn.classList.remove('hidden');
+        manualDownloadBtn.href = '/api/download';
+        flashSuccess(manualPreviewPanel);
+      } else if (pd.phase === 'error') {
+        clearInterval(poll);
+        manualStitchBtn.disabled = false; manualStitchBtn.textContent = 'STITCH VIDEO'; manualStitchBtn.classList.remove('loading');
+        manualPhaseLabel.textContent = 'ERROR: ' + (pd.error || '');
+      }
+    }, 2000);
   });
 
   // ---- Drag and drop reorder ----
@@ -2959,12 +2942,7 @@
     if (srcIdx < 0 || tgtIdx < 0) return;
     const [moved] = manualScenes.splice(srcIdx, 1);
     manualScenes.splice(tgtIdx, 0, moved);
-    try {
-      await fetch('/api/manual/reorder', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order: manualScenes.map(s => s.id) }),
-      });
-    } catch (e) { /* ignore */ }
+    await apiPost('/api/manual/reorder', { order: manualScenes.map(s => s.id) });
     renderManualScenes();
   };
   window._mscDragEnd = function(e) {
@@ -2972,19 +2950,73 @@
     dragSrcId = null;
   };
 
+  // ===================== NEW SCENE BUTTONS =====================
+
+  // ---- Reverse clip ----
+  window._reverseClip = async function(sceneId, btn) {
+    btn.disabled = true;
+    const data = await apiPost(`/api/manual/scene/${sceneId}/reverse`);
+    btn.disabled = false;
+    if (data.ok) { await loadManualScenes(); flashSuccess(btn); }
+    else alert('Reverse failed: ' + (data.error || 'unknown'));
+  };
+
+  // ---- Boomerang clip ----
+  window._boomerangClip = async function(sceneId, btn) {
+    btn.disabled = true;
+    const data = await apiPost(`/api/manual/scene/${sceneId}/boomerang`);
+    btn.disabled = false;
+    if (data.ok) { await loadManualScenes(); flashSuccess(btn); }
+    else alert('Boomerang failed: ' + (data.error || 'unknown'));
+  };
+
+  // ---- Export GIF ----
+  window._exportGif = async function(sceneId) {
+    const data = await apiPost(`/api/manual/scene/${sceneId}/export-gif`);
+    if (data.ok && data.gif_url) window.open(data.gif_url + '?t=' + Date.now(), '_blank');
+    else alert('GIF export failed: ' + (data.error || 'unknown'));
+  };
+
+  // ---- Color palette ----
+  window._getPalette = async function(sceneId) {
+    const data = await apiGet(`/api/manual/scene/${sceneId}/palette`);
+    if (data.ok && data.palette) {
+      const el = document.getElementById('palette-' + sceneId);
+      if (el) {
+        el.innerHTML = data.palette.map(c =>
+          `<div class="palette-dot" style="background:${c};" title="${c}" onclick="navigator.clipboard.writeText('${c}')"></div>`
+        ).join('');
+      }
+      if (data.suggested_grade) {
+        alert('Suggested color grade: ' + data.suggested_grade);
+      }
+    } else { alert('Palette extraction failed: ' + (data.error || 'no photo')); }
+  };
+
+  // ---- Extract frames ----
+  window._extractFrames = async function(sceneId) {
+    const data = await apiPost(`/api/manual/scene/${sceneId}/frames`);
+    if (data.ok && data.frames) {
+      const grid = $('framesGrid');
+      if (grid) {
+        grid.innerHTML = data.frames.map(url =>
+          `<img src="${url}?t=${Date.now()}" alt="Frame" onclick="window.open('${url}','_blank')">`
+        ).join('');
+      }
+      $('framesModal').classList.add('open');
+    } else { alert('Frame extraction failed: ' + (data.error || 'unknown')); }
+  };
+
   // ===================== UPSCALE =====================
 
   window._upscaleScene = async function(sceneId, btn) {
     if (!confirm('Upscale this clip 2x? This replaces the original file.')) return;
     btn.disabled = true; btn.textContent = '...';
-    try {
-      const resp = await fetch(`/api/manual/scene/${sceneId}/upscale`, { method: 'POST' });
-      const data = await resp.json();
-      if (data.ok) {
-        btn.textContent = 'DONE'; btn.style.borderColor = 'var(--green)'; btn.style.color = 'var(--green)';
-        setTimeout(() => loadManualScenes(), 500);
-      } else { alert('Upscale failed: ' + (data.error || 'unknown')); btn.textContent = '2x'; btn.disabled = false; }
-    } catch (e) { alert('Upscale error: ' + e.message); btn.textContent = '2x'; btn.disabled = false; }
+    const data = await apiPost(`/api/manual/scene/${sceneId}/upscale`);
+    if (data.ok) {
+      btn.textContent = 'OK'; btn.style.borderColor = 'var(--green)'; btn.style.color = 'var(--green)';
+      setTimeout(() => loadManualScenes(), 500);
+    } else { alert('Upscale failed: ' + (data.error || 'unknown')); btn.textContent = '2x'; btn.disabled = false; }
   };
 
   // ===================== GENERATE FROM PHOTO =====================
@@ -2996,37 +3028,28 @@
     if (promptEl) await window._manualUpdateScene(sceneId, { prompt: promptEl.value });
     if (statusEl) { statusEl.textContent = 'PHOTO-TO-VIDEO...'; statusEl.style.color = 'var(--magenta)'; }
     if (card) { card.className = card.className.replace(/state-\w+/g, '') + ' state-generating'; }
-    try {
-      const body = promptEl ? JSON.stringify({ prompt: promptEl.value }) : '{}';
-      const resp = await fetch('/api/manual/scene/' + sceneId + '/generate-from-photo', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body,
-      });
-      const data = await resp.json();
-      if (!data.ok) {
-        if (statusEl) { statusEl.textContent = data.error || 'ERROR'; statusEl.style.color = 'var(--red)'; }
-        if (card) { card.className = card.className.replace(/state-\w+/g, '') + ' state-failed'; }
-        return;
+    const body = promptEl ? { prompt: promptEl.value } : {};
+    const data = await apiPost('/api/manual/scene/' + sceneId + '/generate-from-photo', body);
+    if (!data.ok) {
+      if (statusEl) { statusEl.textContent = data.error || 'ERROR'; statusEl.style.color = 'var(--red)'; }
+      if (card) { card.className = card.className.replace(/state-\w+/g, '') + ' state-failed'; }
+      return;
+    }
+    const poll = setInterval(async () => {
+      const pd = await apiGet('/api/progress');
+      const st = pd.progress && pd.progress[0] ? pd.progress[0].status : '';
+      if (statusEl) statusEl.textContent = st.toUpperCase();
+      if (pd.phase === 'done' || pd.phase === 'error') {
+        clearInterval(poll);
+        if (pd.phase === 'done') {
+          if (statusEl) { statusEl.textContent = 'DONE'; statusEl.style.color = 'var(--green)'; }
+          await loadManualScenes();
+          flashSuccess(document.getElementById('msc-' + sceneId));
+        } else {
+          if (statusEl) { statusEl.textContent = 'FAILED'; statusEl.style.color = 'var(--red)'; }
+        }
       }
-      const poll = setInterval(async () => {
-        try {
-          const pr = await fetch('/api/progress');
-          const pd = await pr.json();
-          const st = pd.progress && pd.progress[0] ? pd.progress[0].status : '';
-          if (statusEl) statusEl.textContent = st.toUpperCase();
-          if (pd.phase === 'done' || pd.phase === 'error') {
-            clearInterval(poll);
-            if (pd.phase === 'done') {
-              if (statusEl) { statusEl.textContent = 'DONE'; statusEl.style.color = 'var(--green)'; }
-              await loadManualScenes();
-              flashSuccess(document.getElementById('msc-' + sceneId));
-            } else {
-              if (statusEl) { statusEl.textContent = 'FAILED'; statusEl.style.color = 'var(--red)'; }
-              if (card) { card.className = card.className.replace(/state-\w+/g, '') + ' state-failed'; }
-            }
-          }
-        } catch (e) { /* ignore */ }
-      }, 2000);
-    } catch (e) { if (statusEl) { statusEl.textContent = 'ERROR'; statusEl.style.color = 'var(--red)'; } }
+    }, 2000);
   };
 
   // ===================== TRANSITION PREVIEW =====================
@@ -3036,25 +3059,17 @@
     if (el) el.classList.toggle('open');
   };
 
-  window._refreshTransitionLabel = function(sceneId, value) {
-    // Handled on next loadManualScenes
-  };
+  window._refreshTransitionLabel = function(sceneId, value) { /* handled on next loadManualScenes */ };
 
   window._previewTransition = async function(sceneIdA, sceneIdB, btn) {
     const transSelect = btn.parentElement.querySelector('.styled-select');
     const transType = transSelect ? transSelect.value : 'crossfade';
     const previewDiv = document.getElementById('trans-preview-' + sceneIdB);
-    btn.disabled = true; btn.textContent = 'GENERATING...';
-    try {
-      const resp = await fetch('/api/manual/preview-transition', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scene_id_a: sceneIdA, scene_id_b: sceneIdB, transition_type: transType }),
-      });
-      const data = await resp.json();
-      if (data.ok && data.preview_url) {
-        if (previewDiv) previewDiv.innerHTML = '<video class="transition-preview-video" src="' + data.preview_url + '?t=' + Date.now() + '" controls autoplay muted loop></video>';
-      } else { alert('Preview failed: ' + (data.error || 'unknown')); }
-    } catch (e) { alert('Preview error: ' + e.message); }
+    btn.disabled = true; btn.textContent = 'WAIT...';
+    const data = await apiPost('/api/manual/preview-transition', { scene_id_a: sceneIdA, scene_id_b: sceneIdB, transition_type: transType });
+    if (data.ok && data.preview_url) {
+      if (previewDiv) previewDiv.innerHTML = '<video class="transition-preview-video" src="' + data.preview_url + '?t=' + Date.now() + '" controls autoplay muted loop></video>';
+    } else { alert('Preview failed: ' + (data.error || 'unknown')); }
     btn.disabled = false; btn.textContent = 'PREVIEW';
   };
 
@@ -3062,49 +3077,29 @@
 
   window._previewAll = async function() {
     const btn = $('manualPreviewAllBtn');
-    if (btn) { btn.disabled = true; btn.textContent = 'GENERATING...'; btn.classList.add('loading'); }
-    const mpw = $('manualProgressWrap'), mpl = $('manualPhaseLabel'), mpf = $('manualProgressFill');
-    if (mpw) mpw.classList.remove('hidden');
-    if (mpl) mpl.textContent = 'GENERATING PREVIEW...';
-    if (mpf) mpf.style.width = '0%';
-    try {
-      const resp = await fetch('/api/manual/preview-all', { method: 'POST' });
-      const data = await resp.json();
-      if (!data.ok) { alert('Error: ' + (data.error || 'failed')); if (btn) { btn.disabled = false; btn.textContent = 'PREVIEW ALL'; btn.classList.remove('loading'); } return; }
-      const poll = setInterval(async () => {
-        try {
-          const pr = await fetch('/api/progress');
-          const pd = await pr.json();
-          if (mpl) mpl.textContent = pd.phase.toUpperCase();
-          if (pd.phase === 'done') {
-            clearInterval(poll);
-            if (btn) { btn.disabled = false; btn.textContent = 'PREVIEW ALL'; btn.classList.remove('loading'); }
-            if (mpl) mpl.textContent = 'PREVIEW READY';
-            if (mpf) mpf.style.width = '100%';
-            window._showPreviewModal('/api/previews/preview_all.mp4?t=' + Date.now());
-          } else if (pd.phase === 'error') {
-            clearInterval(poll);
-            if (btn) { btn.disabled = false; btn.textContent = 'PREVIEW ALL'; btn.classList.remove('loading'); }
-            if (mpl) mpl.textContent = 'ERROR: ' + (pd.error || '');
-          }
-        } catch (e) { /* ignore */ }
-      }, 2000);
-    } catch (e) { alert('Error: ' + e.message); if (btn) { btn.disabled = false; btn.textContent = 'PREVIEW ALL'; btn.classList.remove('loading'); } }
+    if (btn) { btn.disabled = true; btn.textContent = 'WAIT...'; btn.classList.add('loading'); }
+    manualProgressWrap.classList.remove('hidden');
+    manualPhaseLabel.textContent = 'GENERATING PREVIEW...';
+    manualProgressFill.style.width = '0%';
+    const data = await apiPost('/api/manual/preview-all');
+    if (!data.ok) { alert('Error: ' + (data.error || 'failed')); if (btn) { btn.disabled = false; btn.textContent = 'PREVIEW ALL'; btn.classList.remove('loading'); } return; }
+    const poll = setInterval(async () => {
+      const pd = await apiGet('/api/progress');
+      manualPhaseLabel.textContent = pd.phase.toUpperCase();
+      if (pd.phase === 'done') {
+        clearInterval(poll);
+        if (btn) { btn.disabled = false; btn.textContent = 'PREVIEW ALL'; btn.classList.remove('loading'); }
+        manualPhaseLabel.textContent = 'PREVIEW READY';
+        manualProgressFill.style.width = '100%';
+        const overlay = $('previewModalOverlay'), video = $('previewModalVideo');
+        if (overlay && video) { video.src = '/api/previews/preview_all.mp4?t=' + Date.now(); overlay.classList.add('open'); video.play(); }
+      } else if (pd.phase === 'error') {
+        clearInterval(poll);
+        if (btn) { btn.disabled = false; btn.textContent = 'PREVIEW ALL'; btn.classList.remove('loading'); }
+        manualPhaseLabel.textContent = 'ERROR: ' + (pd.error || '');
+      }
+    }, 2000);
   };
-
-  window._showPreviewModal = function(videoUrl) {
-    const overlay = $('previewModalOverlay'), video = $('previewModalVideo');
-    if (overlay && video) { video.src = videoUrl; overlay.classList.add('open'); video.play(); }
-  };
-
-  window._closePreviewModal = function() {
-    const overlay = $('previewModalOverlay'), video = $('previewModalVideo');
-    if (overlay) overlay.classList.remove('open');
-    if (video) { video.pause(); video.src = ''; }
-  };
-
-  $('previewModalOverlay').addEventListener('click', function(e) { if (e.target === this) window._closePreviewModal(); });
-  document.addEventListener('keydown', function(e) { if (e.key === 'Escape') window._closePreviewModal(); });
 
   // ===================== PROJECT SAVE/LOAD =====================
 
@@ -3114,18 +3109,15 @@
 
   saveProjectBtn.addEventListener('click', async () => {
     saveProjectBtn.disabled = true; saveProjectBtn.textContent = 'SAVING...';
-    try {
-      const resp = await fetch('/api/project/save');
-      const data = await resp.json();
-      if (data.ok && data.project) {
-        const blob = new Blob([JSON.stringify(data.project, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = data.filename || 'project.json';
-        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-        flashSuccess(saveProjectBtn);
-      } else { alert('Save failed: ' + (data.error || 'unknown')); }
-    } catch (e) { alert('Save error: ' + e.message); }
-    saveProjectBtn.disabled = false; saveProjectBtn.textContent = 'SAVE PROJECT';
+    const data = await apiGet('/api/project/save');
+    if (data.ok && data.project) {
+      const blob = new Blob([JSON.stringify(data.project, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = data.filename || 'project.json';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+      flashSuccess(saveProjectBtn);
+    } else { alert('Save failed: ' + (data.error || 'unknown')); }
+    saveProjectBtn.disabled = false; saveProjectBtn.textContent = 'SAVE';
   });
 
   loadProjectBtn.addEventListener('click', () => projectLoadInput.click());
@@ -3136,16 +3128,43 @@
       const text = await file.text();
       const project = JSON.parse(text);
       loadProjectBtn.disabled = true; loadProjectBtn.textContent = 'LOADING...';
-      const resp = await fetch('/api/project/load', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(project),
-      });
-      const data = await resp.json();
+      const data = await apiPost('/api/project/load', project);
       if (data.ok) { await loadManualScenes(); await refreshCost(); flashSuccess(loadProjectBtn); }
       else { alert('Load failed: ' + (data.error || 'unknown')); }
     } catch (e) { alert('Load error: ' + e.message); }
-    loadProjectBtn.disabled = false; loadProjectBtn.textContent = 'LOAD PROJECT';
+    loadProjectBtn.disabled = false; loadProjectBtn.textContent = 'LOAD';
     projectLoadInput.value = '';
+  });
+
+  // ---- Save/Load Full Project ----
+  var saveFullProjectBtn = $('saveFullProjectBtn');
+  var loadFullProjectBtn = $('loadFullProjectBtn');
+  var fullProjectLoadInput = $('fullProjectLoadInput');
+
+  saveFullProjectBtn.addEventListener('click', async function() {
+    saveFullProjectBtn.disabled = true; saveFullProjectBtn.textContent = 'SAVING...';
+    const data = await apiPost('/api/project/save-full');
+    if (data.ok) {
+      var a = document.createElement('a'); a.href = data.url; a.download = data.filename;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      flashSuccess(saveFullProjectBtn);
+    } else { alert('Error: ' + (data.error || 'failed')); }
+    saveFullProjectBtn.disabled = false; saveFullProjectBtn.textContent = 'FULL SAVE';
+  });
+
+  loadFullProjectBtn.addEventListener('click', function() { fullProjectLoadInput.click(); });
+  fullProjectLoadInput.addEventListener('change', async function() {
+    var file = fullProjectLoadInput.files[0]; if (!file) return;
+    loadFullProjectBtn.disabled = true; loadFullProjectBtn.textContent = 'LOADING...';
+    var formData = new FormData(); formData.append('project', file, file.name);
+    try {
+      var resp = await fetch('/api/project/load-full', { method: 'POST', body: formData });
+      var data = await resp.json();
+      if (data.ok) { alert('Full project loaded!'); await loadManualScenes(); flashSuccess(loadFullProjectBtn); }
+      else alert('Error: ' + (data.error || 'failed'));
+    } catch (e) { alert('Error: ' + e.message); }
+    loadFullProjectBtn.disabled = false; loadFullProjectBtn.textContent = 'FULL LOAD';
+    fullProjectLoadInput.value = '';
   });
 
   // ===================== UNDO/REDO =====================
@@ -3180,10 +3199,7 @@
           body: JSON.stringify({ prompt: s.prompt, duration: s.duration, transition: s.transition }),
         });
       }
-      await fetch('/api/manual/reorder', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order }),
-      });
+      await apiPost('/api/manual/reorder', { order });
     } catch (e) { /* best effort */ }
     manualScenes = state;
     renderManualScenes();
@@ -3200,9 +3216,16 @@
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undoBtn.click(); }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); redoBtn.click(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 's' && !e.shiftKey) { e.preventDefault(); saveProjectBtn.click(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 's' && e.shiftKey) { e.preventDefault(); saveFullProjectBtn.click(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'g') { e.preventDefault(); manualGenerateAllBtn.click(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); manualStitchBtn.click(); }
+    if (e.key === 'n' && !e.ctrlKey && !e.metaKey && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+      manualAddSceneBtn.click();
+    }
   });
 
-  // Hook into scene modifications for undo history
+  // Hook into scene modifications for undo
   const _origManualUpdateScene = window._manualUpdateScene;
   window._manualUpdateScene = async function(sceneId, fields) {
     pushHistory('edit scene');
@@ -3215,42 +3238,35 @@
     await _origManualDeleteScene(sceneId);
   };
 
-  // Hook add scene
-  const _origAddSceneHandler = manualAddSceneBtn.onclick;
   manualAddSceneBtn.addEventListener('click', () => {
     setTimeout(() => pushHistory('add scene'), 500);
   }, true);
 
-  // Hook drag-drop reorder
   const _origMscDrop = window._mscDrop;
   window._mscDrop = async function(e, targetId) {
     pushHistory('reorder scenes');
     await _origMscDrop(e, targetId);
   };
 
-  // Initialize history with current state on first load
   const _origLoadManualScenes = loadManualScenes;
   loadManualScenes = async function() {
     await _origLoadManualScenes();
     if (historyStack.length === 0) pushHistory('initial state');
   };
 
-  // ===================== EXPORT STORYBOARD =====================
+  // ===================== EXPORT STORYBOARD PNG =====================
 
-  const exportStoryboardBtn = $('exportStoryboardBtn');
-  exportStoryboardBtn.addEventListener('click', async () => {
-    exportStoryboardBtn.disabled = true; exportStoryboardBtn.textContent = 'GENERATING...';
-    try {
-      const resp = await fetch('/api/storyboard', { method: 'POST' });
-      const data = await resp.json();
-      if (data.ok && data.url) {
-        const a = document.createElement('a'); a.href = data.url; a.download = data.filename || 'storyboard.png';
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        flashSuccess(exportStoryboardBtn);
-      } else { alert('Storyboard failed: ' + (data.error || 'unknown')); }
-    } catch (e) { alert('Storyboard error: ' + e.message); }
-    exportStoryboardBtn.disabled = false; exportStoryboardBtn.textContent = 'EXPORT STORYBOARD';
-  });
+  window._exportStoryboardPng = async function() {
+    const btn = $('exportStoryboardBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'WAIT...'; }
+    const data = await apiPost('/api/storyboard');
+    if (data.ok && data.url) {
+      const a = document.createElement('a'); a.href = data.url; a.download = data.filename || 'storyboard.png';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      if (btn) flashSuccess(btn);
+    } else { alert('Storyboard failed: ' + (data.error || 'unknown')); }
+    if (btn) { btn.disabled = false; btn.textContent = 'STORYBOARD PNG'; }
+  };
 
   // ===================== COST TRACKER =====================
 
@@ -3258,21 +3274,18 @@
   window._sceneCosts = {};
 
   async function refreshCost() {
-    try {
-      const resp = await fetch('/api/cost');
-      const data = await resp.json();
-      const total = data.total_cost || 0;
-      const budget = data.budget || 10;
-      costValue.textContent = '$' + total.toFixed(2);
-      if (total >= budget) {
-        costValue.classList.add('over-budget');
-        costValue.title = 'Over budget ($' + budget.toFixed(2) + ')!';
-      } else {
-        costValue.classList.remove('over-budget');
-        costValue.title = 'Budget: $' + budget.toFixed(2);
-      }
-      window._sceneCosts = data.scene_costs || {};
-    } catch (e) { /* ignore */ }
+    const data = await apiGet('/api/cost');
+    const total = data.total_cost || 0;
+    const budget = data.budget || 10;
+    costValue.textContent = '$' + total.toFixed(2);
+    if (total >= budget) {
+      costValue.classList.add('over-budget');
+      costValue.title = 'Over budget ($' + budget.toFixed(2) + ')!';
+    } else {
+      costValue.classList.remove('over-budget');
+      costValue.title = 'Budget: $' + budget.toFixed(2);
+    }
+    window._sceneCosts = data.scene_costs || {};
   }
 
   refreshCost();
@@ -3290,12 +3303,9 @@
     if (mode === 'manual') {
       autoBtn.classList.remove('active'); manBtn.classList.add('active'); tsDiv.classList.remove('hidden');
       var lines = (textarea.value || '').split('\n').filter(l => l.trim());
-      var html = '';
-      lines.forEach((line, i) => {
-        html += '<div class="lyrics-ts-row"><input type="number" class="lyrics-ts-input" id="' + prefix + '-ts-' + i + '" value="' + (i * 4) + '" step="0.5" min="0"><span class="ts-line">' + escHtml(line) + '</span></div>';
-      });
-      if (!lines.length) html = '<div style="color:var(--text-dim);font-size:11px;">Type lyrics first, then switch to manual timestamps.</div>';
-      tsDiv.innerHTML = html;
+      tsDiv.innerHTML = lines.length ? lines.map((line, i) =>
+        '<div class="lyrics-ts-row"><input type="number" class="lyrics-ts-input" id="' + prefix + '-ts-' + i + '" value="' + (i * 4) + '" step="0.5" min="0"><span class="ts-line">' + escHtml(line) + '</span></div>'
+      ).join('') : '<div style="color:var(--text-dim);font-size:11px;">Type lyrics first.</div>';
     } else {
       autoBtn.classList.add('active'); manBtn.classList.remove('active'); tsDiv.classList.add('hidden');
     }
@@ -3303,28 +3313,19 @@
 
   window._applyLyrics = async function(target) {
     var prefix = target === 'auto' ? 'auto' : 'manual';
-    var textarea = $(prefix + 'LyricsInput');
-    var lyrics = (textarea.value || '').trim();
+    var lyrics = ($(prefix + 'LyricsInput').value || '').trim();
     if (!lyrics) { alert('Please enter lyrics first.'); return; }
     var payload = { lyrics, target };
     if (lyricsMode[target] === 'manual') {
       var lines = lyrics.split('\n').filter(l => l.trim());
-      var timestamps = [];
-      for (var i = 0; i < lines.length; i++) {
+      payload.timestamps = lines.map((_, i) => {
         var inp = $(prefix + '-ts-' + i);
-        timestamps.push(inp ? parseFloat(inp.value) || (i * 4) : i * 4);
-      }
-      payload.timestamps = timestamps;
-    }
-    try {
-      var resp = await fetch('/api/lyrics', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        return inp ? parseFloat(inp.value) || (i * 4) : i * 4;
       });
-      var data = await resp.json();
-      if (data.ok) { alert('Lyrics overlay is being applied (' + data.lines + ' lines). Check progress.'); startPolling(); }
-      else { alert('Error: ' + (data.error || 'failed')); }
-    } catch (e) { alert('Error: ' + e.message); }
+    }
+    const data = await apiPost('/api/lyrics', payload);
+    if (data.ok) { alert('Lyrics overlay applied (' + data.lines + ' lines).'); startPolling(); }
+    else { alert('Error: ' + (data.error || 'failed')); }
   };
 
   // ===================== STYLE LOCK =====================
@@ -3335,62 +3336,44 @@
     var enabled = toggle.checked;
     var styleLock = (input.value || '').trim();
     if (enabled && !styleLock) { alert('Please enter style keywords to lock.'); toggle.checked = false; return; }
-    try {
-      await fetch('/api/style-lock', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ style_lock: styleLock, enabled, target }),
-      });
-      if (enabled) { input.style.color = 'var(--cyan)'; } else { input.style.color = ''; }
-      if (target === 'auto') loadSceneEditor(); else loadManualScenes();
-    } catch (e) { /* ignore */ }
+    await apiPost('/api/style-lock', { style_lock: styleLock, enabled, target });
+    if (enabled) { input.style.color = 'var(--cyan)'; } else { input.style.color = ''; }
+    if (target === 'auto') loadSceneEditor(); else loadManualScenes();
   };
 
   // ===================== BATCH EXPORT =====================
 
   window._batchExport = async function() {
-    try {
-      var resp = await fetch('/api/batch-export', { method: 'POST' });
-      var data = await resp.json();
-      if (data.ok) {
-        alert('Batch export started. All 4 aspect ratios will be generated.');
-        startPolling();
-        var ep = setInterval(async () => {
-          try {
-            var pr = await fetch('/api/progress'); var pd = await pr.json();
-            if (pd.phase === 'done' || pd.phase === 'error') { clearInterval(ep); window._loadExports(); }
-          } catch (e) { /* ignore */ }
-        }, 3000);
-      } else { alert('Error: ' + (data.error || 'failed')); }
-    } catch (e) { alert('Error: ' + e.message); }
+    const data = await apiPost('/api/batch-export');
+    if (data.ok) { alert('Batch export started.'); startPolling();
+      var ep = setInterval(async () => {
+        var pd = await apiGet('/api/progress');
+        if (pd.phase === 'done' || pd.phase === 'error') { clearInterval(ep); window._loadExports(); }
+      }, 3000);
+    } else { alert('Error: ' + (data.error || 'failed')); }
   };
 
   window._loadExports = async function() {
-    try {
-      var resp = await fetch('/api/exports'); var data = await resp.json();
-      var exports = data.exports || [];
-      ['exportList', 'manualExportList'].forEach(id => {
-        var el = $(id); if (!el) return;
-        if (!exports.length) { el.innerHTML = '<div style="color:var(--text-dim);font-size:11px;">No exports yet.</div>'; return; }
-        el.innerHTML = exports.map(exp => {
-          var sizeMB = (exp.size / 1048576).toFixed(1);
-          return '<div class="export-item"><span class="export-name">' + escHtml(exp.filename) + '</span><span class="export-size">' + sizeMB + ' MB</span><a class="btn btn-small btn-magenta" href="' + exp.url + '" download style="padding:4px 10px;font-size:9px;">Download</a></div>';
-        }).join('');
-      });
-    } catch (e) { /* ignore */ }
+    const data = await apiGet('/api/exports');
+    var exports = data.exports || [];
+    ['exportList', 'manualExportList'].forEach(id => {
+      var el = $(id); if (!el) return;
+      if (!exports.length) { el.innerHTML = '<div style="color:var(--text-dim);font-size:11px;">No exports yet.</div>'; return; }
+      el.innerHTML = exports.map(exp => {
+        var sizeMB = (exp.size / 1048576).toFixed(1);
+        return '<div class="export-item"><span class="export-name">' + escHtml(exp.filename) + '</span><span class="export-size">' + sizeMB + ' MB</span><a class="btn btn-small btn-magenta" href="' + exp.url + '" download style="padding:4px 10px;font-size:9px;">Download</a></div>';
+      }).join('');
+    });
   };
-
   window._loadExports();
 
   // ===================== SCENE SPLITTING =====================
 
   window._splitAutoScene = async function(index) {
     if (!confirm('Split scene #' + index + ' into two halves?')) return;
-    try {
-      var resp = await fetch('/api/scenes/' + index + '/split', { method: 'POST' });
-      var data = await resp.json();
-      if (data.ok) { alert('Scene split into 2 scenes. Total: ' + data.total_scenes); await loadSceneEditor(); }
-      else { alert('Error: ' + (data.error || 'failed')); }
-    } catch (e) { alert('Error: ' + e.message); }
+    const data = await apiPost('/api/scenes/' + index + '/split');
+    if (data.ok) { alert('Scene split. Total: ' + data.total_scenes); await loadSceneEditor(); }
+    else { alert('Error: ' + (data.error || 'failed')); }
   };
 
   window._toggleSplitSlider = function(sceneId) {
@@ -3401,163 +3384,125 @@
   window._manualSplitSceneAt = async function(sceneId) {
     var rangeEl = document.getElementById('split-range-' + sceneId);
     var pct = rangeEl ? parseInt(rangeEl.value) / 100.0 : 0.5;
-    try {
-      var resp = await fetch('/api/manual/scene/' + sceneId + '/split', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ split_pct: pct }),
-      });
-      var data = await resp.json();
-      if (data.ok) await loadManualScenes();
-      else alert('Error: ' + (data.error || 'failed'));
-    } catch (e) { alert('Error: ' + e.message); }
+    const data = await apiPost('/api/manual/scene/' + sceneId + '/split', { split_pct: pct });
+    if (data.ok) await loadManualScenes();
+    else alert('Error: ' + (data.error || 'failed'));
   };
 
   // ===================== AUTO-DESCRIBE PHOTO =====================
 
   window._autoDescribePhoto = async function(sceneId) {
     var statusEl = document.getElementById('msc-status-' + sceneId);
-    if (statusEl) { statusEl.textContent = 'Describing photo...'; statusEl.style.color = 'var(--amber)'; }
-    try {
-      var resp = await fetch('/api/manual/scene/' + sceneId + '/describe-photo', { method: 'POST' });
-      var data = await resp.json();
-      if (data.ok && data.description) {
-        var promptEl = document.getElementById('msc-prompt-' + sceneId);
-        if (promptEl) { promptEl.value = data.description; window._manualUpdateScene(sceneId, { prompt: data.description }); }
-        if (statusEl) { statusEl.textContent = 'Described!'; statusEl.style.color = 'var(--green)'; }
-      } else { if (statusEl) { statusEl.textContent = 'Error: ' + (data.error || 'failed'); statusEl.style.color = 'var(--red)'; } }
-    } catch (e) { if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.style.color = 'var(--red)'; } }
+    if (statusEl) { statusEl.textContent = 'Describing...'; statusEl.style.color = 'var(--amber)'; }
+    const data = await apiPost('/api/manual/scene/' + sceneId + '/describe-photo');
+    if (data.ok && data.description) {
+      var promptEl = document.getElementById('msc-prompt-' + sceneId);
+      if (promptEl) { promptEl.value = data.description; window._manualUpdateScene(sceneId, { prompt: data.description }); }
+      if (statusEl) { statusEl.textContent = 'Described!'; statusEl.style.color = 'var(--green)'; }
+    } else { if (statusEl) { statusEl.textContent = 'Error'; statusEl.style.color = 'var(--red)'; } }
   };
 
   // ===================== MULTI-PHOTO MOOD BOARD =====================
 
   window._manualUploadMoodPhotos = async function(sceneId, files) {
     if (!files || files.length === 0) return;
-    var statusEl = document.getElementById('msc-status-' + sceneId);
-    if (statusEl) { statusEl.textContent = 'Uploading mood photos...'; statusEl.style.color = 'var(--amber)'; }
     var formData = new FormData();
     for (var i = 0; i < Math.min(files.length, 4); i++) formData.append('photo_' + i, files[i], files[i].name);
-    try {
-      var resp = await fetch('/api/manual/scene/' + sceneId + '/photos', { method: 'POST', body: formData });
-      var data = await resp.json();
-      if (data.ok) { if (statusEl) { statusEl.textContent = data.photos_added + ' photos added'; statusEl.style.color = 'var(--green)'; } await loadManualScenes(); }
-      else { if (statusEl) { statusEl.textContent = 'Error: ' + (data.error || 'failed'); statusEl.style.color = 'var(--red)'; } }
-    } catch (e) { if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.style.color = 'var(--red)'; } }
+    const resp = await fetch('/api/manual/scene/' + sceneId + '/photos', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (data.ok) await loadManualScenes();
   };
 
-  // ===================== BEAT-SYNC =====================
+  // ===================== VIDEO / VOCAL UPLOADS =====================
+
+  window._manualUploadVideo = async function(sceneId, file) {
+    if (!file) return;
+    if (file.size > 100 * 1024 * 1024) { alert('Video file too large. Max 100MB.'); return; }
+    var statusEl = document.getElementById('msc-status-' + sceneId);
+    if (statusEl) { statusEl.textContent = 'Uploading...'; statusEl.style.color = 'var(--amber)'; }
+    var formData = new FormData(); formData.append('video', file, file.name);
+    const resp = await fetch('/api/manual/scene/' + sceneId + '/video', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (data.ok) { if (statusEl) { statusEl.textContent = 'Uploaded!'; statusEl.style.color = 'var(--green)'; } await loadManualScenes(); }
+    else { if (statusEl) { statusEl.textContent = 'Error'; statusEl.style.color = 'var(--red)'; } }
+  };
+
+  window._manualUploadVocal = async function(sceneId, file) {
+    if (!file) return;
+    var statusEl = document.getElementById('msc-status-' + sceneId);
+    if (statusEl) { statusEl.textContent = 'Uploading...'; statusEl.style.color = 'var(--amber)'; }
+    var formData = new FormData(); formData.append('vocal', file, file.name);
+    const resp = await fetch('/api/manual/scene/' + sceneId + '/vocal', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (data.ok) { if (statusEl) { statusEl.textContent = 'Uploaded!'; statusEl.style.color = 'var(--green)'; } await loadManualScenes(); }
+    else { if (statusEl) { statusEl.textContent = 'Error'; statusEl.style.color = 'var(--red)'; } }
+  };
+
+  // ===================== BEAT-SYNC / WATERMARK / CREDITS / THUMBNAIL =====================
 
   window._applyBeatSync = async function(target) {
-    target = target || 'manual';
-    if (!confirm('Apply beat-synced cuts to the final video? This modifies the video in-place.')) return;
-    try {
-      var resp = await fetch('/api/beat-sync', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target }),
-      });
-      var data = await resp.json();
-      if (data.ok) alert('Beat-sync cuts applied! ' + data.beats_used + ' beats processed.');
-      else alert('Error: ' + (data.error || 'failed'));
-    } catch (e) { alert('Error: ' + e.message); }
+    if (!confirm('Apply beat-synced cuts?')) return;
+    const data = await apiPost('/api/beat-sync', { target: target || 'manual' });
+    if (data.ok) alert('Beat-sync applied! ' + data.beats_used + ' beats.');
+    else alert('Error: ' + (data.error || 'failed'));
   };
-
-  // ===================== WATERMARK =====================
 
   window._uploadWatermark = async function() {
     var input = document.createElement('input'); input.type = 'file'; input.accept = 'image/png';
     input.onchange = async function() {
       if (!input.files[0]) return;
       var formData = new FormData(); formData.append('file', input.files[0]);
-      try {
-        var resp = await fetch('/api/watermark/upload', { method: 'POST', body: formData });
-        var data = await resp.json();
-        if (data.ok) alert('Watermark uploaded!');
-        else alert('Error: ' + (data.error || 'failed'));
-      } catch (e) { alert('Error: ' + e.message); }
+      const resp = await fetch('/api/watermark/upload', { method: 'POST', body: formData });
+      const data = await resp.json();
+      alert(data.ok ? 'Watermark uploaded!' : 'Error: ' + (data.error || 'failed'));
     };
     input.click();
   };
 
   window._applyWatermark = async function(target) {
-    target = target || 'manual';
     var position = prompt('Position? (top_left, top_right, bottom_left, bottom_right)', 'bottom_right');
     var opacity = prompt('Opacity? (10-100)', '50');
     if (!position || !opacity) return;
-    try {
-      var resp = await fetch('/api/watermark/apply', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ position, opacity: parseInt(opacity), target }),
-      });
-      var data = await resp.json();
-      if (data.ok) alert('Watermark applied!');
-      else alert('Error: ' + (data.error || 'failed'));
-    } catch (e) { alert('Error: ' + e.message); }
+    const data = await apiPost('/api/watermark/apply', { position, opacity: parseInt(opacity), target: target || 'manual' });
+    alert(data.ok ? 'Watermark applied!' : 'Error: ' + (data.error || 'failed'));
   };
-
-  // ===================== CREDITS =====================
 
   window._addCredits = async function(target) {
-    target = target || 'manual';
     var title = prompt('Song title:', '');
     var artist = prompt('Artist name:', '');
-    var extra = prompt('Extra credits text (optional):', '');
-    try {
-      var resp = await fetch('/api/credits', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title || '', artist: artist || '', extra_text: extra || '', target }),
-      });
-      var data = await resp.json();
-      if (data.ok) alert('Credits roll added to end of video!');
-      else alert('Error: ' + (data.error || 'failed'));
-    } catch (e) { alert('Error: ' + e.message); }
+    var extra = prompt('Extra credits (optional):', '');
+    const data = await apiPost('/api/credits', { title: title||'', artist: artist||'', extra_text: extra||'', target: target||'manual' });
+    alert(data.ok ? 'Credits added!' : 'Error: ' + (data.error || 'failed'));
   };
 
-  // ===================== THUMBNAIL =====================
-
   window._extractThumbnail = async function(target) {
-    target = target || 'manual';
     var ts = prompt('Timestamp in seconds (-1 for auto):', '-1');
-    try {
-      var resp = await fetch('/api/thumbnail', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ timestamp: parseFloat(ts || '-1'), target }),
-      });
-      var data = await resp.json();
-      if (data.ok) window.open('/api/thumbnail?t=' + Date.now(), '_blank');
-      else alert('Error: ' + (data.error || 'failed'));
-    } catch (e) { alert('Error: ' + e.message); }
+    const data = await apiPost('/api/thumbnail', { timestamp: parseFloat(ts || '-1'), target: target||'manual' });
+    if (data.ok) window.open('/api/thumbnail?t=' + Date.now(), '_blank');
+    else alert('Error: ' + (data.error || 'failed'));
   };
 
   window._generateThumbnail = async function() {
-    var thumbPrompt = prompt('Describe the thumbnail you want:', '');
+    var thumbPrompt = prompt('Describe the thumbnail:', '');
     if (!thumbPrompt) return;
-    try {
-      var resp = await fetch('/api/thumbnail/generate', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: thumbPrompt }),
-      });
-      var data = await resp.json();
-      if (data.ok) window.open('/api/thumbnail?t=' + Date.now(), '_blank');
-      else alert('Error: ' + (data.error || 'failed'));
-    } catch (e) { alert('Error: ' + e.message); }
+    const data = await apiPost('/api/thumbnail/generate', { prompt: thumbPrompt });
+    if (data.ok) window.open('/api/thumbnail?t=' + Date.now(), '_blank');
+    else alert('Error: ' + (data.error || 'failed'));
   };
 
   // ===================== GENRE SUGGESTION =====================
 
   window._suggestGenre = async function() {
-    try {
-      var bpm = 120, energy = 0.5;
-      if (gen_state_cache && gen_state_cache.analysis) {
-        bpm = gen_state_cache.analysis.bpm || 120;
-        var sections = gen_state_cache.analysis.sections || [];
-        if (sections.length) energy = sections.reduce((sum, s) => sum + (s.energy || 0.5), 0) / sections.length;
-      }
-      var resp = await fetch('/api/genre-suggest?bpm=' + bpm + '&energy=' + energy);
-      var data = await resp.json();
-      if (data.ok) {
-        var msg = 'Detected: ' + data.genre + ' (' + data.bpm_range + ')\n\nSuggested style: ' + data.style + '\n\nApply this style?';
-        if (confirm(msg)) styleInput.value = data.style;
-      }
-    } catch (e) { alert('Genre suggestion failed: ' + e.message); }
+    var bpm = 120, energy = 0.5;
+    if (gen_state_cache && gen_state_cache.analysis) {
+      bpm = gen_state_cache.analysis.bpm || 120;
+      var sections = gen_state_cache.analysis.sections || [];
+      if (sections.length) energy = sections.reduce((sum, s) => sum + (s.energy || 0.5), 0) / sections.length;
+    }
+    const data = await apiGet('/api/genre-suggest?bpm=' + bpm + '&energy=' + energy);
+    if (data.ok) {
+      if (confirm('Detected: ' + data.genre + '\nStyle: ' + data.style + '\n\nApply?')) styleInput.value = data.style;
+    }
   };
 
   // ===================== MULTI-TRACK AUDIO =====================
@@ -3572,12 +3517,9 @@
         var formData = new FormData();
         formData.append('vocal', vocalInput.files[0], vocalInput.files[0].name);
         formData.append('instrumental', instrInput.files[0], instrInput.files[0].name);
-        try {
-          var resp = await fetch('/api/audio/upload-tracks', { method: 'POST', body: formData });
-          var data = await resp.json();
-          if (data.ok) alert('Audio tracks uploaded! Use Mix Audio to combine them.');
-          else alert('Error: ' + (data.error || 'failed'));
-        } catch (e) { alert('Error: ' + e.message); }
+        const resp = await fetch('/api/audio/upload-tracks', { method: 'POST', body: formData });
+        const data = await resp.json();
+        alert(data.ok ? 'Tracks uploaded!' : 'Error: ' + (data.error || 'failed'));
       };
       alert('Now select the INSTRUMENTAL track...');
       instrInput.click();
@@ -3590,89 +3532,36 @@
     var vocalLevel = prompt('Vocal level (0-100):', '50');
     var instrLevel = prompt('Instrumental level (0-100):', '50');
     if (vocalLevel === null || instrLevel === null) return;
-    try {
-      var resp = await fetch('/api/audio/mix', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vocal_level: parseInt(vocalLevel), instrumental_level: parseInt(instrLevel) }),
-      });
-      var data = await resp.json();
-      if (data.ok) alert('Audio mixed! The combined track is now set as the audio source.');
-      else alert('Error: ' + (data.error || 'failed'));
-    } catch (e) { alert('Error: ' + e.message); }
+    const data = await apiPost('/api/audio/mix', { vocal_level: parseInt(vocalLevel), instrumental_level: parseInt(instrLevel) });
+    alert(data.ok ? 'Audio mixed!' : 'Error: ' + (data.error || 'failed'));
   };
 
   // ===================== SOCIAL EXPORT =====================
 
   window._socialExport = async function(platform, target) {
-    target = target || 'manual';
-    try {
-      var resp = await fetch('/api/social-export', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform, target }),
-      });
-      var data = await resp.json();
-      if (data.ok) { alert('Exported for ' + platform + ' (' + data.size_mb + ' MB)'); window._loadSocialExports(); }
-      else alert('Error: ' + (data.error || 'failed'));
-    } catch (e) { alert('Error: ' + e.message); }
+    const data = await apiPost('/api/social-export', { platform, target: target || 'manual' });
+    if (data.ok) { alert('Exported for ' + platform + ' (' + data.size_mb + ' MB)'); window._loadSocialExports(); }
+    else alert('Error: ' + (data.error || 'failed'));
   };
 
   window._loadSocialExports = async function() {
-    try {
-      var resp = await fetch('/api/social-exports'); var data = await resp.json();
-      var container = $('socialExportList');
-      if (!container) return;
-      if (!data.exports || !data.exports.length) { container.innerHTML = '<div style="font-size:11px;color:var(--text-dim);">No exports yet.</div>'; return; }
-      container.innerHTML = data.exports.map(e => '<div class="export-item"><span class="export-name">' + e.filename + '</span><span class="export-size">' + e.size_mb + ' MB</span><a class="btn btn-small" href="' + e.url + '" download>Download</a></div>').join('');
-    } catch (e) { /* ignore */ }
+    const data = await apiGet('/api/social-exports');
+    var container = $('socialExportList');
+    if (!container) return;
+    if (!data.exports || !data.exports.length) { container.innerHTML = ''; return; }
+    container.innerHTML = data.exports.map(e => '<div class="export-item"><span class="export-name">' + e.filename + '</span><span class="export-size">' + e.size_mb + ' MB</span><a class="btn btn-small" href="' + e.url + '" download>DL</a></div>').join('');
   };
 
-  // ===================== VIDEO UPLOAD PER SCENE =====================
-
-  window._manualUploadVideo = async function(sceneId, file) {
-    if (!file) return;
-    if (file.size > 100 * 1024 * 1024) { alert('Video file too large. Maximum 100MB.'); return; }
-    var statusEl = document.getElementById('msc-status-' + sceneId);
-    if (statusEl) { statusEl.textContent = 'Uploading video...'; statusEl.style.color = 'var(--amber)'; }
-    var formData = new FormData(); formData.append('video', file, file.name);
-    try {
-      var resp = await fetch('/api/manual/scene/' + sceneId + '/video', { method: 'POST', body: formData });
-      var data = await resp.json();
-      if (data.ok) { if (statusEl) { statusEl.textContent = 'Video uploaded!'; statusEl.style.color = 'var(--green)'; } await loadManualScenes(); }
-      else { if (statusEl) { statusEl.textContent = 'Error: ' + (data.error || 'failed'); statusEl.style.color = 'var(--red)'; } }
-    } catch (e) { if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.style.color = 'var(--red)'; } }
-  };
-
-  // ===================== PER-SCENE VOCAL UPLOAD =====================
-
-  window._manualUploadVocal = async function(sceneId, file) {
-    if (!file) return;
-    var statusEl = document.getElementById('msc-status-' + sceneId);
-    if (statusEl) { statusEl.textContent = 'Uploading voiceover...'; statusEl.style.color = 'var(--amber)'; }
-    var formData = new FormData(); formData.append('vocal', file, file.name);
-    try {
-      var resp = await fetch('/api/manual/scene/' + sceneId + '/vocal', { method: 'POST', body: formData });
-      var data = await resp.json();
-      if (data.ok) { if (statusEl) { statusEl.textContent = 'Voiceover uploaded!'; statusEl.style.color = 'var(--green)'; } await loadManualScenes(); }
-      else { if (statusEl) { statusEl.textContent = 'Error: ' + (data.error || 'failed'); statusEl.style.color = 'var(--red)'; } }
-    } catch (e) { if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.style.color = 'var(--red)'; } }
-  };
-
-  // ===================== AUTO BEAT ALIGNMENT =====================
+  // ===================== BEAT ALIGNMENT =====================
 
   window._alignToBeats = async function() {
-    if (!confirm('Align all scene boundaries to beat timestamps? This will adjust scene durations.')) return;
-    try {
-      var resp = await fetch('/api/auto-align-beats', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target: 'manual' }),
-      });
-      var data = await resp.json();
-      if (data.ok) { alert('Aligned ' + data.scenes_aligned + ' scenes to ' + data.beats_used + ' beats.'); await loadManualScenes(); }
-      else alert('Error: ' + (data.error || 'failed'));
-    } catch (e) { alert('Error: ' + e.message); }
+    if (!confirm('Align scene boundaries to beats?')) return;
+    const data = await apiPost('/api/auto-align-beats', { target: 'manual' });
+    if (data.ok) { alert('Aligned ' + data.scenes_aligned + ' scenes.'); await loadManualScenes(); }
+    else alert('Error: ' + (data.error || 'failed'));
   };
 
-  // ===================== TIMELINE VIEW (Item 11) =====================
+  // ===================== TIMELINE VIEW =====================
 
   const TIMELINE_COLORS = {
     intro: '#00d4ff', verse: '#7b68ee', chorus: '#ff2d7b',
@@ -3681,83 +3570,56 @@
   let timelineSelectedIdx = -1;
 
   window._setViewMode = function(mode) {
-    const cardView = $('cardView');
-    const timelineView = $('timelineView');
-    const cardBtn = $('cardViewBtn');
-    const tlBtn = $('timelineViewBtn');
+    const cardView = $('cardView'), timelineView = $('timelineView');
+    const cardBtn = $('cardViewBtn'), tlBtn = $('timelineViewBtn');
     if (mode === 'timeline') {
-      cardView.style.display = 'none';
-      timelineView.classList.add('visible');
-      cardBtn.classList.remove('active');
-      tlBtn.classList.add('active');
+      cardView.style.display = 'none'; timelineView.classList.add('visible');
+      cardBtn.classList.remove('active'); tlBtn.classList.add('active');
       renderTimeline();
     } else {
-      cardView.style.display = 'block';
-      timelineView.classList.remove('visible');
-      cardBtn.classList.add('active');
-      tlBtn.classList.remove('active');
+      cardView.style.display = 'block'; timelineView.classList.remove('visible');
+      cardBtn.classList.add('active'); tlBtn.classList.remove('active');
     }
   };
 
   function renderTimeline() {
     if (!manualScenes.length) return;
-    const track = $('timelineTrack');
-    const totalEl = $('timelineTotal');
+    const track = $('timelineTrack'), totalEl = $('timelineTotal');
     if (!track) return;
-
     const totalDur = manualScenes.reduce((sum, s) => sum + (s.duration || 8), 0);
     const trackWidth = Math.max(track.clientWidth - 20, 600);
     let html = '';
-
     manualScenes.forEach((s, i) => {
       const dur = s.duration || 8;
-      const pct = (dur / totalDur) * 100;
       const w = Math.max(30, (dur / totalDur) * trackWidth);
       const stype = s.section_type || 'default';
       const color = TIMELINE_COLORS[stype] || TIMELINE_COLORS['default'];
       const bg = s.clip_exists ? color : color + '44';
       const sel = (i === timelineSelectedIdx) ? 'selected' : '';
-      const reversed = s.reversed ? ' &#8634;' : '';
-      const ramp = (s.speed_ramp && s.speed_ramp !== 'none') ? ' ~' : '';
-
       html += `<div class="timeline-block ${sel}" style="width:${w}px;background:${bg};"
-                    onclick="window._timelineSelect(${i})"
-                    data-idx="${i}">
-        <span class="timeline-block-label">${i+1}${reversed}${ramp}</span>
+                    onclick="window._timelineSelect(${i})" data-idx="${i}">
+        <span class="timeline-block-label">${i+1}</span>
         <span class="timeline-block-dur">${dur}s</span>
         <div class="timeline-block-resize" onmousedown="window._timelineResizeStart(event, ${i})"></div>
       </div>`;
     });
-
     track.innerHTML = html;
     if (totalEl) {
-      const mins = Math.floor(totalDur / 60);
-      const secs = Math.round(totalDur % 60);
+      const mins = Math.floor(totalDur / 60), secs = Math.round(totalDur % 60);
       totalEl.textContent = `Total: ${mins}m ${secs}s (${totalDur}s) \u2022 ${manualScenes.length} scenes`;
     }
   }
 
   window._timelineSelect = function(idx) {
-    timelineSelectedIdx = idx;
-    renderTimeline();
-    // Also scroll to the card in card view
+    timelineSelectedIdx = idx; renderTimeline();
     const scene = manualScenes[idx];
-    if (scene) {
-      const el = document.getElementById('msc-' + scene.id);
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
+    if (scene) { const el = document.getElementById('msc-' + scene.id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
   };
 
-  // Drag-resize timeline blocks
-  let _resizingIdx = -1;
-  let _resizeStartX = 0;
-  let _resizeStartDur = 0;
+  let _resizingIdx = -1, _resizeStartX = 0, _resizeStartDur = 0;
 
   window._timelineResizeStart = function(e, idx) {
-    e.stopPropagation();
-    _resizingIdx = idx;
-    _resizeStartX = e.clientX;
-    _resizeStartDur = manualScenes[idx].duration || 8;
+    e.stopPropagation(); _resizingIdx = idx; _resizeStartX = e.clientX; _resizeStartDur = manualScenes[idx].duration || 8;
     document.addEventListener('mousemove', _timelineResizeMove);
     document.addEventListener('mouseup', _timelineResizeEnd);
   };
@@ -3769,8 +3631,7 @@
     const track = $('timelineTrack');
     const trackW = track ? track.clientWidth : 600;
     const secPerPx = totalDur / trackW;
-    const newDur = Math.max(2, Math.min(20, Math.round(_resizeStartDur + dx * secPerPx)));
-    manualScenes[_resizingIdx].duration = newDur;
+    manualScenes[_resizingIdx].duration = Math.max(2, Math.min(20, Math.round(_resizeStartDur + dx * secPerPx)));
     renderTimeline();
   }
 
@@ -3783,30 +3644,21 @@
     document.removeEventListener('mouseup', _timelineResizeEnd);
   }
 
-  // ===================== PROMPT HISTORY (Item 10) =====================
+  // ===================== PROMPT HISTORY =====================
 
   async function loadPromptHistory() {
-    try {
-      const resp = await fetch('/api/prompt-history');
-      const data = await resp.json();
-      renderPromptHistory(data.prompts || []);
-    } catch (e) { /* ignore */ }
+    const data = await apiGet('/api/prompt-history');
+    renderPromptHistory(data.prompts || []);
   }
 
   function renderPromptHistory(prompts) {
     const list = $('promptHistoryList');
     if (!list) return;
     if (!prompts.length) {
-      list.innerHTML = '<div style="color:var(--text-dim);padding:10px;font-size:10px;">No prompt history yet. Generate some scenes to populate this.</div>';
+      list.innerHTML = '<div style="color:var(--text-dim);padding:10px;font-size:10px;">No prompt history yet.</div>';
       return;
     }
-    // Show favorites first, then recent
-    const sorted = [...prompts].sort((a, b) => {
-      if (a.starred && !b.starred) return -1;
-      if (!a.starred && b.starred) return 1;
-      return 0;
-    });
-    // Store prompts in a lookup for safe event handling
+    const sorted = [...prompts].sort((a, b) => (a.starred && !b.starred) ? -1 : (!a.starred && b.starred) ? 1 : 0);
     window._promptHistoryCache = sorted.slice(0, 50);
     list.innerHTML = sorted.slice(0, 50).map((p, i) => {
       const starClass = p.starred ? 'starred' : '';
@@ -3822,14 +3674,8 @@
   window._togglePromptStarByIdx = async function(idx) {
     const cache = window._promptHistoryCache || [];
     if (idx >= cache.length) return;
-    const p = cache[idx];
-    try {
-      await fetch('/api/prompt-history/star', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: p.prompt, starred: !p.starred }),
-      });
-      loadPromptHistory();
-    } catch (e) { /* ignore */ }
+    await apiPost('/api/prompt-history/star', { prompt: cache[idx].prompt, starred: !cache[idx].starred });
+    loadPromptHistory();
   };
 
   window._reusePromptByIdx = function(idx) {
@@ -3839,7 +3685,6 @@
   };
 
   window._reusePrompt = function(prompt) {
-    // Find the first scene with an empty prompt, or the selected timeline scene
     let targetScene = null;
     if (timelineSelectedIdx >= 0 && manualScenes[timelineSelectedIdx]) {
       targetScene = manualScenes[timelineSelectedIdx];
@@ -3848,119 +3693,81 @@
     }
     if (targetScene) {
       const el = document.getElementById('msc-prompt-' + targetScene.id);
-      if (el) {
-        el.value = prompt;
-        window._manualUpdateScene(targetScene.id, { prompt });
-      }
+      if (el) { el.value = prompt; window._manualUpdateScene(targetScene.id, { prompt }); }
     }
     $('promptHistoryPanel').classList.remove('visible');
   };
 
-  // ===================== RENDER TIME ESTIMATION (Item 37) =====================
+  // ===================== RENDER TIME ESTIMATION =====================
 
   async function updateRenderEstimate() {
-    if (!manualScenes.length) {
-      const el = $('renderEstimate');
-      if (el) el.classList.remove('visible');
-      return;
-    }
+    if (!manualScenes.length) { const el = $('renderEstimate'); if (el) el.classList.remove('visible'); return; }
     const engine = (globalSettings && globalSettings.default_engine) || 'grok';
-    try {
-      const resp = await fetch('/api/render-estimate?scenes=' + manualScenes.length + '&engine=' + engine);
-      const data = await resp.json();
-      const el = $('renderEstimate');
-      if (el) {
-        el.textContent = '\u23F1 Estimated generation time: ' + data.estimate_label +
-          ' (' + data.scenes + ' scenes \u00D7 ' + data.gen_time_per_scene + 's + stitch)';
-        el.classList.add('visible');
-      }
-    } catch (e) { /* ignore */ }
+    const data = await apiGet('/api/estimate-render');
+    const el = $('renderEstimate');
+    if (el && data.estimate_human) {
+      el.textContent = '\u23F1 Estimated: ' + data.estimate_human +
+        ' (' + (data.scenes_to_generate || 0) + ' to generate, ' + (data.scenes_ready || 0) + ' ready)';
+      el.classList.add('visible');
+    }
   }
 
-  // ===================== AUTOSAVE (Item 47) =====================
+  // ===================== AUTOSAVE =====================
 
   let _autosaveTimer = null;
   let _lastAutosaveHash = '';
   let _hasUnsavedChanges = false;
 
   function _getSceneStateHash() {
-    return JSON.stringify(manualScenes.map(s => ({
-      id: s.id, prompt: s.prompt, duration: s.duration,
-      transition: s.transition, speed: s.speed,
-      speed_ramp: s.speed_ramp, reversed: s.reversed,
-    })));
+    return JSON.stringify(manualScenes.map(s => ({ id: s.id, prompt: s.prompt, duration: s.duration, transition: s.transition, speed: s.speed, speed_ramp: s.speed_ramp, reversed: s.reversed })));
   }
 
   async function _doAutosave() {
     const currentHash = _getSceneStateHash();
     if (currentHash === _lastAutosaveHash) return;
     _lastAutosaveHash = currentHash;
-
     const indicator = $('autosaveIndicator');
-    try {
-      await fetch('/api/project/autosave', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scenes: manualScenes,
-          song_filename: manualSongFilename,
-        }),
-      });
-      if (indicator) {
-        indicator.textContent = 'Saved';
-        indicator.classList.remove('unsaved');
-        indicator.classList.add('visible');
-        setTimeout(() => indicator.classList.remove('visible'), 2000);
-      }
-      _hasUnsavedChanges = false;
-    } catch (e) { /* ignore */ }
+    const textEl = $('autosaveText');
+    await apiPost('/api/project/autosave', { scenes: manualScenes, song_filename: manualSongFilename });
+    if (indicator) { indicator.classList.remove('unsaved'); }
+    if (textEl) textEl.textContent = 'Saved';
+    _hasUnsavedChanges = false;
   }
 
   function _startAutosave() {
     if (_autosaveTimer) clearInterval(_autosaveTimer);
-    _autosaveTimer = setInterval(_doAutosave, 30000); // 30 seconds
+    _autosaveTimer = setInterval(_doAutosave, 30000);
   }
 
   // Mark unsaved on any scene change
-  const _origUpdateScene = window._manualUpdateScene;
+  const _origUpdateScene2 = window._manualUpdateScene;
   window._manualUpdateScene = async function(sceneId, fields) {
     _hasUnsavedChanges = true;
     const indicator = $('autosaveIndicator');
-    if (indicator) {
-      indicator.textContent = 'Unsaved changes';
-      indicator.classList.add('unsaved', 'visible');
-    }
-    if (_origUpdateScene) return _origUpdateScene(sceneId, fields);
+    const textEl = $('autosaveText');
+    if (indicator) indicator.classList.add('unsaved');
+    if (textEl) textEl.textContent = 'Unsaved';
+    if (_origUpdateScene2) return _origUpdateScene2(sceneId, fields);
   };
 
-  // Check for autosave on load
   async function _checkAutosave() {
-    try {
-      const resp = await fetch('/api/project/autosave');
-      const data = await resp.json();
-      if (data.exists && data.data && data.data.scenes && data.data.scenes.length > 0) {
-        const banner = $('autosaveRestoreBanner');
-        if (banner) banner.classList.add('visible');
-      }
-    } catch (e) { /* ignore */ }
+    const data = await apiGet('/api/project/autosave');
+    if (data && data.exists !== false && data.data && data.data.scenes && data.data.scenes.length > 0) {
+      const banner = $('autosaveRestoreBanner');
+      if (banner) banner.classList.add('visible');
+    }
   }
 
   window._restoreAutosave = async function() {
-    try {
-      const resp = await fetch('/api/project/autosave');
-      const data = await resp.json();
-      if (data.exists && data.data) {
-        // Restore scenes by creating them via API
-        for (const s of (data.data.scenes || [])) {
-          if (s.prompt) {
-            await fetch('/api/manual/scene', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ prompt: s.prompt, duration: s.duration || 8, transition: s.transition || 'crossfade' }),
-            });
-          }
+    const data = await apiGet('/api/project/autosave');
+    if (data && data.data) {
+      for (const s of (data.data.scenes || [])) {
+        if (s.prompt) {
+          await apiPost('/api/manual/scene', { prompt: s.prompt, duration: s.duration || 8, transition: s.transition || 'crossfade' });
         }
-        await loadManualScenes();
       }
-    } catch (e) { alert('Restore failed: ' + e.message); }
+      await loadManualScenes();
+    }
     $('autosaveRestoreBanner').classList.remove('visible');
   };
 
@@ -3968,53 +3775,201 @@
     $('autosaveRestoreBanner').classList.remove('visible');
   };
 
-  // ===================== INIT NEW FEATURES =====================
+  // ===================== NEW TOOLBAR FEATURES =====================
+
+  // ---- Style Mix ----
+  window._showStyleMixModal = function() {
+    $('styleMixModal').classList.add('open');
+    $('mixStyleResult').style.display = 'none';
+    $('mixApplyBtn').style.display = 'none';
+  };
+
+  window._doMixStyles = async function() {
+    const styleA = $('mixStyleA').value;
+    const styleB = $('mixStyleB').value;
+    const weight = parseInt($('mixStyleWeight').value) / 100;
+    const data = await apiPost('/api/mix-styles', { style_a: styleA, style_b: styleB, weight: weight });
+    if (data.ok) {
+      $('mixStyleResult').textContent = data.mixed_style;
+      $('mixStyleResult').style.display = 'block';
+      $('mixApplyBtn').style.display = 'inline-flex';
+      window._lastMixedStyle = data.mixed_style;
+    } else { alert('Mix failed: ' + (data.error || 'unknown')); }
+  };
+
+  window._applyMixedStyle = function() {
+    if (window._lastMixedStyle) {
+      const lockInput = $('manualStyleLockInput');
+      if (lockInput) lockInput.value = window._lastMixedStyle;
+    }
+    window._closeModal('styleMixModal');
+  };
+
+  // ---- Emotion Detection ----
+  window._detectEmotion = async function() {
+    const lyrics = ($('manualLyricsInput') || {}).value || '';
+    if (!lyrics.trim()) { alert('Enter lyrics in the Lyrics Sync panel first.'); return; }
+    const data = await apiPost('/api/detect-emotion', { lyrics: lyrics });
+    if (data.ok) {
+      const badges = $('emotionBadges');
+      if (badges && data.emotions) {
+        badges.innerHTML = Object.entries(data.emotions).map(([k, v]) =>
+          `<span class="emotion-badge">${escHtml(k)}: ${(v * 100).toFixed(0)}%</span>`
+        ).join('');
+      }
+      if (data.visual_prompt) {
+        if (confirm('Suggested visual style:\n' + data.visual_prompt + '\n\nApply to style lock?')) {
+          const lockInput = $('manualStyleLockInput');
+          if (lockInput) lockInput.value = data.visual_prompt;
+        }
+      }
+    } else { alert('Emotion detection failed: ' + (data.error || 'unknown')); }
+  };
+
+  // ---- Auto Transitions by Energy ----
+  window._autoTransitionsEnergy = async function() {
+    if (!confirm('Redistribute transitions based on audio energy?')) return;
+    const data = await apiPost('/api/auto-transitions-energy');
+    if (data.ok) { alert('Updated ' + data.scenes_updated + ' scene transitions.'); await loadManualScenes(); }
+    else { alert('Error: ' + (data.error || 'failed')); }
+  };
+
+  // ---- Key Detection ----
+  window._detectKey = async function() {
+    const data = await apiPost('/api/detect-key');
+    if (data.ok && data.key) {
+      $('audioKeyDisplay').textContent = data.key;
+      flashSuccess($('audioKeyDisplay'));
+    } else { alert('Key detection failed: ' + (data.error || 'no audio')); }
+  };
+
+  // ---- Click Track ----
+  window._generateClickTrack = async function() {
+    var bpm = prompt('BPM for click track:', '120');
+    var duration = prompt('Duration (seconds):', '60');
+    if (!bpm || !duration) return;
+    const data = await apiPost('/api/click-track', { bpm: parseFloat(bpm), duration: parseFloat(duration) });
+    if (data.ok && data.click_track_url) {
+      window.open(data.click_track_url + '?t=' + Date.now(), '_blank');
+    } else { alert('Error: ' + (data.error || 'failed')); }
+  };
+
+  // ---- Auto-Mix Master ----
+  window._autoMixMaster = async function() {
+    if (!manualSongFilename) { alert('Upload an audio track first.'); return; }
+    const data = await apiPost('/api/auto-mix', { input_path: 'uploads/' + manualSongFilename });
+    if (data.ok) { alert('Audio mastered! Output: ' + data.output); }
+    else { alert('Error: ' + (data.error || 'failed')); }
+  };
+
+  // ---- Keyboard Shortcuts ----
+  window._showShortcuts = function() {
+    $('shortcutsModal').classList.add('open');
+  };
+
+  // ---- Analytics ----
+  window._showAnalytics = function() {
+    const totalScenes = manualScenes.length;
+    const generatedScenes = manualScenes.filter(s => s.clip_exists).length;
+    const totalDuration = manualScenes.reduce((sum, s) => sum + (s.duration || 8), 0);
+    const engines = {};
+    manualScenes.forEach(s => {
+      const eng = s.engine || globalSettings.default_engine || 'grok';
+      engines[eng] = (engines[eng] || 0) + 1;
+    });
+    const totalCost = Object.values(window._sceneCosts || {}).reduce((s, v) => s + v, 0);
+
+    const content = $('analyticsContent');
+    content.innerHTML = `
+      <div class="analysis-grid" style="margin-bottom:16px;">
+        <div class="stat-box"><div class="val">${totalScenes}</div><div class="lbl">Scenes</div></div>
+        <div class="stat-box"><div class="val">${generatedScenes}</div><div class="lbl">Generated</div></div>
+        <div class="stat-box"><div class="val">${Math.floor(totalDuration/60)}:${String(totalDuration%60).padStart(2,'0')}</div><div class="lbl">Duration</div></div>
+        <div class="stat-box"><div class="val">$${totalCost.toFixed(2)}</div><div class="lbl">Cost</div></div>
+      </div>
+      <div class="msc-label" style="margin-bottom:6px;">Engine Usage</div>
+      ${Object.entries(engines).map(([k, v]) =>
+        `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);">
+          <span style="color:${ENGINE_COLORS[k]||'var(--text)'};">${ENGINE_LABELS[k]||k}</span>
+          <span>${v} scenes</span>
+        </div>`
+      ).join('')}
+    `;
+    $('analyticsModal').classList.add('open');
+  };
+
+  // ---- QR Code ----
+  window._generateQRCode = async function() {
+    var url = prompt('URL to encode in QR code:', window.location.href);
+    if (!url) return;
+    const data = await apiPost('/api/qr-code', { url: url });
+    if (data.ok && data.qr_url) { window.open(data.qr_url + '?t=' + Date.now(), '_blank'); }
+    else { alert('QR Code failed: ' + (data.error || 'failed')); }
+  };
+
+  // ---- Embed Code ----
+  window._getEmbedCode = async function() {
+    const data = await apiPost('/api/embed-code', { video_url: '/output/final_video.mp4' });
+    if (data.ok && data.embed_code) {
+      $('embedCodeArea').value = data.embed_code;
+      $('embedModal').classList.add('open');
+    } else { alert('Error: ' + (data.error || 'failed')); }
+  };
+
+  // ---- Version History ----
+  window._showVersions = function() {
+    $('versionsContent').innerHTML = '<div style="color:var(--text-dim);font-size:11px;">Click "Save Current Version" to snapshot the current video.</div>';
+    $('versionsModal').classList.add('open');
+  };
+
+  window._saveVersion = async function() {
+    const data = await apiPost('/api/versions/save');
+    if (data.ok) { alert('Version saved: ' + data.version_path); }
+    else { alert('Error: ' + (data.error || 'no final video')); }
+  };
+
+  // ---- Storyboard PDF ----
+  window._exportStoryboardPdf = async function() {
+    const data = await apiPost('/api/storyboard-pdf');
+    if (data.ok && data.storyboard_url) { window.open(data.storyboard_url + '?t=' + Date.now(), '_blank'); }
+    else { alert('Error: ' + (data.error || 'failed')); }
+  };
+
+  // ---- Export Best GIFs ----
+  window._exportBestGifs = async function() {
+    const data = await apiPost('/api/export-best-gifs');
+    if (data.ok) {
+      var urls = data.gifs || [];
+      if (urls.length) { alert('Exported ' + urls.length + ' GIFs!'); urls.forEach(u => window.open(u, '_blank')); }
+      else { alert('No GIFs exported.'); }
+    } else { alert('Error: ' + (data.error || 'failed')); }
+  };
+
+  // ---- Save/Load Template ----
+  window._saveTemplate = async function() {
+    var name = prompt('Template name:', 'my_template');
+    if (!name) return;
+    const data = await apiPost('/api/templates/save', { name: name });
+    if (data.ok) alert('Template saved!');
+    else alert('Error: ' + (data.error || 'failed'));
+  };
+
+  window._loadTemplate = async function() {
+    const listData = await apiGet('/api/templates');
+    var templates = listData.templates || [];
+    if (!templates.length) { alert('No templates saved yet.'); return; }
+    var name = prompt('Templates:\n' + templates.map(t => '  - ' + t.name).join('\n') + '\n\nEnter template name to load:', templates[0].name);
+    if (!name) return;
+    const data = await apiPost('/api/templates/load', { name: name });
+    if (data.ok) { alert('Template loaded!'); await loadManualScenes(); }
+    else { alert('Error: ' + (data.error || 'not found')); }
+  };
+
+  // ===================== INIT =====================
 
   _checkAutosave();
   _startAutosave();
   loadPromptHistory();
-
-  // ===================== SAVE/LOAD FULL PROJECT =====================
-
-  var saveFullProjectBtn = $('saveFullProjectBtn');
-  var loadFullProjectBtn = $('loadFullProjectBtn');
-  var fullProjectLoadInput = $('fullProjectLoadInput');
-
-  if (saveFullProjectBtn) {
-    saveFullProjectBtn.addEventListener('click', async function() {
-      saveFullProjectBtn.disabled = true; saveFullProjectBtn.textContent = 'SAVING...';
-      try {
-        var resp = await fetch('/api/project/save-full', { method: 'POST' });
-        var data = await resp.json();
-        if (data.ok) {
-          var a = document.createElement('a'); a.href = data.url; a.download = data.filename;
-          document.body.appendChild(a); a.click(); document.body.removeChild(a);
-          flashSuccess(saveFullProjectBtn);
-        } else { alert('Error: ' + (data.error || 'failed')); }
-      } catch (e) { alert('Error: ' + e.message); }
-      saveFullProjectBtn.disabled = false; saveFullProjectBtn.textContent = 'Save Full';
-    });
-  }
-
-  if (loadFullProjectBtn) {
-    loadFullProjectBtn.addEventListener('click', function() { fullProjectLoadInput.click(); });
-  }
-
-  if (fullProjectLoadInput) {
-    fullProjectLoadInput.addEventListener('change', async function() {
-      var file = fullProjectLoadInput.files[0]; if (!file) return;
-      loadFullProjectBtn.disabled = true; loadFullProjectBtn.textContent = 'LOADING...';
-      var formData = new FormData(); formData.append('project', file, file.name);
-      try {
-        var resp = await fetch('/api/project/load-full', { method: 'POST', body: formData });
-        var data = await resp.json();
-        if (data.ok) { alert('Full project loaded with clips!'); await loadManualScenes(); flashSuccess(loadFullProjectBtn); }
-        else alert('Error: ' + (data.error || 'failed'));
-      } catch (e) { alert('Error: ' + e.message); }
-      loadFullProjectBtn.disabled = false; loadFullProjectBtn.textContent = 'Load Full';
-      fullProjectLoadInput.value = '';
-    });
-  }
 
 })();
 </script>
