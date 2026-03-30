@@ -194,3 +194,106 @@ def _build_sections(frame_times: np.ndarray, rms: np.ndarray, duration: float) -
         })
 
     return sections
+
+
+# ---- Audio Normalization (Roadmap Item 23) ----
+
+def normalize_audio(input_path: str, output_path: str, target_db: float = -14.0) -> str:
+    """Normalize audio to target loudness level using ffmpeg loudnorm."""
+    import subprocess
+    kw = {}
+    if __import__("sys").platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0
+        kw["startupinfo"] = si
+    cmd = ["ffmpeg", "-y", "-i", input_path,
+           "-af", f"loudnorm=I={target_db}:TP=-1.5:LRA=11",
+           "-c:a", "aac", "-b:a", "192k", output_path]
+    subprocess.run(cmd, check=True, capture_output=True, **kw)
+    return output_path
+
+
+# ---- Noise Reduction (Roadmap Item 24) ----
+
+def reduce_noise(input_path: str, output_path: str, noise_floor: float = -30) -> str:
+    """Basic noise reduction using ffmpeg afftdn filter."""
+    import subprocess
+    kw = {}
+    if __import__("sys").platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0
+        kw["startupinfo"] = si
+    cmd = ["ffmpeg", "-y", "-i", input_path,
+           "-af", f"afftdn=nf={noise_floor}",
+           "-c:a", "aac", "-b:a", "192k", output_path]
+    subprocess.run(cmd, check=True, capture_output=True, **kw)
+    return output_path
+
+
+# ---- Tempo Adjustment (Roadmap Item 27) ----
+
+def adjust_tempo(input_path: str, output_path: str, factor: float = 1.0) -> str:
+    """Adjust audio tempo without changing pitch.
+    factor: 0.5 = half speed, 1.0 = normal, 2.0 = double speed
+    """
+    import subprocess
+    kw = {}
+    if __import__("sys").platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0
+        kw["startupinfo"] = si
+    cmd = ["ffmpeg", "-y", "-i", input_path,
+           "-af", f"atempo={factor}",
+           "-c:a", "aac", "-b:a", "192k", output_path]
+    subprocess.run(cmd, check=True, capture_output=True, **kw)
+    return output_path
+
+
+# ---- Pitch Shift (Roadmap Item 28) ----
+
+def pitch_shift(input_path: str, output_path: str, semitones: float = 0) -> str:
+    """Shift pitch by semitones without changing tempo."""
+    import subprocess, math
+    kw = {}
+    if __import__("sys").platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0
+        kw["startupinfo"] = si
+    # Pitch shift = adjust sample rate ratio
+    ratio = 2 ** (semitones / 12.0)
+    cmd = ["ffmpeg", "-y", "-i", input_path,
+           "-af", f"asetrate=44100*{ratio},atempo={1/ratio}",
+           "-c:a", "aac", "-b:a", "192k", output_path]
+    subprocess.run(cmd, check=True, capture_output=True, **kw)
+    return output_path
+
+
+# ---- Audio Effects (Roadmap Item 29) ----
+
+def apply_audio_effect(input_path: str, output_path: str, effect: str = "reverb") -> str:
+    """Apply audio effect: reverb, echo, delay."""
+    import subprocess
+    kw = {}
+    if __import__("sys").platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0
+        kw["startupinfo"] = si
+    
+    effect_filters = {
+        "reverb": "aecho=0.8:0.88:60:0.4",
+        "echo": "aecho=0.8:0.9:200:0.3",
+        "delay": "adelay=500|500",
+        "bass_boost": "bass=g=10:f=110:w=0.6",
+        "treble_boost": "treble=g=8:f=3000:w=0.6",
+    }
+    filt = effect_filters.get(effect, effect_filters["reverb"])
+    cmd = ["ffmpeg", "-y", "-i", input_path,
+           "-af", filt,
+           "-c:a", "aac", "-b:a", "192k", output_path]
+    subprocess.run(cmd, check=True, capture_output=True, **kw)
+    return output_path
