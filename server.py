@@ -1598,6 +1598,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/project/autosave":
             self._handle_autosave()
 
+        # New/Reset project
+        elif path == "/api/project/reset":
+            self._handle_project_reset()
+
         # Roadmap: Style mixing
         elif path == "/api/mix-styles":
             self._handle_mix_styles()
@@ -4665,3 +4669,85 @@ if __name__ == "__main__":
         from lib.roadmap_features import generate_embed_code
         code = generate_embed_code(url)
         self._send_json({"ok": True, "embed_code": code})
+
+
+    def _handle_project_reset(self):
+        """Reset everything — clear all scenes, clips, uploads, state."""
+        import shutil
+        cleared = []
+        # Clear manual scene plan
+        plan_path = os.path.join(OUTPUT_DIR, "manual_scene_plan.json")
+        if os.path.isfile(plan_path):
+            os.unlink(plan_path)
+            cleared.append("manual_scene_plan")
+        # Clear auto scene plan
+        auto_plan = os.path.join(OUTPUT_DIR, "scene_plan.json")
+        if os.path.isfile(auto_plan):
+            os.unlink(auto_plan)
+            cleared.append("scene_plan")
+        # Clear clips
+        for clips_dir in [CLIPS_DIR, MANUAL_CLIPS_DIR]:
+            if os.path.isdir(clips_dir):
+                for f in os.listdir(clips_dir):
+                    fp = os.path.join(clips_dir, f)
+                    try: os.unlink(fp)
+                    except: pass
+                cleared.append(os.path.basename(clips_dir))
+        # Clear uploaded scene photos
+        photos_dir = os.path.join(UPLOADS_DIR, "scene_photos")
+        if os.path.isdir(photos_dir):
+            for f in os.listdir(photos_dir):
+                try: os.unlink(os.path.join(photos_dir, f))
+                except: pass
+            cleared.append("scene_photos")
+        # Clear uploaded scene videos
+        videos_dir = os.path.join(UPLOADS_DIR, "scene_videos")
+        if os.path.isdir(videos_dir):
+            for f in os.listdir(videos_dir):
+                try: os.unlink(os.path.join(videos_dir, f))
+                except: pass
+            cleared.append("scene_videos")
+        # Clear uploaded scene vocals
+        vocals_dir = os.path.join(UPLOADS_DIR, "scene_vocals")
+        if os.path.isdir(vocals_dir):
+            for f in os.listdir(vocals_dir):
+                try: os.unlink(os.path.join(vocals_dir, f))
+                except: pass
+            cleared.append("scene_vocals")
+        # Clear final video
+        final = os.path.join(OUTPUT_DIR, "final_video.mp4")
+        if os.path.isfile(final):
+            os.unlink(final)
+            cleared.append("final_video")
+        # Clear autosave
+        autosave = os.path.join(OUTPUT_DIR, "autosave.json")
+        if os.path.isfile(autosave):
+            os.unlink(autosave)
+            cleared.append("autosave")
+        # Clear previews
+        previews_dir = os.path.join(OUTPUT_DIR, "previews")
+        if os.path.isdir(previews_dir):
+            for f in os.listdir(previews_dir):
+                try: os.unlink(os.path.join(previews_dir, f))
+                except: pass
+            cleared.append("previews")
+        # Clear GIFs
+        gifs_dir = os.path.join(OUTPUT_DIR, "gifs")
+        if os.path.isdir(gifs_dir):
+            for f in os.listdir(gifs_dir):
+                try: os.unlink(os.path.join(gifs_dir, f))
+                except: pass
+            cleared.append("gifs")
+        # Reset generation state
+        with gen_lock:
+            gen_state["running"] = False
+            gen_state["phase"] = ""
+            gen_state["progress"] = 0
+            gen_state["total_scenes"] = 0
+            gen_state["error"] = None
+            gen_state["output_file"] = None
+            gen_state["analysis"] = None
+            gen_state["scenes"] = []
+        # DON'T clear: uploaded songs, references, settings, cost tracker, prompt history, templates
+        print(f"[RESET] Project reset. Cleared: {', '.join(cleared)}")
+        self._send_json({"ok": True, "cleared": cleared})
