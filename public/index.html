@@ -653,9 +653,9 @@
   }
   .msc-body {
     padding: 16px;
-    display: grid;
-    grid-template-columns: 140px 1fr;
-    gap: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
   .msc-photo-area {
     display: flex; flex-direction: column; gap: 8px;
@@ -742,7 +742,6 @@
   }
   .msc-clip-preview {
     margin-top: 8px; text-align: center;
-    grid-column: 1 / -1;
   }
   .msc-clip-preview video {
     max-width: 100%; max-height: 240px;
@@ -790,7 +789,7 @@
   }
 
   @media (max-width: 600px) {
-    .msc-body { grid-template-columns: 1fr; }
+    .msc-photo-prompt-combined { flex-direction: column; }
     .msc-photo-preview { width: 100%; height: 120px; }
   }
 
@@ -983,6 +982,187 @@
 
   /* ---- Project load file input ---- */
   #projectLoadInput { display: none; }
+
+  /* ---- Transition preview between scene cards ---- */
+  .transition-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 0;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+  .transition-indicator:hover {
+    opacity: 1 !important;
+  }
+  .transition-indicator .trans-line {
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .transition-indicator .trans-label {
+    font-size: 9px;
+    color: var(--amber);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    white-space: nowrap;
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--surface);
+    transition: all 0.2s;
+  }
+  .transition-indicator:hover .trans-label {
+    border-color: var(--amber);
+    box-shadow: 0 0 8px rgba(255,170,0,0.2);
+  }
+  .transition-controls {
+    display: none;
+    padding: 8px 16px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin: -2px 0;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .transition-controls.open {
+    display: flex;
+  }
+  .transition-preview-video {
+    max-width: 300px;
+    max-height: 170px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    margin-top: 6px;
+  }
+
+  /* ---- Photo+Prompt combined visual ---- */
+  .msc-photo-prompt-combined {
+    display: flex;
+    gap: 12px;
+    align-items: stretch;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    padding: 8px;
+    position: relative;
+  }
+  .msc-photo-prompt-combined::before {
+    content: 'PHOTO + PROMPT';
+    position: absolute;
+    top: -8px;
+    left: 12px;
+    font-size: 8px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    background: var(--bg);
+    padding: 0 6px;
+  }
+  .msc-photo-prompt-combined .msc-photo-area {
+    flex-shrink: 0;
+  }
+  .msc-photo-prompt-combined .msc-prompt-input {
+    border: none;
+    background: transparent;
+    margin: 0;
+    padding: 8px;
+    min-height: 80px;
+  }
+  .msc-photo-prompt-combined .msc-prompt-input:focus {
+    outline: 1px solid var(--cyan);
+    border-radius: 3px;
+  }
+  .msc-grok-note {
+    font-size: 9px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+    margin-top: 4px;
+    line-height: 1.4;
+  }
+  .msc-grok-note em {
+    color: var(--amber);
+    font-style: normal;
+  }
+
+  /* ---- Generate from photo button ---- */
+  .btn-gen-photo {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 4px 10px;
+    font-family: inherit; font-size: 9px;
+    letter-spacing: 1px; text-transform: uppercase;
+    border: 1px solid var(--magenta);
+    background: transparent;
+    color: var(--magenta);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-gen-photo:hover {
+    background: rgba(255,45,123,0.12);
+    box-shadow: 0 0 8px var(--magenta-dim);
+  }
+  .btn-gen-photo:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  /* ---- Preview All modal ---- */
+  .preview-modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 10000;
+    align-items: center;
+    justify-content: center;
+  }
+  .preview-modal-overlay.open {
+    display: flex;
+  }
+  .preview-modal {
+    background: var(--surface);
+    border: 1px solid var(--cyan);
+    border-radius: 6px;
+    padding: 20px;
+    max-width: 800px;
+    width: 90%;
+    position: relative;
+    box-shadow: 0 0 40px var(--cyan-dim);
+  }
+  .preview-modal-close {
+    position: absolute;
+    top: 10px; right: 14px;
+    background: transparent;
+    border: 1px solid var(--red);
+    color: var(--red);
+    font-size: 14px;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s;
+  }
+  .preview-modal-close:hover {
+    background: var(--red);
+    color: #fff;
+  }
+  .preview-modal-title {
+    font-size: 11px;
+    color: var(--cyan);
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    margin-bottom: 14px;
+  }
+  .preview-modal video {
+    width: 100%;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
 /* ---- Lyrics Sync ---- */  .lyrics-textarea {    width: 100%; background: var(--bg); border: 1px solid var(--border);    border-radius: 4px; padding: 12px 14px; color: var(--text);    font-family: inherit; font-size: 12px; resize: vertical;    min-height: 100px; line-height: 1.6;  }  .lyrics-textarea:focus { outline: none; border-color: var(--cyan); }  .lyrics-textarea::placeholder { color: var(--text-dim); }  .lyrics-mode-toggle { display: flex; gap: 0; margin-bottom: 12px; }  .lyrics-mode-btn {    padding: 6px 16px; font-family: inherit; font-size: 10px;    letter-spacing: 2px; text-transform: uppercase;    border: 1px solid var(--border); background: transparent;    color: var(--text-dim); cursor: pointer; transition: all 0.3s;  }  .lyrics-mode-btn:first-child { border-radius: 4px 0 0 4px; }  .lyrics-mode-btn:last-child { border-radius: 0 4px 4px 0; }  .lyrics-mode-btn.active { background: rgba(0,212,255,0.1); border-color: var(--cyan); color: var(--cyan); }  .lyrics-timestamps { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 200px; overflow-y: auto; }  .lyrics-ts-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }  .lyrics-ts-row .ts-line { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }  .lyrics-ts-input {    width: 70px; background: var(--bg); border: 1px solid var(--border);    border-radius: 3px; padding: 4px 6px; color: var(--amber);    font-family: inherit; font-size: 11px; text-align: right;  }  .lyrics-ts-input:focus { outline: none; border-color: var(--cyan); }  /* ---- Style Lock ---- */  .style-lock-bar {    display: flex; align-items: center; gap: 10px; margin-top: 10px;    padding: 10px 14px; background: var(--bg);    border: 1px solid var(--border); border-radius: 4px;  }  .style-lock-toggle { position: relative; width: 36px; height: 20px; cursor: pointer; }  .style-lock-toggle input { display: none; }  .style-lock-toggle .slider {    position: absolute; inset: 0; background: var(--border);    border-radius: 10px; transition: all 0.3s;  }  .style-lock-toggle .slider::after {    content: ""; position: absolute; width: 16px; height: 16px;    border-radius: 50%; background: var(--text-dim);    top: 2px; left: 2px; transition: all 0.3s;  }  .style-lock-toggle input:checked + .slider { background: var(--cyan-dim); }  .style-lock-toggle input:checked + .slider::after { background: var(--cyan); transform: translateX(16px); }  .style-lock-input {    flex: 1; background: transparent; border: none;    color: var(--cyan); font-family: inherit; font-size: 11px; letter-spacing: 1px;  }  .style-lock-input:focus { outline: none; }  .style-lock-input::placeholder { color: var(--text-dim); }  .style-lock-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; white-space: nowrap; }  /* ---- Aspect Ratio / Batch Export ---- */  .aspect-select {    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;    padding: 6px 10px; color: var(--text); font-family: inherit; font-size: 11px;    cursor: pointer; appearance: none; -webkit-appearance: none;    padding-right: 24px;  }  .aspect-select:focus { outline: none; border-color: var(--cyan); }  .aspect-select option { background: var(--surface); color: var(--text); }  .export-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }  .export-item {    display: flex; align-items: center; justify-content: space-between;    padding: 8px 12px; background: var(--bg);    border: 1px solid var(--border); border-radius: 4px; font-size: 11px;  }  .export-item .export-name { color: var(--cyan); letter-spacing: 1px; }  .export-item .export-size { color: var(--text-dim); }
 </style>
 </head>
@@ -1244,6 +1424,7 @@
 
         <div class="manual-bottom-bar">
           <button class="btn" id="manualGenerateAllBtn">Generate All</button>
+          <button class="btn btn-amber" id="manualPreviewAllBtn" onclick="window._previewAll()">Preview All</button>
           <button class="btn btn-amber" id="manualStitchBtn">Stitch Video</button>
           <a class="btn btn-magenta hidden" id="manualDownloadBtn" href="#" download="music_video.mp4">Download</a>
         </div>
@@ -1316,6 +1497,15 @@
 
   </div><!-- /manualModeContainer -->
 
+</div>
+
+<!-- Preview All Modal -->
+<div class="preview-modal-overlay" id="previewModalOverlay">
+  <div class="preview-modal">
+    <button class="preview-modal-close" onclick="window._closePreviewModal()">&times;</button>
+    <div class="preview-modal-title">Full Preview (480p)</div>
+    <video id="previewModalVideo" controls></video>
+  </div>
 </div>
 
 <script>
@@ -2099,6 +2289,31 @@
 
       const isLast = i >= manualScenes.length - 1;
 
+      // Transition indicator between scenes (before this card, if not first)
+      if (i > 0) {
+        const prevScene = manualScenes[i - 1];
+        const transType = (s.transition || 'crossfade').replace(/_/g, ' ');
+        const bothHaveClips = prevScene.clip_exists && s.clip_exists;
+        html += `
+          <div class="transition-indicator" onclick="window._toggleTransitionControls('trans-ctrl-${s.id}')" style="opacity:0.6;">
+            <div class="trans-line"></div>
+            <span class="trans-label">${escHtml(transType)}</span>
+            <div class="trans-line"></div>
+          </div>
+          <div class="transition-controls" id="trans-ctrl-${s.id}">
+            <span class="msc-label">Transition:</span>
+            <select class="msc-select" onchange="window._manualUpdateScene('${s.id}', {transition: this.value}); window._refreshTransitionLabel('${s.id}', this.value);">
+              ${MANUAL_TRANSITIONS.map(t => {
+                const sel = (t === (s.transition || 'crossfade')) ? 'selected' : '';
+                return `<option value="${t}" ${sel}>${t.replace(/_/g, ' ')}</option>`;
+              }).join('')}
+            </select>
+            ${bothHaveClips ? `<button class="btn btn-small" onclick="window._previewTransition('${prevScene.id}', '${s.id}', this)">Preview</button>` : `<span class="msc-grok-note">Both scenes need clips for preview</span>`}
+            <div id="trans-preview-${s.id}" style="width:100%;"></div>
+          </div>
+        `;
+      }
+
       html += `
         <div class="manual-scene-card ${stateClass}" data-scene-id="${s.id}" id="msc-${s.id}"
              draggable="true"
@@ -2115,60 +2330,60 @@
             <button class="msc-delete-btn" onclick="window._manualDeleteScene('${s.id}')">Delete</button>
           </div>
           <div class="msc-body">
-            <div class="msc-photo-area">
-              <div class="msc-photo-preview" onclick="document.getElementById('msc-photo-input-${s.id}').click()">
-                ${photoHtml}
+            <div class="msc-photo-prompt-combined">
+              <div class="msc-photo-area">
+                <div class="msc-photo-preview" onclick="document.getElementById('msc-photo-input-${s.id}').click()">
+                  ${photoHtml}
+                </div>
+                <input type="file" class="msc-photo-input" id="msc-photo-input-${s.id}" accept="image/*"
+                       onchange="window._manualUploadPhoto('${s.id}', this.files[0])">
               </div>
-              <input type="file" class="msc-photo-input" id="msc-photo-input-${s.id}" accept="image/*"
-                     onchange="window._manualUploadPhoto('${s.id}', this.files[0])">
+              <div class="msc-fields" style="flex:1;">
+                <textarea class="msc-prompt-input" id="msc-prompt-${s.id}" placeholder="Describe what this scene should look like... The photo and prompt together influence generation."
+                          onchange="window._manualUpdateScene('${s.id}', {prompt: this.value})">${escHtml(s.prompt || '')}</textarea>
+                ${hasPhoto ? `<div class="msc-grok-note"><em>grok-imagine-video</em> does not accept image input. Use <em>"Generate from Photo"</em> below for photo-to-video via styled image + Ken Burns.</div>` : ''}
+              </div>
             </div>
-            <div class="msc-fields">
-              <textarea class="msc-prompt-input" id="msc-prompt-${s.id}" placeholder="Describe what this scene should look like..."
-                        onchange="window._manualUpdateScene('${s.id}', {prompt: this.value})">${escHtml(s.prompt || '')}</textarea>
-              <div class="msc-controls-row">
-                <span class="msc-label">Duration:</span>
-                <select class="msc-select" onchange="window._manualUpdateScene('${s.id}', {duration: parseInt(this.value)})">
-                  ${durOptions}
-                </select>
-                <span class="msc-label" style="margin-left:8px;">Transition:</span>
-                <select class="msc-select" onchange="window._manualUpdateScene('${s.id}', {transition: this.value})">
-                  ${transOptions}
-                </select>
-                <span class="msc-label" style="margin-left:8px;">Speed:</span>
-                <select class="msc-select" onchange="window._manualUpdateScene('${s.id}', {speed: parseFloat(this.value)})">
-                  ${speedOptions}
-                </select>
-              </div>
-              <div class="msc-controls-row">
-                <span class="msc-label">Color:</span>
-                <select class="msc-select" onchange="window._manualUpdateScene('${s.id}', {color_grade: this.value})">
-                  ${sceneGradeOptions}
-                </select>
-              </div>
-              <div class="msc-overlay-row">
-                <span class="msc-label">Text:</span>
-                <input type="text" class="msc-overlay-input" id="msc-overlay-text-${s.id}"
-                       placeholder="Overlay text..."
-                       value="${escHtml(overlayText)}"
-                       onchange="window._updateOverlay('${s.id}')">
-                <select class="msc-select" id="msc-overlay-pos-${s.id}" onchange="window._updateOverlay('${s.id}')">
-                  ${overlayPosOptions}
-                </select>
-                <select class="msc-select" id="msc-overlay-size-${s.id}" onchange="window._updateOverlay('${s.id}')">
-                  ${overlaySizeOptions}
-                </select>
-                <select class="msc-select" id="msc-overlay-color-${s.id}" onchange="window._updateOverlay('${s.id}')">
-                  ${overlayColorOptions}
-                </select>
-              </div>
-              <div class="msc-actions">
-                <button class="btn btn-small" onclick="window._manualGenerateScene('${s.id}')">Generate Clip</button>
-                <button class="btn btn-small btn-amber" onclick="window._manualSplitScene('${s.id}')">Split</button>
-                ${hasClip ? `<button class="btn btn-small btn-amber" onclick="window._manualPreviewClip('${s.id}')">Preview</button>` : ''}
-                ${hasClip ? `<button class="btn-upscale" onclick="window._upscaleScene('${s.id}', this)" title="Upscale clip 2x with lanczos">2x</button>` : ''}
-                ${(window._sceneCosts && window._sceneCosts[s.id]) ? `<span class="msc-cost-badge">$` + window._sceneCosts[s.id].toFixed(2) + `</span>` : ''}
-                <span class="msc-status" id="msc-status-${s.id}"></span>
-              </div>
+            <div class="msc-controls-row" style="margin-top:10px;">
+              <span class="msc-label">Duration:</span>
+              <select class="msc-select" onchange="window._manualUpdateScene('${s.id}', {duration: parseInt(this.value)})">
+                ${durOptions}
+              </select>
+              <span class="msc-label" style="margin-left:8px;">Speed:</span>
+              <select class="msc-select" onchange="window._manualUpdateScene('${s.id}', {speed: parseFloat(this.value)})">
+                ${speedOptions}
+              </select>
+            </div>
+            <div class="msc-controls-row">
+              <span class="msc-label">Color:</span>
+              <select class="msc-select" onchange="window._manualUpdateScene('${s.id}', {color_grade: this.value})">
+                ${sceneGradeOptions}
+              </select>
+            </div>
+            <div class="msc-overlay-row">
+              <span class="msc-label">Text:</span>
+              <input type="text" class="msc-overlay-input" id="msc-overlay-text-${s.id}"
+                     placeholder="Overlay text..."
+                     value="${escHtml(overlayText)}"
+                     onchange="window._updateOverlay('${s.id}')">
+              <select class="msc-select" id="msc-overlay-pos-${s.id}" onchange="window._updateOverlay('${s.id}')">
+                ${overlayPosOptions}
+              </select>
+              <select class="msc-select" id="msc-overlay-size-${s.id}" onchange="window._updateOverlay('${s.id}')">
+                ${overlaySizeOptions}
+              </select>
+              <select class="msc-select" id="msc-overlay-color-${s.id}" onchange="window._updateOverlay('${s.id}')">
+                ${overlayColorOptions}
+              </select>
+            </div>
+            <div class="msc-actions">
+              <button class="btn btn-small" onclick="window._manualGenerateScene('${s.id}')">Generate Clip</button>
+              ${hasPhoto ? `<button class="btn-gen-photo" onclick="window._generateFromPhoto('${s.id}')" title="Generate video from photo using styled image + Ken Burns">Generate from Photo</button>` : ''}
+              <button class="btn btn-small btn-amber" onclick="window._manualSplitScene('${s.id}')">Split</button>
+              ${hasClip ? `<button class="btn btn-small btn-amber" onclick="window._manualPreviewClip('${s.id}')">Preview</button>` : ''}
+              ${hasClip ? `<button class="btn-upscale" onclick="window._upscaleScene('${s.id}', this)" title="Upscale clip 2x with lanczos">2x</button>` : ''}
+              ${(window._sceneCosts && window._sceneCosts[s.id]) ? `<span class="msc-cost-badge">$` + window._sceneCosts[s.id].toFixed(2) + `</span>` : ''}
+              <span class="msc-status" id="msc-status-${s.id}"></span>
             </div>
             ${clipHtml}
           </div>
@@ -2553,6 +2768,181 @@
       btn.disabled = false;
     }
   };
+
+  // ===================== GENERATE FROM PHOTO =====================
+
+  window._generateFromPhoto = async function(sceneId) {
+    // Save prompt first
+    const promptEl = document.getElementById('msc-prompt-' + sceneId);
+    const statusEl = document.getElementById('msc-status-' + sceneId);
+    const card = document.getElementById('msc-' + sceneId);
+
+    if (promptEl) {
+      await window._manualUpdateScene(sceneId, { prompt: promptEl.value });
+    }
+
+    if (statusEl) { statusEl.textContent = 'PHOTO-TO-VIDEO...'; statusEl.style.color = 'var(--magenta)'; }
+    if (card) { card.className = card.className.replace(/state-\w+/g, '') + ' state-generating'; }
+
+    try {
+      const body = promptEl ? JSON.stringify({ prompt: promptEl.value }) : '{}';
+      const resp = await fetch('/api/manual/scene/' + sceneId + '/generate-from-photo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body,
+      });
+      const data = await resp.json();
+      if (!data.ok) {
+        if (statusEl) { statusEl.textContent = data.error || 'ERROR'; statusEl.style.color = 'var(--red)'; }
+        if (card) { card.className = card.className.replace(/state-\w+/g, '') + ' state-failed'; }
+        return;
+      }
+
+      // Poll for completion
+      const poll = setInterval(async () => {
+        try {
+          const pr = await fetch('/api/progress');
+          const pd = await pr.json();
+          const st = pd.progress && pd.progress[0] ? pd.progress[0].status : '';
+          if (statusEl) { statusEl.textContent = st.toUpperCase(); }
+
+          if (pd.phase === 'done' || pd.phase === 'error') {
+            clearInterval(poll);
+            if (pd.phase === 'done') {
+              if (statusEl) { statusEl.textContent = 'DONE'; statusEl.style.color = 'var(--green)'; }
+              await loadManualScenes();
+            } else {
+              if (statusEl) { statusEl.textContent = 'FAILED'; statusEl.style.color = 'var(--red)'; }
+              if (card) { card.className = card.className.replace(/state-\w+/g, '') + ' state-failed'; }
+            }
+          }
+        } catch (e) { /* ignore */ }
+      }, 2000);
+    } catch (e) {
+      if (statusEl) { statusEl.textContent = 'ERROR'; statusEl.style.color = 'var(--red)'; }
+    }
+  };
+
+  // ===================== TRANSITION PREVIEW =====================
+
+  window._toggleTransitionControls = function(controlsId) {
+    const el = document.getElementById(controlsId);
+    if (el) el.classList.toggle('open');
+  };
+
+  window._refreshTransitionLabel = function(sceneId, value) {
+    // Update is handled by re-render on next loadManualScenes
+  };
+
+  window._previewTransition = async function(sceneIdA, sceneIdB, btn) {
+    const transSelect = btn.parentElement.querySelector('.msc-select');
+    const transType = transSelect ? transSelect.value : 'crossfade';
+    const previewDiv = document.getElementById('trans-preview-' + sceneIdB);
+
+    btn.disabled = true;
+    btn.textContent = 'GENERATING...';
+
+    try {
+      const resp = await fetch('/api/manual/preview-transition', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene_id_a: sceneIdA,
+          scene_id_b: sceneIdB,
+          transition_type: transType,
+        }),
+      });
+      const data = await resp.json();
+      if (data.ok && data.preview_url) {
+        if (previewDiv) {
+          previewDiv.innerHTML = '<video class="transition-preview-video" src="' + data.preview_url + '?t=' + Date.now() + '" controls autoplay muted loop></video>';
+        }
+      } else {
+        alert('Preview failed: ' + (data.error || 'unknown'));
+      }
+    } catch (e) {
+      alert('Preview error: ' + e.message);
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'PREVIEW';
+  };
+
+  // ===================== FULL PREVIEW =====================
+
+  window._previewAll = async function() {
+    const btn = document.getElementById('manualPreviewAllBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'GENERATING...'; }
+
+    const manualProgressWrap = document.getElementById('manualProgressWrap');
+    const manualPhaseLabel = document.getElementById('manualPhaseLabel');
+    const manualProgressFill = document.getElementById('manualProgressFill');
+
+    if (manualProgressWrap) manualProgressWrap.classList.remove('hidden');
+    if (manualPhaseLabel) manualPhaseLabel.textContent = 'GENERATING PREVIEW...';
+    if (manualProgressFill) manualProgressFill.style.width = '0%';
+
+    try {
+      const resp = await fetch('/api/manual/preview-all', { method: 'POST' });
+      const data = await resp.json();
+      if (!data.ok) {
+        alert('Error: ' + (data.error || 'failed'));
+        if (btn) { btn.disabled = false; btn.textContent = 'PREVIEW ALL'; }
+        return;
+      }
+
+      const poll = setInterval(async () => {
+        try {
+          const pr = await fetch('/api/progress');
+          const pd = await pr.json();
+          if (manualPhaseLabel) manualPhaseLabel.textContent = pd.phase.toUpperCase();
+
+          if (pd.phase === 'done') {
+            clearInterval(poll);
+            if (btn) { btn.disabled = false; btn.textContent = 'PREVIEW ALL'; }
+            if (manualPhaseLabel) manualPhaseLabel.textContent = 'PREVIEW READY';
+            if (manualProgressFill) manualProgressFill.style.width = '100%';
+            // Show in modal
+            window._showPreviewModal('/api/previews/preview_all.mp4?t=' + Date.now());
+          } else if (pd.phase === 'error') {
+            clearInterval(poll);
+            if (btn) { btn.disabled = false; btn.textContent = 'PREVIEW ALL'; }
+            if (manualPhaseLabel) manualPhaseLabel.textContent = 'ERROR: ' + (pd.error || '');
+          }
+        } catch (e) { /* ignore */ }
+      }, 2000);
+    } catch (e) {
+      alert('Error: ' + e.message);
+      if (btn) { btn.disabled = false; btn.textContent = 'PREVIEW ALL'; }
+    }
+  };
+
+  window._showPreviewModal = function(videoUrl) {
+    const overlay = document.getElementById('previewModalOverlay');
+    const video = document.getElementById('previewModalVideo');
+    if (overlay && video) {
+      video.src = videoUrl;
+      overlay.classList.add('open');
+      video.play();
+    }
+  };
+
+  window._closePreviewModal = function() {
+    const overlay = document.getElementById('previewModalOverlay');
+    const video = document.getElementById('previewModalVideo');
+    if (overlay) overlay.classList.remove('open');
+    if (video) { video.pause(); video.src = ''; }
+  };
+
+  // Close modal on overlay click
+  document.getElementById('previewModalOverlay').addEventListener('click', function(e) {
+    if (e.target === this) window._closePreviewModal();
+  });
+
+  // Close modal on Escape
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') window._closePreviewModal();
+  });
 
   // ===================== FEATURE 12: PROJECT SAVE/LOAD =====================
 

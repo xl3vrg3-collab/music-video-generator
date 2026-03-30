@@ -181,6 +181,56 @@ def generate_scene(scene: dict, index: int, output_dir: str,
         raise RuntimeError(f"Scene {index} generation failed entirely: {e2}") from e2
 
 
+def generate_from_photo(photo_path: str, prompt: str, duration: float,
+                        output_path: str, progress_cb=None) -> str:
+    """
+    Generate a video clip from a reference photo + text prompt.
+
+    Pipeline:
+      1. Call Grok image API (grok-imagine-image) with the prompt
+         (referencing the photo's visual style)
+      2. Create a Ken Burns (zoom/pan) video from the resulting image
+
+    Args:
+        photo_path: path to the uploaded reference photo
+        prompt: text prompt describing the desired scene
+        duration: clip duration in seconds
+        output_path: where to save the resulting video
+        progress_cb: optional callable(status_str)
+
+    Returns:
+        path to the generated video clip
+    """
+    def _report(msg):
+        if progress_cb:
+            progress_cb(msg)
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    # Build a prompt that references the photo style
+    photo_desc = os.path.splitext(os.path.basename(photo_path))[0].replace("_", " ").replace("-", " ")
+    styled_prompt = f"{prompt}, inspired by and matching the visual style of the reference image ({photo_desc})"
+
+    _report("generating styled image from photo + prompt...")
+    try:
+        img_url = _generate_image(styled_prompt)
+    except Exception as e:
+        _report(f"image generation failed ({e}), using original photo with Ken Burns...")
+        # Fall back to using the original photo directly
+        _ken_burns(photo_path, output_path, duration)
+        _report("done (original photo + Ken Burns)")
+        return output_path
+
+    img_path = output_path.replace(".mp4", "_styled.png")
+    _report("downloading styled image...")
+    _download(img_url, img_path)
+
+    _report("creating Ken Burns video from styled image...")
+    _ken_burns(img_path, output_path, duration)
+    _report("done (photo-to-video pipeline)")
+    return output_path
+
+
 def generate_all(scenes: list, output_dir: str,
                  progress_cb=None, cost_cb=None) -> list:
     """

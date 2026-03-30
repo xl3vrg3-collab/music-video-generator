@@ -41,7 +41,7 @@ except ImportError:
 
 from lib.audio_analyzer import analyze
 from lib.scene_planner import plan_scenes, TRANSITION_TYPES
-from lib.video_generator import generate_scene, generate_all
+from lib.video_generator import generate_scene, generate_all, generate_from_photo
 from lib.video_stitcher import (
     stitch, apply_lyrics_overlay, apply_aspect_ratio, split_clip,
     ASPECT_PRESETS, _get_clip_duration,
@@ -67,6 +67,7 @@ EXPORTS_DIR = os.path.join(OUTPUT_DIR, "exports")
 PROJECTS_DIR = os.path.join(OUTPUT_DIR, "projects")
 COST_TRACKER_PATH = os.path.join(OUTPUT_DIR, "cost_tracker.json")
 STORYBOARD_DIR = os.path.join(OUTPUT_DIR, "storyboards")
+PREVIEWS_DIR = os.path.join(OUTPUT_DIR, "previews")
 
 # Cost defaults
 COST_PER_VIDEO_GEN = 0.15
@@ -81,6 +82,7 @@ os.makedirs(SCENE_PHOTOS_DIR, exist_ok=True)
 os.makedirs(EXPORTS_DIR, exist_ok=True)
 os.makedirs(PROJECTS_DIR, exist_ok=True)
 os.makedirs(STORYBOARD_DIR, exist_ok=True)
+os.makedirs(PREVIEWS_DIR, exist_ok=True)
 
 # ---- Global generation state ----
 gen_state = {
@@ -451,6 +453,69 @@ def _run_manual_generate_scene(scene_id: str):
             gen_state["running"] = False
 
 
+def _run_manual_generate_from_photo(scene_id: str):
+    """Background thread to generate a video clip from a scene's photo + prompt."""
+    try:
+        plan = _load_manual_plan()
+        scene = None
+        scene_idx = None
+        for i, s in enumerate(plan["scenes"]):
+            if s["id"] == scene_id:
+                scene = s
+                scene_idx = i
+                break
+        if scene is None:
+            with gen_lock:
+                gen_state["phase"] = "error"
+                gen_state["error"] = f"Scene {scene_id} not found"
+                gen_state["running"] = False
+            return
+
+        photo_path = scene.get("photo_path", "")
+        if not photo_path or not os.path.isfile(photo_path):
+            with gen_lock:
+                gen_state["phase"] = "error"
+                gen_state["error"] = "Scene has no photo uploaded"
+                gen_state["running"] = False
+            return
+
+        with gen_lock:
+            gen_state["phase"] = "generating"
+            gen_state["total_scenes"] = 1
+            gen_state["progress"] = [
+                {"scene": scene_idx, "status": "starting photo-to-video...",
+                 "prompt": scene.get("prompt", "")}
+            ]
+
+        def on_progress(status):
+            with gen_lock:
+                if gen_state["progress"]:
+                    gen_state["progress"][0]["status"] = status
+
+        clip_path = os.path.join(MANUAL_CLIPS_DIR, f"photo_clip_{scene_id}.mp4")
+        prompt = scene.get("prompt", "cinematic scene")
+        duration = scene.get("duration", 8)
+
+        generate_from_photo(photo_path, prompt, duration, clip_path,
+                            progress_cb=on_progress)
+        _record_cost(str(scene_id), "image")
+
+        scene["clip_path"] = clip_path
+        scene["has_clip"] = True
+        plan["scenes"][scene_idx] = scene
+        _save_manual_plan(plan)
+
+        with gen_lock:
+            gen_state["phase"] = "done"
+            gen_state["running"] = False
+
+    except Exception as e:
+        with gen_lock:
+            gen_state["phase"] = "error"
+            gen_state["error"] = str(e)
+            gen_state["running"] = False
+
+
 def _run_manual_generate_all():
     """Background thread to generate all manual scenes without clips."""
     try:
@@ -556,6 +621,70 @@ def _run_manual_stitch():
         with gen_lock:
             gen_state["phase"] = "done"
             gen_state["output_file"] = output_path
+            gen_state["running"] = False
+
+    except Exception as e:
+        with gen_lock:
+            gen_state["phase"] = "error"
+            gen_state["error"] = str(e)
+            gen_state["running"] = False
+
+
+# ---- Preview helpers ----
+
+def _run_preview_all():
+    """Background thread to generate a low-res preview of the entire video."""
+    try:
+        plan = _load_manual_plan()
+        clip_paths = [s.get("clip_path") for s in plan["scenes"]]
+        transitions = [s.get("transition", "crossfade") for s in plan["scenes"]]
+        song_path = plan.get("song_path")
+
+        valid = [c for c in clip_paths if c and os.path.isfile(c)]
+        if not valid:
+            with gen_lock:
+                gen_state["phase"] = "error"
+                gen_state["error"] = "No clips available for preview"
+                gen_state["running"] = False
+            return
+
+        with gen_lock:
+            gen_state["phase"] = "stitching"
+
+        preview_path = os.path.join(PREVIEWS_DIR, "preview_all.mp4")
+        audio = song_path if song_path and os.path.isfile(song_path) else None
+
+        # Scale down all clips to 480p first, then stitch
+        scaled_clips = []
+        for i, cp in enumerate(clip_paths):
+            if not cp or not os.path.isfile(cp):
+                scaled_clips.append(cp)
+                continue
+            scaled_path = os.path.join(PREVIEWS_DIR, f"_preview_scaled_{i}.mp4")
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", cp,
+                "-vf", "scale=-2:480",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                "-an",
+                scaled_path,
+            ]
+            subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+            scaled_clips.append(scaled_path)
+
+        speeds = [s.get("speed", 1.0) for s in plan["scenes"]]
+        stitch(scaled_clips, audio, preview_path,
+               transitions=transitions, speeds=speeds)
+
+        # Clean up scaled clips
+        for i, cp in enumerate(scaled_clips):
+            tmp = os.path.join(PREVIEWS_DIR, f"_preview_scaled_{i}.mp4")
+            if os.path.isfile(tmp):
+                os.remove(tmp)
+
+        with gen_lock:
+            gen_state["phase"] = "done"
+            gen_state["output_file"] = preview_path
             gen_state["running"] = False
 
     except Exception as e:
@@ -841,6 +970,10 @@ class Handler(BaseHTTPRequestHandler):
             fname = os.path.basename(path[len("/api/storyboard/"):])
             self._send_file(os.path.join(STORYBOARD_DIR, fname))
 
+        elif path.startswith("/api/previews/"):
+            fname = os.path.basename(path[len("/api/previews/"):])
+            self._send_file(os.path.join(PREVIEWS_DIR, fname))
+
         else:
             self.send_error(404)
 
@@ -930,6 +1063,16 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/api/storyboard":
             self._handle_generate_storyboard()
+
+        elif re.match(r'^/api/manual/scene/([^/]+)/generate-from-photo$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/generate-from-photo$', path)
+            self._handle_manual_generate_from_photo(m.group(1))
+
+        elif path == "/api/manual/preview-transition":
+            self._handle_preview_transition()
+
+        elif path == "/api/manual/preview-all":
+            self._handle_preview_all()
 
         else:
             self.send_error(404)
@@ -1440,7 +1583,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "message": "Stitching video"})
 
     def _handle_manual_merge_scene(self, scene_id: str):
-        """Merge a scene with the next scene. Combines clips or prompts."""
+        """Merge the clicked scene (current) with the next scene. Combines clips and prompts."""
         plan = _load_manual_plan()
         scenes = plan["scenes"]
         src_idx = None
@@ -1461,8 +1604,16 @@ class Handler(BaseHTTPRequestHandler):
         current_has_clip = current.get("clip_path") and os.path.isfile(current.get("clip_path", ""))
         next_has_clip = nxt.get("clip_path") and os.path.isfile(nxt.get("clip_path", ""))
 
+        # Always merge prompts: scene1.prompt + " | " + scene2.prompt
+        p1 = current.get("prompt", "")
+        p2 = nxt.get("prompt", "")
+        if p1 and p2:
+            current["prompt"] = p1 + " | " + p2
+        elif p2:
+            current["prompt"] = p2
+
         if current_has_clip and next_has_clip:
-            # Concatenate clips via ffmpeg
+            # Concatenate clip1 + clip2 via ffmpeg
             merged_clip = os.path.join(MANUAL_CLIPS_DIR, f"merged_{current['id']}.mp4")
             concat_list = os.path.join(MANUAL_CLIPS_DIR, f"_merge_{current['id']}.txt")
             with open(concat_list, "w") as f:
@@ -1492,19 +1643,29 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 if os.path.isfile(concat_list):
                     os.remove(concat_list)
-        else:
-            # Merge prompts
-            p1 = current.get("prompt", "")
-            p2 = nxt.get("prompt", "")
-            if p1 and p2:
-                current["prompt"] = p1 + " | " + p2
-            elif p2:
-                current["prompt"] = p2
+        elif next_has_clip and not current_has_clip:
+            # Only next scene has a clip -- transfer it to current
+            current["clip_path"] = nxt["clip_path"]
+            current["has_clip"] = True
+            nxt["clip_path"] = None  # prevent cleanup from deleting it
+        # If only current has a clip, keep it as-is
 
-        # Merge durations
+        # Merge durations: combined = scene1.duration + scene2.duration
         current["duration"] = current.get("duration", 8) + nxt.get("duration", 8)
 
-        # Remove next scene (clean up its files)
+        # Keep current's photo if it has one, otherwise use next's photo
+        current_has_photo = current.get("photo_path") and os.path.isfile(current.get("photo_path", ""))
+        next_has_photo = nxt.get("photo_path") and os.path.isfile(nxt.get("photo_path", ""))
+        if not current_has_photo and next_has_photo:
+            current["photo_path"] = nxt["photo_path"]
+            nxt["photo_path"] = None  # prevent cleanup from deleting it
+        elif next_has_photo:
+            # Current already has a photo; clean up next's photo
+            os.remove(nxt["photo_path"])
+
+        # Remove next scene (clean up remaining files)
+        if nxt.get("clip_path") and os.path.isfile(nxt.get("clip_path", "")):
+            os.remove(nxt["clip_path"])
         if nxt.get("photo_path") and os.path.isfile(nxt.get("photo_path", "")):
             os.remove(nxt["photo_path"])
 
@@ -1753,6 +1914,170 @@ class Handler(BaseHTTPRequestHandler):
             _save_cost_tracker(project["cost_tracker"])
 
         self._send_json({"ok": True, "message": "Project loaded"})
+
+    # ---- Generate from Photo ----
+
+    def _handle_manual_generate_from_photo(self, scene_id: str):
+        """Generate a video clip from a scene's photo + prompt using the photo-to-video pipeline."""
+        with gen_lock:
+            if gen_state["running"]:
+                self._send_json({"error": "Generation already in progress"}, 409)
+                return
+
+        # Save prompt first if provided
+        body = self._read_body()
+        if body:
+            try:
+                params = json.loads(body)
+                if "prompt" in params:
+                    plan = _load_manual_plan()
+                    for s in plan["scenes"]:
+                        if s["id"] == scene_id:
+                            s["prompt"] = params["prompt"]
+                            _save_manual_plan(plan)
+                            break
+            except json.JSONDecodeError:
+                pass
+
+        with gen_lock:
+            _reset_state()
+            gen_state["running"] = True
+            gen_state["phase"] = "starting"
+
+        thread = threading.Thread(
+            target=_run_manual_generate_from_photo,
+            args=(scene_id,),
+            daemon=True,
+        )
+        thread.start()
+        self._send_json({"ok": True, "message": f"Generating from photo for scene {scene_id}"})
+
+    # ---- Transition Preview ----
+
+    def _handle_preview_transition(self):
+        """Generate a 2-second preview of a transition between two scenes."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        scene_id_a = params.get("scene_id_a", "")
+        scene_id_b = params.get("scene_id_b", "")
+        transition_type = params.get("transition_type", "crossfade")
+
+        plan = _load_manual_plan()
+        scene_a = None
+        scene_b = None
+        for s in plan["scenes"]:
+            if s["id"] == scene_id_a:
+                scene_a = s
+            elif s["id"] == scene_id_b:
+                scene_b = s
+
+        if not scene_a or not scene_b:
+            self._send_json({"error": "One or both scenes not found"}, 404)
+            return
+
+        clip_a = scene_a.get("clip_path", "")
+        clip_b = scene_b.get("clip_path", "")
+        if not clip_a or not os.path.isfile(clip_a):
+            self._send_json({"error": "Scene A has no clip"}, 400)
+            return
+        if not clip_b or not os.path.isfile(clip_b):
+            self._send_json({"error": "Scene B has no clip"}, 400)
+            return
+
+        preview_name = f"transition_preview_{scene_id_a}_{scene_id_b}.mp4"
+        preview_path = os.path.join(PREVIEWS_DIR, preview_name)
+
+        try:
+            # Get durations
+            dur_a = _get_clip_duration(clip_a)
+            dur_b = _get_clip_duration(clip_b)
+
+            # Extract last 1s of clip A
+            tail_a = os.path.join(PREVIEWS_DIR, f"_tail_{scene_id_a}.mp4")
+            start_a = max(0, dur_a - 1.0)
+            cmd_a = [
+                "ffmpeg", "-y",
+                "-ss", str(start_a), "-i", clip_a,
+                "-t", "1", "-c:v", "libx264", "-preset", "ultrafast",
+                "-an", tail_a,
+            ]
+            subprocess.run(cmd_a, check=True, capture_output=True, **_subprocess_kwargs())
+
+            # Extract first 1s of clip B
+            head_b = os.path.join(PREVIEWS_DIR, f"_head_{scene_id_b}.mp4")
+            cmd_b = [
+                "ffmpeg", "-y",
+                "-i", clip_b,
+                "-t", "1", "-c:v", "libx264", "-preset", "ultrafast",
+                "-an", head_b,
+            ]
+            subprocess.run(cmd_b, check=True, capture_output=True, **_subprocess_kwargs())
+
+            # Apply transition via xfade
+            from lib.video_stitcher import _get_xfade_name
+            xfade_name = _get_xfade_name(transition_type)
+            if xfade_name:
+                # xfade transition: overlap at 0.5s
+                cmd_t = [
+                    "ffmpeg", "-y",
+                    "-i", tail_a, "-i", head_b,
+                    "-filter_complex",
+                    f"[0:v][1:v]xfade=transition={xfade_name}:duration=0.5:offset=0.5[outv]",
+                    "-map", "[outv]",
+                    "-c:v", "libx264", "-preset", "ultrafast",
+                    preview_path,
+                ]
+            else:
+                # Hard cut / glitch / fade_black: just concatenate
+                concat_file = os.path.join(PREVIEWS_DIR, f"_concat_{scene_id_a}.txt")
+                with open(concat_file, "w") as f:
+                    f.write(f"file '{tail_a}'\nfile '{head_b}'\n")
+                cmd_t = [
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0", "-i", concat_file,
+                    "-c:v", "libx264", "-preset", "ultrafast",
+                    preview_path,
+                ]
+
+            subprocess.run(cmd_t, check=True, capture_output=True, **_subprocess_kwargs())
+
+            # Clean up temp files
+            for tmp in [tail_a, head_b]:
+                if os.path.isfile(tmp):
+                    os.remove(tmp)
+            concat_tmp = os.path.join(PREVIEWS_DIR, f"_concat_{scene_id_a}.txt")
+            if os.path.isfile(concat_tmp):
+                os.remove(concat_tmp)
+
+            self._send_json({
+                "ok": True,
+                "preview_url": f"/api/previews/{preview_name}",
+            })
+        except Exception as e:
+            self._send_json({"error": f"Preview generation failed: {e}"}, 500)
+
+    # ---- Full Preview ----
+
+    def _handle_preview_all(self):
+        """Generate a low-quality 480p preview of the entire video."""
+        with gen_lock:
+            if gen_state["running"]:
+                self._send_json({"error": "Generation already in progress"}, 409)
+                return
+
+        with gen_lock:
+            _reset_state()
+            gen_state["running"] = True
+            gen_state["phase"] = "starting"
+
+        thread = threading.Thread(target=_run_preview_all, daemon=True)
+        thread.start()
+        self._send_json({"ok": True, "message": "Generating full preview"})
 
     # ---- Feature 14: Storyboard ----
 
