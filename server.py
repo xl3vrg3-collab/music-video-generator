@@ -1579,6 +1579,14 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/prompt-history/star":
             self._handle_star_prompt()
 
+        # Roadmap: Style mixing
+        elif path == "/api/mix-styles":
+            self._handle_mix_styles()
+
+        # Roadmap: Emotion detection from lyrics
+        elif path == "/api/detect-emotion":
+            self._handle_detect_emotion()
+
         # Roadmap: Auto-save
         elif path == "/api/project/autosave":
             self._handle_autosave()
@@ -4473,3 +4481,29 @@ if __name__ == "__main__":
             "scenes_to_generate": sum(1 for s in scenes if not s.get("has_clip") and not s.get("clip_path")),
             "scenes_ready": sum(1 for s in scenes if s.get("has_clip") or s.get("clip_path")),
         })
+
+
+    def _handle_mix_styles(self):
+        body = self._read_body()
+        params = json.loads(body) if body else {}
+        from lib.prompt_assistant import mix_presets, mix_styles
+        style_a = params.get("style_a", "")
+        style_b = params.get("style_b", "")
+        weight = float(params.get("weight", 0.5))
+        # Check if they're preset names or raw styles
+        from lib.prompt_assistant import STYLE_PRESETS
+        if style_a in STYLE_PRESETS:
+            style_a = STYLE_PRESETS[style_a]
+        if style_b in STYLE_PRESETS:
+            style_b = STYLE_PRESETS[style_b]
+        mixed = mix_styles(style_a, style_b, weight)
+        self._send_json({"ok": True, "mixed_style": mixed})
+
+    def _handle_detect_emotion(self):
+        body = self._read_body()
+        params = json.loads(body) if body else {}
+        lyrics = params.get("lyrics", "")
+        from lib.prompt_assistant import detect_emotion, emotion_to_visual_prompt
+        emotions = detect_emotion(lyrics)
+        visual = emotion_to_visual_prompt(emotions)
+        self._send_json({"ok": True, "emotions": emotions, "visual_prompt": visual})

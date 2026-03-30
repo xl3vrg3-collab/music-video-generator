@@ -519,3 +519,88 @@ def suggest_grade_from_palette(palette: list) -> str:
     elif avg_r < 80 and avg_b < 80:
         return "noir"
     return "none"
+
+
+# ---- Style Mixing (Roadmap Item 2) ----
+
+def mix_styles(style_a: str, style_b: str, weight_a: float = 0.5) -> str:
+    """Blend two style prompts with weighted mixing.
+    weight_a: 0.0 = all B, 0.5 = equal mix, 1.0 = all A
+    """
+    # Get words from each style
+    words_a = set(style_a.lower().replace(",", " ").split())
+    words_b = set(style_b.lower().replace(",", " ").split())
+    
+    # Common words always included
+    common = words_a & words_b
+    only_a = words_a - common
+    only_b = words_b - common
+    
+    # Sample from each based on weight
+    import random
+    n_a = max(1, int(len(only_a) * weight_a))
+    n_b = max(1, int(len(only_b) * (1 - weight_a)))
+    
+    picked_a = random.sample(list(only_a), min(n_a, len(only_a))) if only_a else []
+    picked_b = random.sample(list(only_b), min(n_b, len(only_b))) if only_b else []
+    
+    result = list(common) + picked_a + picked_b
+    return ", ".join(sorted(result))
+
+
+def mix_presets(preset_a: str, preset_b: str, weight: float = 0.5) -> str:
+    """Mix two named presets."""
+    a = STYLE_PRESETS.get(preset_a, preset_a)
+    b = STYLE_PRESETS.get(preset_b, preset_b)
+    return mix_styles(a, b, weight)
+
+
+# ---- Emotion from Lyrics (Roadmap Item 4) ----
+
+EMOTION_KEYWORDS = {
+    "happy": ["happy", "joy", "love", "sun", "bright", "dance", "smile", "light", "free", "fly"],
+    "sad": ["sad", "cry", "tears", "alone", "dark", "rain", "lost", "broken", "pain", "gone"],
+    "angry": ["angry", "fire", "burn", "fight", "rage", "hate", "scream", "blood", "war", "break"],
+    "romantic": ["love", "heart", "kiss", "hold", "touch", "dream", "forever", "baby", "darling"],
+    "nostalgic": ["remember", "back", "time", "old", "memory", "yesterday", "gone", "past", "child"],
+    "energetic": ["run", "go", "fast", "move", "jump", "wild", "party", "high", "loud", "bass"],
+    "dark": ["death", "shadow", "night", "demon", "hell", "grave", "ghost", "fear", "evil", "cold"],
+}
+
+EMOTION_VISUALS = {
+    "happy": "bright warm colors, golden light, open spaces, joyful movement",
+    "sad": "muted blue tones, rain, soft focus, slow movement, empty spaces",
+    "angry": "red and orange, fire, harsh shadows, fast cuts, intense close-ups",
+    "romantic": "warm pink and purple, soft lighting, bokeh, intimate close-ups",
+    "nostalgic": "faded vintage colors, film grain, sepia tones, slow motion",
+    "energetic": "vibrant neon, fast camera movement, high contrast, dynamic angles",
+    "dark": "deep shadows, cold blue-black, fog, unsettling angles, minimal light",
+}
+
+
+def detect_emotion(lyrics: str) -> dict:
+    """Detect dominant emotions from lyrics text.
+    Returns: {emotion: score, ...} sorted by score descending.
+    """
+    words = lyrics.lower().split()
+    scores = {}
+    for emotion, keywords in EMOTION_KEYWORDS.items():
+        score = sum(1 for w in words if any(k in w for k in keywords))
+        if score > 0:
+            scores[emotion] = score
+    
+    if not scores:
+        return {"neutral": 1}
+    
+    # Normalize
+    total = sum(scores.values())
+    return {k: round(v / total, 2) for k, v in sorted(scores.items(), key=lambda x: -x[1])}
+
+
+def emotion_to_visual_prompt(emotions: dict) -> str:
+    """Convert detected emotions to visual prompt additions."""
+    parts = []
+    for emotion, weight in emotions.items():
+        if emotion in EMOTION_VISUALS and weight > 0.1:
+            parts.append(EMOTION_VISUALS[emotion])
+    return ", ".join(parts[:3])  # top 3 emotions
