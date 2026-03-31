@@ -1823,6 +1823,21 @@ class Handler(BaseHTTPRequestHandler):
             safe = os.path.normpath(rel)
             self._send_file(os.path.join(TAKES_DIR, safe))
 
+        # Keyboard shortcuts reference
+        elif path == "/api/keyboard-shortcuts":
+            from lib.roadmap_features import KEYBOARD_SHORTCUTS
+            self._send_json({"shortcuts": KEYBOARD_SHORTCUTS})
+
+        # Analytics
+        elif path == "/api/analytics":
+            from lib.roadmap_features import get_analytics
+            self._send_json(get_analytics(OUTPUT_DIR))
+
+        # Version history
+        elif path == "/api/versions":
+            from lib.roadmap_features import list_versions
+            self._send_json({"versions": list_versions(OUTPUT_DIR)})
+
         else:
             self.send_error(404)
 
@@ -2214,6 +2229,24 @@ class Handler(BaseHTTPRequestHandler):
             tracker["budget"] = budget
             _save_cost_tracker(tracker)
             self._send_json({"ok": True, "budget": budget})
+
+        # Style mixing
+        elif path == "/api/mix-styles":
+            body = json.loads(self._read_body())
+            from lib.prompt_assistant import mix_styles, STYLE_PRESETS
+            sa = body.get("style_a", "")
+            sb = body.get("style_b", "")
+            w = float(body.get("weight", 0.5))
+            if sa in STYLE_PRESETS: sa = STYLE_PRESETS[sa]
+            if sb in STYLE_PRESETS: sb = STYLE_PRESETS[sb]
+            self._send_json({"ok": True, "mixed_style": mix_styles(sa, sb, w)})
+
+        # Emotion detection
+        elif path == "/api/detect-emotion":
+            body = json.loads(self._read_body())
+            from lib.prompt_assistant import detect_emotion, emotion_to_visual_prompt
+            emotions = detect_emotion(body.get("lyrics", ""))
+            self._send_json({"ok": True, "emotions": emotions, "visual_prompt": emotion_to_visual_prompt(emotions)})
 
         else:
             self.send_error(404)
