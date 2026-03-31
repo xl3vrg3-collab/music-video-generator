@@ -331,9 +331,11 @@ class AutoDirector:
         moods = SECTION_MOODS.get(section_type, SECTION_MOODS["verse"])
         parts.append(random.choice(moods))
 
-        # Character description
+        # Character description (check both field names)
         if character:
-            char_desc = character.get("physicalDescription", "")
+            char_desc = character.get("description", character.get("physicalDescription", ""))
+            if not char_desc:
+                char_desc = character.get("outfitDescription", "")
             if char_desc:
                 parts.append(char_desc)
             char_name = character.get("name", "")
