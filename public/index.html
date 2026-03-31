@@ -5511,7 +5511,7 @@
     $('posCharAge').value = d?d.ageRange:'';
     $('posCharFeatures').value = d?d.distinguishingFeatures:'';
     $('posCharExpression').value = d?d.defaultExpression:'';
-    $('posCharRefPhoto').value = d?d.referencePhoto||'';
+    $('posCharRefPhoto').value = d?(d.referencePhoto||''):'';
     $('posCharTags').value = d?(d.tags||[]).join(', '):'';
     $('posCharNotes').value = d?d.notes:'';
     // Show/hide photo thumb
