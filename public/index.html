@@ -3171,7 +3171,7 @@
 
   // ===================== ENHANCE =====================
 
-  enhanceBtn.addEventListener('click', async () => {
+  if (enhanceBtn) enhanceBtn.addEventListener('click', async () => {
     const prompt = styleInput.value.trim();
     if (!prompt) { alert('Please enter a style description first.'); return; }
     enhanceBtn.disabled = true; enhanceBtn.textContent = '...';
@@ -3216,8 +3216,8 @@
     });
   }
 
-  refUploadBtn.addEventListener('click', () => refFileInput.click());
-  refFileInput.addEventListener('change', async () => {
+  if (refUploadBtn) refUploadBtn.addEventListener('click', () => refFileInput.click());
+  if (refFileInput) refFileInput.addEventListener('change', async () => {
     const file = refFileInput.files[0];
     if (!file) return;
     const name = refNameInput.value.trim();
@@ -3237,14 +3237,14 @@
 
   // ===================== UPLOAD =====================
 
-  uploadZone.addEventListener('click', () => fileInput.click());
-  uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
-  uploadZone.addEventListener('dragleave', () => { uploadZone.classList.remove('dragover'); });
-  uploadZone.addEventListener('drop', e => {
+  if (uploadZone) uploadZone.addEventListener('click', () => fileInput.click());
+  if (uploadZone) uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+  if (uploadZone) uploadZone.addEventListener('dragleave', () => { uploadZone.classList.remove('dragover'); });
+  if (uploadZone) uploadZone.addEventListener('drop', e => {
     e.preventDefault(); uploadZone.classList.remove('dragover');
     if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
   });
-  fileInput.addEventListener('change', () => { if (fileInput.files.length) uploadFile(fileInput.files[0]); });
+  if (fileInput) fileInput.addEventListener('change', () => { if (fileInput.files.length) uploadFile(fileInput.files[0]); });
 
   async function uploadFile(file) {
     uploadFilename.textContent = 'Uploading...';
@@ -3267,7 +3267,7 @@
 
   // ===================== GENERATE =====================
 
-  generateBtn.addEventListener('click', async () => {
+  if (generateBtn) generateBtn.addEventListener('click', async () => {
     if (!uploadedFilename) return;
     const style = styleInput.value.trim() || 'cinematic atmospheric moody';
     generateBtn.disabled = true;
@@ -3479,7 +3479,7 @@
 
   // ===================== RESTITCH =====================
 
-  restitchBtn.addEventListener('click', async () => {
+  if (restitchBtn) restitchBtn.addEventListener('click', async () => {
     restitchBtn.disabled = true; restitchBtn.textContent = 'STITCHING...'; restitchBtn.classList.add('loading');
     const data = await apiPost('/api/restitch');
     if (!data.ok) {
@@ -3561,23 +3561,27 @@
   };
 
   window._setMode = function(mode) {
-    // Hide all containers, deactivate all buttons
-    for (const key in _allTabContainers) {
-      if (_allTabContainers[key]) _allTabContainers[key].classList.add('hidden');
-      if (_allTabBtns[key]) _allTabBtns[key].classList.remove('active');
+    try {
+      // Hide all containers, deactivate all buttons
+      for (const key in _allTabContainers) {
+        if (_allTabContainers[key]) _allTabContainers[key].classList.add('hidden');
+        if (_allTabBtns[key]) _allTabBtns[key].classList.remove('active');
+      }
+      // Show selected
+      if (_allTabContainers[mode]) _allTabContainers[mode].classList.remove('hidden');
+      if (_allTabBtns[mode]) _allTabBtns[mode].classList.add('active');
+      // Trigger data load for specific tabs (safe — check if function exists first)
+      if (mode === 'manual' && typeof loadManualScenes === 'function') loadManualScenes();
+      if (mode === 'director' && typeof window._adInit === 'function') window._adInit();
+      if (mode === 'pos-prompts' && typeof window._posLoadPrompts === 'function') window._posLoadPrompts();
+      if (mode === 'pos-characters' && typeof window._posLoadChars === 'function') window._posLoadChars();
+      if (mode === 'pos-costumes' && typeof window._posLoadCostumes === 'function') window._posLoadCostumes();
+      if (mode === 'pos-environments' && typeof window._posLoadEnvs === 'function') window._posLoadEnvs();
+      if (mode === 'pos-scenes' && typeof window._posLoadScenes === 'function') window._posLoadScenes();
+      if (mode === 'pos-output' && typeof window._posLoadOutput === 'function') window._posLoadOutput();
+    } catch(e) {
+      console.error('[_setMode] Error switching to', mode, e);
     }
-    // Show selected
-    if (_allTabContainers[mode]) _allTabContainers[mode].classList.remove('hidden');
-    if (_allTabBtns[mode]) _allTabBtns[mode].classList.add('active');
-    // Trigger data load for specific tabs
-    if (mode === 'manual') loadManualScenes();
-    if (mode === 'director') window._adInit();
-    if (mode === 'pos-prompts') window._posLoadPrompts();
-    if (mode === 'pos-characters') window._posLoadChars();
-    if (mode === 'pos-costumes') window._posLoadCostumes();
-    if (mode === 'pos-environments') window._posLoadEnvs();
-    if (mode === 'pos-scenes') window._posLoadScenes();
-    if (mode === 'pos-output') window._posLoadOutput();
   };
 
   // ===================== MANUAL MODE =====================
@@ -3714,14 +3718,14 @@
   let naturalPacingMode = true;
 
   // ---- Manual audio upload ----
-  manualUploadZone.addEventListener('click', () => manualFileInput.click());
-  manualUploadZone.addEventListener('dragover', e => { e.preventDefault(); manualUploadZone.classList.add('dragover'); });
-  manualUploadZone.addEventListener('dragleave', () => { manualUploadZone.classList.remove('dragover'); });
-  manualUploadZone.addEventListener('drop', e => {
+  if (manualUploadZone) manualUploadZone.addEventListener('click', () => manualFileInput.click());
+  if (manualUploadZone) manualUploadZone.addEventListener('dragover', e => { e.preventDefault(); manualUploadZone.classList.add('dragover'); });
+  if (manualUploadZone) manualUploadZone.addEventListener('dragleave', () => { manualUploadZone.classList.remove('dragover'); });
+  if (manualUploadZone) manualUploadZone.addEventListener('drop', e => {
     e.preventDefault(); manualUploadZone.classList.remove('dragover');
     if (e.dataTransfer.files.length) uploadManualAudio(e.dataTransfer.files[0]);
   });
-  manualFileInput.addEventListener('change', () => { if (manualFileInput.files.length) uploadManualAudio(manualFileInput.files[0]); });
+  if (manualFileInput) manualFileInput.addEventListener('change', () => { if (manualFileInput.files.length) uploadManualAudio(manualFileInput.files[0]); });
 
   async function uploadManualAudio(file) {
     manualUploadFilename.textContent = 'Uploading...';
@@ -4068,7 +4072,7 @@
   }
 
   // ---- Add scene ----
-  manualAddSceneBtn.addEventListener('click', async () => {
+  if (manualAddSceneBtn) manualAddSceneBtn.addEventListener('click', async () => {
     const data = await apiPost('/api/manual/scene', { prompt: '', duration: 8, transition: 'crossfade' });
     if (data.ok) await loadManualScenes();
   });
@@ -4227,7 +4231,7 @@
   };
 
   // ---- Generate all ----
-  manualGenerateAllBtn.addEventListener('click', async () => {
+  if (manualGenerateAllBtn) manualGenerateAllBtn.addEventListener('click', async () => {
     for (const s of manualScenes) {
       const promptEl = document.getElementById('msc-prompt-' + s.id);
       if (promptEl && promptEl.value !== s.prompt) {
@@ -4257,7 +4261,7 @@
   });
 
   // ---- Stitch ----
-  manualStitchBtn.addEventListener('click', async () => {
+  if (manualStitchBtn) manualStitchBtn.addEventListener('click', async () => {
     if (manualSongFilename) {
       await apiPost('/api/manual/reorder', { order: manualScenes.map(s => s.id), song_filename: manualSongFilename });
     }
@@ -4492,7 +4496,7 @@
   const loadProjectBtn = $('loadProjectBtn');
   const projectLoadInput = $('projectLoadInput');
 
-  saveProjectBtn.addEventListener('click', async () => {
+  if (saveProjectBtn) saveProjectBtn.addEventListener('click', async () => {
     saveProjectBtn.disabled = true; saveProjectBtn.textContent = 'SAVING...';
     const data = await apiGet('/api/project/save');
     if (data.ok && data.project) {
@@ -4505,8 +4509,8 @@
     saveProjectBtn.disabled = false; saveProjectBtn.textContent = 'SAVE';
   });
 
-  loadProjectBtn.addEventListener('click', () => projectLoadInput.click());
-  projectLoadInput.addEventListener('change', async () => {
+  if (loadProjectBtn) loadProjectBtn.addEventListener('click', () => projectLoadInput.click());
+  if (projectLoadInput) projectLoadInput.addEventListener('change', async () => {
     const file = projectLoadInput.files[0];
     if (!file) return;
     try {
@@ -4591,7 +4595,7 @@
     historyPaused = false;
   }
 
-  undoBtn.addEventListener('click', () => {
+  if (undoBtn) undoBtn.addEventListener('click', () => {
     if (historyIndex > 0) { historyIndex--; restoreState(JSON.parse(JSON.stringify(historyStack[historyIndex].state))); updateUndoRedoButtons(); }
   });
   redoBtn.addEventListener('click', () => {
@@ -4623,7 +4627,7 @@
     await _origManualDeleteScene(sceneId);
   };
 
-  manualAddSceneBtn.addEventListener('click', () => {
+  if (manualAddSceneBtn) manualAddSceneBtn.addEventListener('click', () => {
     setTimeout(() => pushHistory('add scene'), 500);
   }, true);
 
@@ -5805,9 +5809,9 @@
     zones.forEach(function(zoneId, i) {
       const zone = document.getElementById(zoneId);
       if (!zone) return;
-      zone.addEventListener('dragover', function(e) { e.preventDefault(); zone.classList.add('drag-over'); });
-      zone.addEventListener('dragleave', function() { zone.classList.remove('drag-over'); });
-      zone.addEventListener('drop', function(e) {
+      if (zone) zone.addEventListener('dragover', function(e) { e.preventDefault(); zone.classList.add('drag-over'); });
+      if (zone) zone.addEventListener('dragleave', function() { zone.classList.remove('drag-over'); });
+      if (zone) zone.addEventListener('drop', function(e) {
         e.preventDefault(); zone.classList.remove('drag-over');
         const inp = document.getElementById(inputs[i]);
         if (e.dataTransfer.files.length && inp) {
@@ -6544,14 +6548,14 @@
     const zone = $('adUploadZone');
     const input = $('adFileInput');
     if (!zone || !input) return;
-    zone.addEventListener('click', () => input.click());
-    zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor='#7c5cff'; });
-    zone.addEventListener('dragleave', () => { zone.style.borderColor=''; });
-    zone.addEventListener('drop', e => {
+    if (zone) zone.addEventListener('click', () => input.click());
+    if (zone) zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor='#7c5cff'; });
+    if (zone) zone.addEventListener('dragleave', () => { zone.style.borderColor=''; });
+    if (zone) zone.addEventListener('drop', e => {
       e.preventDefault(); zone.style.borderColor='';
       if (e.dataTransfer.files.length) { _adUploadSong(e.dataTransfer.files[0]); }
     });
-    input.addEventListener('change', () => {
+    if (input) input.addEventListener('change', () => {
       if (input.files.length) _adUploadSong(input.files[0]);
     });
   })();
