@@ -5984,7 +5984,7 @@ class Handler(BaseHTTPRequestHandler):
                 environments.append(e)
 
         try:
-            storyline = params.get("storyline", "")
+            storyline = body.get("storyline", "")
             plan = _auto_director.plan_full_video(
                 song_path=song_path,
                 style=style,
