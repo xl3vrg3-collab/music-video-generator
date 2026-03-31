@@ -512,8 +512,10 @@ def _runway_submit_image_to_video(prompt: str, image_path: str,
     )
 
     if resp.status_code not in (200, 201):
-        print(f"[RUNWAY] Submit error {resp.status_code}: {resp.text[:500]}")
-    resp.raise_for_status()
+        err_body = resp.text[:500]
+        print(f"[RUNWAY] Submit error {resp.status_code}: {err_body}")
+        print(f"[RUNWAY] Payload: model={payload.get('model')}, duration={payload.get('duration')}, ratio={payload.get('ratio')}")
+        raise RuntimeError(f"Runway API {resp.status_code}: {err_body}")
 
     data = resp.json()
     task_id = data.get("id", "")
@@ -533,6 +535,11 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
     """
     duration = 10 if duration > 7 else 5
 
+    # Snap duration to valid values for the model
+    valid_durations = MODEL_DURATION_OPTIONS.get(model, MODEL_DURATION_OPTIONS.get("gen4_5", [5, 10]))
+    if duration not in valid_durations:
+        duration = min(valid_durations, key=lambda d: abs(d - duration))
+
     payload = {
         "model": model,
         "promptText": prompt,
@@ -540,8 +547,8 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
         "ratio": RUNWAY_RATIO_MAP.get(ratio, "1280:720"),
     }
 
-    print(f"[RUNWAY] Submitting text-to-video: model={model}, prompt={prompt[:80]}..., "
-          f"duration={duration}s, ratio={RUNWAY_RATIO_MAP.get(ratio, '1280:720')}")
+    print(f"[RUNWAY] Submitting text-to-video: model={model}, duration={duration}s, "
+          f"ratio={RUNWAY_RATIO_MAP.get(ratio, '1280:720')}, prompt={prompt[:80]}...")
 
     # Add character reference if photo provided
     if character_photo_path and os.path.isfile(character_photo_path):
@@ -563,8 +570,10 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
     )
 
     if resp.status_code not in (200, 201):
-        print(f"[RUNWAY] Submit error {resp.status_code}: {resp.text[:500]}")
-    resp.raise_for_status()
+        err_body = resp.text[:500]
+        print(f"[RUNWAY] Submit error {resp.status_code}: {err_body}")
+        print(f"[RUNWAY] Payload: model={payload.get('model')}, duration={payload.get('duration')}, ratio={payload.get('ratio')}")
+        raise RuntimeError(f"Runway API {resp.status_code}: {err_body}")
 
     data = resp.json()
     task_id = data.get("id", "")

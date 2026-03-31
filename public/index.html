@@ -5531,13 +5531,13 @@
     // Show/hide photo thumb
     const photoThumb = $('posCharPhotoThumb'), photoPlaceholder = $('posCharPhotoPlaceholder');
     if (d && d.referencePhoto) {
-      photoThumb.src = d.referencePhoto + '?t=' + Date.now();
+      photoThumb.src = '/api/pos/characters/' + d.id + '/photo?t=' + Date.now();
       photoThumb.style.display = 'block'; photoPlaceholder.style.display = 'none';
     } else { photoThumb.style.display = 'none'; photoPlaceholder.style.display = 'block'; }
     // Show/hide preview thumb
     const prevThumb = $('posCharPreviewThumb'), prevPlaceholder = $('posCharPreviewPlaceholder');
     if (d && d.previewImage) {
-      prevThumb.src = d.previewImage + '?t=' + Date.now();
+      prevThumb.src = '/api/pos/characters/' + d.id + '/preview?t=' + Date.now();
       prevThumb.style.display = 'block'; prevPlaceholder.style.display = 'none';
     } else { prevThumb.style.display = 'none'; prevPlaceholder.style.display = 'block'; }
     // Show generate preview button only when editing
@@ -5662,12 +5662,12 @@
     // Photo thumb
     const pt = $('posCostumePhotoThumb'), pp = $('posCostumePhotoPlaceholder');
     if (d && d.referenceImagePath) {
-      pt.src = d.referenceImagePath + '?t=' + Date.now(); pt.style.display='block'; pp.style.display='none';
+      pt.src = '/api/pos/costumes/' + d.id + '/photo?t=' + Date.now(); pt.style.display='block'; pp.style.display='none';
     } else { pt.style.display='none'; pp.style.display='block'; }
     // Preview thumb
     const pvt = $('posCostumePreviewThumb'), pvp = $('posCostumePreviewPlaceholder');
     if (d && d.previewImage) {
-      pvt.src = d.previewImage + '?t=' + Date.now(); pvt.style.display='block'; pvp.style.display='none';
+      pvt.src = '/api/pos/costumes/' + d.id + '/preview?t=' + Date.now(); pvt.style.display='block'; pvp.style.display='none';
     } else { pvt.style.display='none'; pvp.style.display='block'; }
     $('posCostumeGenPreviewBtn').style.display = (d && d.id) ? '' : 'none';
   };
@@ -5779,12 +5779,12 @@
     // Photo thumb
     const pt = $('posEnvPhotoThumb'), pp = $('posEnvPhotoPlaceholder');
     if (d && d.referenceImagePath) {
-      pt.src = d.referenceImagePath + '?t=' + Date.now(); pt.style.display='block'; pp.style.display='none';
+      pt.src = '/api/pos/environments/' + d.id + '/photo?t=' + Date.now(); pt.style.display='block'; pp.style.display='none';
     } else { pt.style.display='none'; pp.style.display='block'; }
     // Preview thumb
     const pvt = $('posEnvPreviewThumb'), pvp = $('posEnvPreviewPlaceholder');
     if (d && d.previewImage) {
-      pvt.src = d.previewImage + '?t=' + Date.now(); pvt.style.display='block'; pvp.style.display='none';
+      pvt.src = '/api/pos/environments/' + d.id + '/preview?t=' + Date.now(); pvt.style.display='block'; pvp.style.display='none';
     } else { pvt.style.display='none'; pvp.style.display='block'; }
     $('posEnvGenPreviewBtn').style.display = (d && d.id) ? '' : 'none';
   };
