@@ -160,9 +160,19 @@ def _build_sections(frame_times: np.ndarray, rms: np.ndarray, duration: float) -
     if duration <= 0 or len(rms) == 0:
         return [{"start": 0, "end": duration, "type": "verse", "energy": 0.5}]
 
-    # Target ~8s sections (to match Grok video clip length)
-    target_section_dur = 8.0
-    n_sections = max(1, int(round(duration / target_section_dur)))
+    # Target section duration based on total length
+    # Short clips (<60s): fewer, longer sections
+    # Full songs (>120s): more sections at ~8s each
+    if duration <= 30:
+        target_section_dur = max(5, duration / 3)  # 3 sections max for <30s
+    elif duration <= 60:
+        target_section_dur = max(6, duration / 5)  # 5 sections max for <60s
+    elif duration <= 120:
+        target_section_dur = 8.0  # ~15 sections for 2 min
+    else:
+        target_section_dur = 8.0  # ~22-25 sections for 3 min
+
+    n_sections = max(1, min(30, int(round(duration / target_section_dur))))  # cap at 30 scenes max
 
     section_dur = duration / n_sections
     sections = []
