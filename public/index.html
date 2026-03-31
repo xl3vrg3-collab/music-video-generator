@@ -1579,6 +1579,43 @@
     <button class="mode-btn pos-tab" id="posOutputBtn" onclick="window._setMode('pos-output')">Output</button>
   </div>
 
+  <!-- STANDALONE TAB SWITCHER — works even if main JS fails -->
+  <script>
+  (function(){
+    var tabs = {
+      'director':'directorModeContainer', 'manual':'manualModeContainer',
+      'pos-prompts':'posPromptsContainer', 'pos-characters':'posCharsContainer',
+      'pos-costumes':'posCostumesContainer', 'pos-environments':'posEnvsContainer',
+      'pos-scenes':'posScenesContainer', 'pos-output':'posOutputContainer'
+    };
+    var btns = {
+      'director':'directorModeBtn', 'manual':'manualModeBtn',
+      'pos-prompts':'posPromptsBtn', 'pos-characters':'posCharsBtn',
+      'pos-costumes':'posCostumesBtn', 'pos-environments':'posEnvsBtn',
+      'pos-scenes':'posScenesBtn', 'pos-output':'posOutputBtn'
+    };
+    window._switchTab = function(mode) {
+      for (var k in tabs) {
+        var el = document.getElementById(tabs[k]);
+        var btn = document.getElementById(btns[k]);
+        if (el) { el.style.display = (k === mode) ? 'block' : 'none'; el.classList.remove('hidden'); }
+        if (btn) { btn.classList.toggle('active', k === mode); }
+      }
+      // Also hide auto mode container
+      var ac = document.getElementById('autoModeContainer');
+      if (ac) ac.style.display = 'none';
+      // Call the main _setMode if it exists (for data loading)
+      if (window._setMode && window._setMode !== window._switchTab) {
+        try { window._setMode(mode); } catch(e) { console.warn('_setMode error:', e); }
+      }
+    };
+    // Override _setMode to use _switchTab
+    window._setMode = window._switchTab;
+    // Show director by default
+    window._switchTab('director');
+  })();
+  </script>
+
   <!-- AUTO MODE REMOVED — Director replaces it -->
   <div id="autoModeContainer" class="hidden" style="display:none!important">
 
@@ -6976,6 +7013,24 @@
   _checkAutosave();
   _startAutosave();
   loadPromptHistory();
+
+  // DIAGNOSTIC: If you see this in console, ALL JS loaded successfully
+  console.log('[DIAGNOSTIC] All JS loaded. _setMode type:', typeof window._setMode);
+  console.log('[DIAGNOSTIC] _adInit type:', typeof window._adInit);
+  console.log('[DIAGNOSTIC] _allTabContainers:', Object.keys(_allTabContainers));
+  
+  // Force show director
+  document.querySelectorAll('[id$="Container"]').forEach(el => {
+    if (el.id !== 'directorModeContainer' && el.id !== 'autoModeContainer') {
+      el.classList.add('hidden');
+    }
+  });
+  var dc = document.getElementById('directorModeContainer');
+  if (dc) {
+    dc.classList.remove('hidden');
+    dc.style.removeProperty('display');
+    console.log('[DIAGNOSTIC] Director container shown directly');
+  }
 
 })();
 </script>
