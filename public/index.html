@@ -6636,12 +6636,14 @@
       // Check if already injected
       if (card.querySelector('.entity-row')) return;
 
-      // Build character dropdown
-      let charOpts = '<option value="">-- No Character --</option>';
+      // Build character multi-select (checkboxes)
+      const sceneCharIds = s.characterIds || (s.characterId ? [s.characterId] : []);
+      let charCheckboxes = '';
       _posCharsCache.forEach(c => {
-        const sel = (s.characterId === c.id) ? 'selected' : '';
-        charOpts += `<option value="${c.id}" ${sel}>${escHtml(c.name)}</option>`;
+        const checked = sceneCharIds.includes(c.id) ? 'checked' : '';
+        charCheckboxes += `<label style="display:inline-flex;align-items:center;gap:3px;margin-right:8px;font-size:10px;cursor:pointer;"><input type="checkbox" ${checked} onchange="window._updateSceneCharacters('${s.id}')" data-char-id="${c.id}" class="scene-char-cb-${s.id}" style="accent-color:#7c5cff;"> ${escHtml(c.name)}</label>`;
       });
+      if (!_posCharsCache.length) charCheckboxes = '<span style="color:var(--text-dim);font-size:10px;">No characters yet</span>';
 
       // Build environment dropdown
       let envOpts = '<option value="">-- No Environment --</option>';
@@ -6662,20 +6664,33 @@
       row.className = 'scene-row entity-row';
       row.style.cssText = 'margin-top:2px;';
       row.innerHTML = `
-        <span class="row-label" style="color:#7c5cff;">Entity:</span>
-        <select class="styled-select" onchange="window._manualUpdateScene('${s.id}', {characterId: this.value || null}); setTimeout(()=>_loadEntityCaches().then(()=>loadManualScenes()),200);" data-tooltip="Character from Prompt OS">
-          ${charOpts}
-        </select>
-        <select class="styled-select" onchange="window._manualUpdateScene('${s.id}', {environmentId: this.value || null})" data-tooltip="Environment from Prompt OS">
+        <span class="row-label" style="color:#7c5cff;">Cast:</span>
+        <span style="display:inline-flex;flex-wrap:wrap;gap:2px;">${charCheckboxes}</span>
+      `;
+
+      // Add environment + costume row separately
+      const envRow = document.createElement('div');
+      envRow.className = 'scene-row entity-row';
+      envRow.innerHTML = `
+        <span class="row-label" style="color:#7c5cff;">Set:</span>
+        <select class="styled-select" onchange="window._manualUpdateScene('${s.id}', {environmentId: this.value || null})" data-tooltip="Environment">
           ${envOpts}
         </select>
-        <select class="styled-select" onchange="window._manualUpdateScene('${s.id}', {costumeId: this.value || null})" data-tooltip="Costume from Prompt OS">
+        <select class="styled-select" onchange="window._manualUpdateScene('${s.id}', {costumeId: this.value || null})" data-tooltip="Costume">
           ${cosOpts}
         </select>
       `;
       controlsArea.appendChild(row);
+      controlsArea.appendChild(envRow);
     });
   }
+
+  // Multi-character checkbox handler
+  window._updateSceneCharacters = function(sceneId) {
+    const checkboxes = document.querySelectorAll('.scene-char-cb-' + sceneId + ':checked');
+    const ids = Array.from(checkboxes).map(cb => cb.dataset.charId);
+    window._manualUpdateScene(sceneId, { characterIds: ids, characterId: ids[0] || null });
+  };
 
   // ===================== INIT =====================
 

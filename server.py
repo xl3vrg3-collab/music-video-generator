@@ -578,28 +578,37 @@ def _run_manual_generate_scene(scene_id: str):
                     gen_state["progress"][0]["status"] = status
 
         # ---- Prompt OS entity injection ----
-        # If scene has characterId/environmentId/costumeId, auto-inject descriptions
         gen_prompt = scene["prompt"]
 
-        pos_char = None
+        pos_chars = []
         pos_costume = None
         pos_env = None
 
-        if scene.get("characterId"):
-            pos_char = _prompt_os.get_character(scene["characterId"])
+        # Collect ALL characters (from characterIds array + legacy characterId)
+        char_ids = list(scene.get("characterIds", []))
+        if scene.get("characterId") and scene["characterId"] not in char_ids:
+            char_ids.append(scene["characterId"])
+
+        for cid in char_ids:
+            pos_char = _prompt_os.get_character(cid)
             if pos_char:
+                pos_chars.append(pos_char)
                 char_desc_parts = []
-                if pos_char.get("physicalDescription"):
-                    char_desc_parts.append(pos_char["physicalDescription"])
-                if pos_char.get("hair"):
+                desc = pos_char.get("description", pos_char.get("physicalDescription", ""))
+                if desc:
+                    char_desc_parts.append(desc)
+                if pos_char.get("outfitDescription"):
+                    char_desc_parts.append(f"wearing {pos_char['outfitDescription']}")
+                elif pos_char.get("hair"):
                     char_desc_parts.append(f"with {pos_char['hair']}")
-                if pos_char.get("distinguishingFeatures"):
-                    char_desc_parts.append(pos_char["distinguishingFeatures"])
                 if char_desc_parts:
                     char_inject = ", ".join(char_desc_parts)
                     if char_inject.lower() not in gen_prompt.lower():
                         gen_prompt = char_inject + ", " + gen_prompt
                 print(f"[GEN] Injected character '{pos_char.get('name')}' into prompt")
+
+        # Use first character's reference photo for Runway character reference
+        pos_char = pos_chars[0] if pos_chars else None
 
         if scene.get("costumeId"):
             pos_costume = _prompt_os.get_costume(scene["costumeId"])
@@ -2840,9 +2849,11 @@ class Handler(BaseHTTPRequestHandler):
             "reversed": False,
             "effect": "none",
             "effect_intensity": 0.5,
-            "characterId": None,  # link to Prompt OS character
-            "costumeId": None,    # link to Prompt OS costume
-            "environmentId": None,# link to Prompt OS environment
+            "characterIds": [],    # multiple characters per scene
+            "characterId": None,   # single character (legacy, still supported)
+            "costumeIds": [],      # multiple costumes per scene
+            "costumeId": None,     # single costume (legacy)
+            "environmentId": None, # environment for this scene
             "previous_clip_path": None,  # for comparison view
         }
 
@@ -2882,8 +2893,14 @@ class Handler(BaseHTTPRequestHandler):
             scene["transition"] = params.get("transition", "crossfade")
             if "engine" in params:
                 scene["engine"] = params["engine"]
+            if "characterIds" in params:
+                scene["characterIds"] = params["characterIds"]
             if "characterId" in params:
                 scene["characterId"] = params["characterId"]
+                if params["characterId"] and params["characterId"] not in scene["characterIds"]:
+                    scene["characterIds"].append(params["characterId"])
+            if "costumeIds" in params:
+                scene["costumeIds"] = params["costumeIds"]
             if "costumeId" in params:
                 scene["costumeId"] = params["costumeId"]
             if "environmentId" in params:
