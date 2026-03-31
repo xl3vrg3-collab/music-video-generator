@@ -2114,7 +2114,7 @@
   </div><!-- /manualModeContainer -->
 
   <!-- ============ AUTO DIRECTOR MODE ============ -->
-  <div id="directorModeContainer" class="hidden">
+  <div id="directorModeContainer">
 
     <!-- Header -->
     <div class="panel" style="border-color:#7c5cff;background:linear-gradient(135deg,var(--surface),#7c5cff08);">
@@ -6945,7 +6945,20 @@
   }).catch(()=>{});
 
   // Default to Director mode on page load
-  setTimeout(() => window._setMode('director'), 100);
+  setTimeout(function() {
+    try {
+      console.log('[INIT] Setting mode to director...');
+      console.log('[INIT] _allTabContainers keys:', Object.keys(_allTabContainers));
+      console.log('[INIT] director container:', _allTabContainers['director']);
+      window._setMode('director');
+      console.log('[INIT] Director mode set successfully');
+    } catch(e) {
+      console.error('[INIT] Failed to set director mode:', e);
+      // Fallback: just show director directly
+      var dc = document.getElementById('directorModeContainer');
+      if (dc) { dc.classList.remove('hidden'); dc.style.display = 'block'; }
+    }
+  }, 200);
 
   // Multi-character checkbox handler
   window._updateSceneCharacters = function(sceneId) {
