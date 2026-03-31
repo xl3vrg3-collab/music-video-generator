@@ -84,6 +84,12 @@ from lib.prompt_os import PromptOS
 _prompt_os = PromptOS()
 PROMPT_OS_DATA_DIR = os.path.join(OUTPUT_DIR, "prompt_os")
 os.makedirs(PROMPT_OS_DATA_DIR, exist_ok=True)
+
+from lib.auto_director import AutoDirector, get_workflow_presets, save_custom_preset
+AUTO_DIRECTOR_CLIPS_DIR = os.path.join(OUTPUT_DIR, "auto_director_clips")
+os.makedirs(AUTO_DIRECTOR_CLIPS_DIR, exist_ok=True)
+_auto_director = AutoDirector(OUTPUT_DIR, AUTO_DIRECTOR_CLIPS_DIR, _prompt_os)
+AUTO_DIRECTOR_PLAN_PATH = os.path.join(OUTPUT_DIR, "auto_director_plan.json")
 CLIPS_DIR = os.path.join(OUTPUT_DIR, "clips")
 REFERENCES_DIR = os.path.join(PROJECT_DIR, "references")
 SCENE_PLAN_PATH = os.path.join(OUTPUT_DIR, "scene_plan.json")
@@ -571,9 +577,70 @@ def _run_manual_generate_scene(scene_id: str):
                 if gen_state["progress"]:
                     gen_state["progress"][0]["status"] = status
 
-        # Build the prompt - handle multi-photo compositing
+        # ---- Prompt OS entity injection ----
+        # If scene has characterId/environmentId/costumeId, auto-inject descriptions
         gen_prompt = scene["prompt"]
+
+        pos_char = None
+        pos_costume = None
+        pos_env = None
+
+        if scene.get("characterId"):
+            pos_char = _prompt_os.get_character(scene["characterId"])
+            if pos_char:
+                char_desc_parts = []
+                if pos_char.get("physicalDescription"):
+                    char_desc_parts.append(pos_char["physicalDescription"])
+                if pos_char.get("hair"):
+                    char_desc_parts.append(f"with {pos_char['hair']}")
+                if pos_char.get("distinguishingFeatures"):
+                    char_desc_parts.append(pos_char["distinguishingFeatures"])
+                if char_desc_parts:
+                    char_inject = ", ".join(char_desc_parts)
+                    if char_inject.lower() not in gen_prompt.lower():
+                        gen_prompt = char_inject + ", " + gen_prompt
+                print(f"[GEN] Injected character '{pos_char.get('name')}' into prompt")
+
+        if scene.get("costumeId"):
+            pos_costume = _prompt_os.get_costume(scene["costumeId"])
+            if pos_costume:
+                costume_desc = pos_costume.get("description", "")
+                if not costume_desc:
+                    parts = []
+                    if pos_costume.get("upperBody"):
+                        parts.append(pos_costume["upperBody"])
+                    if pos_costume.get("lowerBody"):
+                        parts.append(pos_costume["lowerBody"])
+                    costume_desc = ", ".join(parts)
+                if costume_desc and costume_desc.lower() not in gen_prompt.lower():
+                    gen_prompt = gen_prompt + f", wearing {costume_desc}"
+                print(f"[GEN] Injected costume '{pos_costume.get('name')}' into prompt")
+
+        if scene.get("environmentId"):
+            pos_env = _prompt_os.get_environment(scene["environmentId"])
+            if pos_env:
+                env_parts = []
+                if pos_env.get("description"):
+                    env_parts.append(pos_env["description"])
+                if pos_env.get("lighting"):
+                    env_parts.append(pos_env["lighting"])
+                if pos_env.get("atmosphere"):
+                    env_parts.append(pos_env["atmosphere"])
+                if env_parts:
+                    env_inject = ", ".join(env_parts)
+                    if env_inject.lower() not in gen_prompt.lower():
+                        gen_prompt = gen_prompt + f", in {env_inject}"
+                print(f"[GEN] Injected environment '{pos_env.get('name')}' into prompt")
+
+        # Build the prompt - handle multi-photo compositing
         scene_photo_path = None
+
+        # Auto-attach character reference photo from Prompt OS
+        if pos_char and pos_char.get("referencePhoto"):
+            ref_photo = pos_char["referencePhoto"]
+            if os.path.isfile(ref_photo) and not scene.get("photo_path"):
+                scene_photo_path = ref_photo
+                print(f"[GEN] Auto-attached character reference photo: {ref_photo}")
 
         # Check BOTH photo_path (single) and photo_paths (array)
         single_photo = scene.get("photo_path", "")
@@ -883,6 +950,44 @@ def _run_batch_generate_queue():
 
             gen_prompt = scene["prompt"]
             scene_photo_path = None
+
+            # Prompt OS entity injection for batch queue
+            if scene.get("characterId"):
+                pc = _prompt_os.get_character(scene["characterId"])
+                if pc:
+                    cdp = []
+                    if pc.get("physicalDescription"): cdp.append(pc["physicalDescription"])
+                    if pc.get("hair"): cdp.append(f"with {pc['hair']}")
+                    if pc.get("distinguishingFeatures"): cdp.append(pc["distinguishingFeatures"])
+                    if cdp:
+                        ci = ", ".join(cdp)
+                        if ci.lower() not in gen_prompt.lower():
+                            gen_prompt = ci + ", " + gen_prompt
+                    if pc.get("referencePhoto") and os.path.isfile(pc["referencePhoto"]) and not scene.get("photo_path"):
+                        scene_photo_path = pc["referencePhoto"]
+
+            if scene.get("costumeId"):
+                pcos = _prompt_os.get_costume(scene["costumeId"])
+                if pcos:
+                    cd = pcos.get("description", "")
+                    if not cd:
+                        pts = [pcos.get("upperBody",""), pcos.get("lowerBody","")]
+                        cd = ", ".join(p for p in pts if p)
+                    if cd and cd.lower() not in gen_prompt.lower():
+                        gen_prompt += f", wearing {cd}"
+
+            if scene.get("environmentId"):
+                pe = _prompt_os.get_environment(scene["environmentId"])
+                if pe:
+                    ep = []
+                    if pe.get("description"): ep.append(pe["description"])
+                    if pe.get("lighting"): ep.append(pe["lighting"])
+                    if pe.get("atmosphere"): ep.append(pe["atmosphere"])
+                    if ep:
+                        ei = ", ".join(ep)
+                        if ei.lower() not in gen_prompt.lower():
+                            gen_prompt += f", in {ei}"
+
             single_photo = scene.get("photo_path", "")
             if single_photo and os.path.isfile(single_photo):
                 scene_photo_path = single_photo
@@ -1780,6 +1885,28 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/pos/world-rules":
             self._send_json({"worldRules": _prompt_os.get_world_rules()})
 
+        # ──── Auto Director GET routes ────
+        elif path == "/api/auto-director/status":
+            self._send_json(_auto_director.progress)
+
+        elif path == "/api/auto-director/plan":
+            if os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
+                with open(AUTO_DIRECTOR_PLAN_PATH, "r") as f:
+                    self._send_json(json.load(f))
+            else:
+                self._send_json({"scenes": []})
+
+        elif path == "/api/workflow-presets":
+            presets = get_workflow_presets()
+            self._send_json({"presets": presets})
+
+        elif path.startswith("/api/auto-director/clips/"):
+            filename = os.path.basename(path[len("/api/auto-director/clips/"):])
+            clip_file = os.path.join(AUTO_DIRECTOR_CLIPS_DIR, "auto_director", filename)
+            if not os.path.isfile(clip_file):
+                clip_file = os.path.join(AUTO_DIRECTOR_CLIPS_DIR, filename)
+            self._send_file(clip_file)
+
         # ──── Feature 1: Project Browser ────
         elif path == "/api/projects":
             projects = _project_mgr.list_projects()
@@ -2094,6 +2221,21 @@ class Handler(BaseHTTPRequestHandler):
         # Roadmap: Embed code
         elif path == "/api/embed-code":
             self._handle_embed_code()
+
+        # ──── Auto Director POST routes ────
+        elif path == "/api/auto-director/plan":
+            self._handle_auto_director_plan()
+
+        elif path == "/api/auto-director/generate":
+            self._handle_auto_director_generate()
+
+        elif path == "/api/auto-director/to-manual":
+            self._handle_auto_director_to_manual()
+
+        elif path == "/api/workflow-presets":
+            body = json.loads(self._read_body())
+            preset = save_custom_preset(body)
+            self._send_json({"ok": True, "preset": preset})
 
         # ──── Prompt OS POST routes ────
         elif path == "/api/pos/prompts":
@@ -2786,6 +2928,13 @@ class Handler(BaseHTTPRequestHandler):
                         s["effect_intensity"] = max(0.1, min(1.0, float(params["effect_intensity"])))
                     except (ValueError, TypeError):
                         s["effect_intensity"] = 0.5
+                # Prompt OS entity links
+                if "characterId" in params:
+                    s["characterId"] = params["characterId"] or None
+                if "costumeId" in params:
+                    s["costumeId"] = params["costumeId"] or None
+                if "environmentId" in params:
+                    s["environmentId"] = params["environmentId"] or None
                 _save_manual_plan(plan)
                 self._send_json({"ok": True, "scene": s})
                 return
@@ -5482,6 +5631,134 @@ class Handler(BaseHTTPRequestHandler):
 
         print(f"[RESET] Full project reset. Cleared: {', '.join(cleared)}")
         self._send_json({"ok": True, "cleared": cleared})
+
+    # ──── Auto Director Handlers ────
+
+    def _handle_auto_director_plan(self):
+        """Plan a full video via Auto Director."""
+        body = json.loads(self._read_body())
+        style = body.get("style", "cinematic")
+        engine = body.get("engine", "gen4_5")
+        preset_id = body.get("preset_id")
+        natural_pacing = body.get("natural_pacing", True)
+        budget = body.get("budget")
+
+        # Get song path from manual plan or uploaded file
+        song_path = body.get("song_path")
+        if not song_path:
+            plan = _load_manual_plan()
+            song_path = plan.get("song_path")
+        if not song_path or not os.path.isfile(song_path):
+            # Check uploads for any audio file
+            for f in os.listdir(UPLOADS_DIR):
+                if f.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac')):
+                    song_path = os.path.join(UPLOADS_DIR, f)
+                    break
+
+        if not song_path or not os.path.isfile(song_path):
+            self._send_json({"error": "No song uploaded. Upload a song first."}, 400)
+            return
+
+        # Resolve characters and environments
+        char_ids = body.get("character_ids", [])
+        env_ids = body.get("environment_ids", [])
+
+        characters = []
+        for cid in char_ids:
+            c = _prompt_os.get_character(cid)
+            if c:
+                characters.append(c)
+
+        environments = []
+        for eid in env_ids:
+            e = _prompt_os.get_environment(eid)
+            if e:
+                environments.append(e)
+
+        try:
+            plan = _auto_director.plan_full_video(
+                song_path=song_path,
+                style=style,
+                characters=characters,
+                environments=environments,
+                engine=engine,
+                natural_pacing=natural_pacing,
+                preset_id=preset_id,
+                budget=budget,
+            )
+
+            # Save plan
+            with open(AUTO_DIRECTOR_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
+
+            self._send_json({"ok": True, "plan": plan})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_auto_director_generate(self):
+        """Start executing the Auto Director plan."""
+        if not os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
+            self._send_json({"error": "No plan exists. Create a plan first."}, 400)
+            return
+
+        progress = _auto_director.progress
+        if progress.get("phase") == "generating":
+            self._send_json({"error": "Generation already in progress"}, 409)
+            return
+
+        with open(AUTO_DIRECTOR_PLAN_PATH, "r") as f:
+            plan = json.load(f)
+
+        def run_generation():
+            try:
+                _auto_director.generate_full_video(plan, cost_cb=_record_cost)
+            except Exception as e:
+                _auto_director._update_progress(phase="error", error=str(e))
+
+        thread = threading.Thread(target=run_generation, daemon=True)
+        thread.start()
+        self._send_json({"ok": True, "message": "Auto Director generation started"})
+
+    def _handle_auto_director_to_manual(self):
+        """Convert Auto Director plan to manual scene plan for fine-tuning."""
+        if not os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
+            self._send_json({"error": "No Auto Director plan exists"}, 400)
+            return
+
+        with open(AUTO_DIRECTOR_PLAN_PATH, "r") as f:
+            ad_plan = json.load(f)
+
+        manual_plan = _load_manual_plan()
+        manual_plan["song_path"] = ad_plan.get("song_path")
+
+        for ad_scene in ad_plan.get("scenes", []):
+            manual_scene = {
+                "id": ad_scene.get("id", str(_uuid.uuid4())[:8]),
+                "prompt": ad_scene.get("prompt", ""),
+                "duration": ad_scene.get("duration", 8),
+                "transition": ad_scene.get("transition", "crossfade"),
+                "speed": 1.0,
+                "overlay": None,
+                "color_grade": None,
+                "camera_movement": ad_scene.get("camera_movement", "zoom_in"),
+                "engine": ad_scene.get("engine", ""),
+                "photo_path": ad_scene.get("character_photo_path"),
+                "photo_paths": [],
+                "clip_path": ad_scene.get("clip_path"),
+                "has_clip": bool(ad_scene.get("clip_path") and os.path.isfile(ad_scene.get("clip_path", ""))),
+                "video_path": None,
+                "vocal_path": None,
+                "vocal_volume": 80,
+                "loop": False,
+                "previous_clip_path": None,
+                "characterId": ad_scene.get("characterId"),
+                "costumeId": ad_scene.get("costumeId"),
+                "environmentId": ad_scene.get("environmentId"),
+            }
+            manual_plan["scenes"].append(manual_scene)
+
+        _save_manual_plan(manual_plan)
+        self._send_json({"ok": True, "message": f"Converted {len(ad_plan.get('scenes', []))} scenes to Manual Mode"})
 
 
 def main():

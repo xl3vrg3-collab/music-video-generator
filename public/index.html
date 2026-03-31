@@ -516,6 +516,20 @@
     background: rgba(124,92,255,0.1); border-color: #7c5cff;
     color: #7c5cff; box-shadow: 0 0 12px rgba(124,92,255,0.25);
   }
+  #directorModeBtn {
+    background: linear-gradient(135deg, rgba(124,92,255,0.08), rgba(255,92,160,0.08));
+    border-color: #7c5cff;
+    color: #c4b0ff;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+  }
+  #directorModeBtn.active {
+    background: linear-gradient(135deg, rgba(124,92,255,0.2), rgba(255,92,160,0.15));
+    border-color: #7c5cff;
+    color: #fff;
+    box-shadow: 0 0 16px rgba(124,92,255,0.4), 0 0 8px rgba(255,92,160,0.2);
+  }
+  .entity-row select { max-width: 140px; }
 
   /* ---- Prompt OS Variables ---- */
   :root {
@@ -1538,6 +1552,7 @@
   <div class="mode-toggle">
     <button class="mode-btn active" id="autoModeBtn" onclick="window._setMode('auto')">Auto</button>
     <button class="mode-btn" id="manualModeBtn" onclick="window._setMode('manual')">Manual</button>
+    <button class="mode-btn" id="directorModeBtn" onclick="window._setMode('director')" style="background:linear-gradient(135deg,#7c5cff22,#ff5ca022);border-color:#7c5cff;">Director</button>
     <button class="mode-btn pos-tab" id="posPromptsBtn" onclick="window._setMode('pos-prompts')">Prompts</button>
     <button class="mode-btn pos-tab" id="posCharsBtn" onclick="window._setMode('pos-characters')">Characters</button>
     <button class="mode-btn pos-tab" id="posCostumesBtn" onclick="window._setMode('pos-costumes')">Costumes</button>
@@ -2079,6 +2094,158 @@
     </div>
 
   </div><!-- /manualModeContainer -->
+
+  <!-- ============ AUTO DIRECTOR MODE ============ -->
+  <div id="directorModeContainer" class="hidden">
+
+    <!-- Header -->
+    <div class="panel" style="border-color:#7c5cff;background:linear-gradient(135deg,var(--surface),#7c5cff08);">
+      <div class="panel-header" style="cursor:default;">
+        <span class="dot" style="background:#7c5cff;box-shadow:0 0 12px rgba(124,92,255,0.6);"></span>
+        <span class="panel-title" style="font-size:16px;letter-spacing:3px;">AUTO DIRECTOR &mdash; One-Click Music Video</span>
+      </div>
+      <div class="panel-body">
+
+        <!-- Step 1: Song -->
+        <div style="margin-bottom:18px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="background:#7c5cff;color:#fff;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">1</span>
+            <span style="color:var(--text);font-weight:600;font-size:13px;letter-spacing:1px;">SONG</span>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <div class="upload-zone" id="adUploadZone" style="flex:1;padding:14px;min-height:auto;">
+              <div class="label" id="adSongLabel" style="font-size:12px;">Drop audio here or click to browse</div>
+              <input type="file" id="adFileInput" accept="audio/*" style="display:none;">
+            </div>
+            <span id="adSongName" style="color:var(--cyan);font-size:12px;"></span>
+          </div>
+        </div>
+
+        <!-- Step 2: Style + Preset -->
+        <div style="margin-bottom:18px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="background:#7c5cff;color:#fff;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">2</span>
+            <span style="color:var(--text);font-weight:600;font-size:13px;letter-spacing:1px;">STYLE</span>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <select class="styled-select" id="adPresetSelect" style="min-width:160px;">
+              <option value="">No Preset</option>
+              <option value="music_video">Music Video</option>
+              <option value="lyric_video">Lyric Video</option>
+              <option value="cinematic_short">Cinematic Short</option>
+              <option value="performance_video">Performance Video</option>
+            </select>
+            <input type="text" class="styled-input" id="adStyleInput" placeholder="e.g. cyberpunk neon rain city dark moody" style="flex:1;min-width:200px;">
+          </div>
+          <div id="adPresetDesc" style="color:var(--text-dim);font-size:11px;margin-top:4px;"></div>
+        </div>
+
+        <!-- Step 3: Characters -->
+        <div style="margin-bottom:18px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="background:#7c5cff;color:#fff;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">3</span>
+            <span style="color:var(--text);font-weight:600;font-size:13px;letter-spacing:1px;">CHARACTERS</span>
+            <button class="btn btn-small" onclick="window._adAddCharacter()" style="font-size:10px;">+ Add from Library</button>
+          </div>
+          <div id="adCharacterCards" style="display:flex;gap:10px;flex-wrap:wrap;min-height:30px;">
+            <div style="color:var(--text-dim);font-size:11px;padding:8px;">No characters selected (optional)</div>
+          </div>
+        </div>
+
+        <!-- Step 4: Environments -->
+        <div style="margin-bottom:18px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="background:#7c5cff;color:#fff;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">4</span>
+            <span style="color:var(--text);font-weight:600;font-size:13px;letter-spacing:1px;">ENVIRONMENTS</span>
+            <button class="btn btn-small" onclick="window._adAddEnvironment()" style="font-size:10px;">+ Add from Library</button>
+          </div>
+          <div id="adEnvironmentCards" style="display:flex;gap:10px;flex-wrap:wrap;min-height:30px;">
+            <div style="color:var(--text-dim);font-size:11px;padding:8px;">No environments selected (optional)</div>
+          </div>
+        </div>
+
+        <!-- Step 5: Engine + Budget -->
+        <div style="margin-bottom:18px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="background:#7c5cff;color:#fff;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">5</span>
+            <span style="color:var(--text);font-weight:600;font-size:13px;letter-spacing:1px;">ENGINE</span>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <select class="styled-select" id="adEngineSelect" style="min-width:180px;">
+              <option value="gen4_5">Runway Gen 4.5</option>
+              <option value="gen3a_turbo">Runway Gen3a Turbo</option>
+              <option value="kling_pro">Kling Pro</option>
+              <option value="kling_standard">Kling Standard</option>
+              <option value="veo3">Veo 3</option>
+              <option value="veo3_1">Veo 3.1</option>
+              <option value="veo3_1_fast">Veo 3.1 Fast</option>
+              <option value="grok" selected>Grok (xAI)</option>
+              <option value="luma">Luma Ray2</option>
+              <option value="openai">OpenAI (stills)</option>
+            </select>
+            <span style="color:var(--text-dim);font-size:11px;">Budget:</span>
+            <input type="number" class="styled-input" id="adBudgetInput" value="12.00" min="0" step="0.50" style="width:80px;">
+          </div>
+        </div>
+
+        <!-- Estimate Bar -->
+        <div id="adEstimateBar" style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:var(--text-dim);font-size:12px;" id="adEstimateText">Click "Plan Video" to see estimate</span>
+        </div>
+
+        <!-- Action Buttons -->
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+          <button class="btn" id="adPlanBtn" onclick="window._adPlanVideo()" style="background:#7c5cff;border-color:#7c5cff;font-size:14px;padding:10px 28px;letter-spacing:2px;">PLAN VIDEO</button>
+          <button class="btn" id="adGenerateBtn" onclick="window._adGenerateVideo()" style="background:linear-gradient(135deg,#7c5cff,#ff5ca0);border-color:#7c5cff;font-size:14px;padding:10px 28px;letter-spacing:2px;display:none;">GENERATE MUSIC VIDEO</button>
+          <button class="btn btn-small" id="adToManualBtn" onclick="window._adToManual()" style="display:none;">Edit in Manual Mode</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scene Plan Grid -->
+    <div class="panel" id="adScenePlanPanel" style="display:none;border-color:#7c5cff44;">
+      <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
+        <span class="dot" style="background:#7c5cff;box-shadow:0 0 8px rgba(124,92,255,0.4);"></span>
+        <span class="panel-title">Scene Plan</span>
+        <span class="collapse-icon">&#9660;</span>
+      </div>
+      <div class="panel-body">
+        <div id="adSceneGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;"></div>
+      </div>
+    </div>
+
+    <!-- Generation Progress -->
+    <div class="panel" id="adProgressPanel" style="display:none;border-color:#7c5cff44;">
+      <div class="panel-header" style="cursor:default;">
+        <span class="dot" style="background:#7c5cff;box-shadow:0 0 8px rgba(124,92,255,0.4);animation:pulse 2s infinite;"></span>
+        <span class="panel-title" id="adProgressTitle">Generating...</span>
+      </div>
+      <div class="panel-body">
+        <div class="progress-bar" style="margin-bottom:12px;">
+          <div class="progress-fill" id="adProgressFill" style="width:0%;background:linear-gradient(90deg,#7c5cff,#ff5ca0);"></div>
+        </div>
+        <div id="adProgressGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;"></div>
+      </div>
+    </div>
+
+    <!-- Final Video -->
+    <div class="panel" id="adFinalPanel" style="display:none;border-color:#7c5cff44;">
+      <div class="panel-header" style="cursor:default;">
+        <span class="dot" style="background:var(--green);box-shadow:0 0 8px rgba(0,255,160,0.4);"></span>
+        <span class="panel-title">Final Video</span>
+      </div>
+      <div class="panel-body">
+        <div class="preview-wrap">
+          <video id="adFinalVideo" controls style="max-width:100%;"></video>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:10px;">
+          <a class="btn" id="adDownloadBtn" href="/output/auto_director_final.mp4" download style="text-decoration:none;">Download Video</a>
+          <button class="btn btn-small" onclick="window._adToManual()">Edit in Manual Mode</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /directorModeContainer -->
 
   <!-- ============ PROMPT OS: PROMPTS TAB ============ -->
   <div id="posPromptsContainer" class="hidden">
@@ -3308,6 +3475,7 @@
   const _allTabContainers = {
     'auto': autoModeContainer,
     'manual': manualModeContainer,
+    'director': $('directorModeContainer'),
     'pos-prompts': $('posPromptsContainer'),
     'pos-characters': $('posCharsContainer'),
     'pos-costumes': $('posCostumesContainer'),
@@ -3318,6 +3486,7 @@
   const _allTabBtns = {
     'auto': autoModeBtn,
     'manual': manualModeBtn,
+    'director': $('directorModeBtn'),
     'pos-prompts': $('posPromptsBtn'),
     'pos-characters': $('posCharsBtn'),
     'pos-costumes': $('posCostumesBtn'),
@@ -3337,6 +3506,7 @@
     if (_allTabBtns[mode]) _allTabBtns[mode].classList.add('active');
     // Trigger data load for specific tabs
     if (mode === 'manual') loadManualScenes();
+    if (mode === 'director') window._adInit();
     if (mode === 'pos-prompts') window._posLoadPrompts();
     if (mode === 'pos-characters') window._posLoadChars();
     if (mode === 'pos-costumes') window._posLoadCostumes();
@@ -6102,6 +6272,410 @@
     await refreshCost();
     window._closeModal('costBreakdownModal');
   };
+
+  // ===================== AUTO DIRECTOR =====================
+
+  let _adSelectedChars = [];
+  let _adSelectedEnvs = [];
+  let _adCurrentPlan = null;
+  let _adPollTimer = null;
+  let _adSongPath = null;
+
+  window._adInit = function() {
+    // Load any existing plan
+    fetch('/api/auto-director/plan').then(r=>r.json()).then(data => {
+      if (data && data.scenes && data.scenes.length > 0) {
+        _adCurrentPlan = data;
+        _adRenderScenePlan(data);
+      }
+    }).catch(()=>{});
+  };
+
+  // Song upload
+  (function() {
+    const zone = $('adUploadZone');
+    const input = $('adFileInput');
+    if (!zone || !input) return;
+    zone.addEventListener('click', () => input.click());
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor='#7c5cff'; });
+    zone.addEventListener('dragleave', () => { zone.style.borderColor=''; });
+    zone.addEventListener('drop', e => {
+      e.preventDefault(); zone.style.borderColor='';
+      if (e.dataTransfer.files.length) { _adUploadSong(e.dataTransfer.files[0]); }
+    });
+    input.addEventListener('change', () => {
+      if (input.files.length) _adUploadSong(input.files[0]);
+    });
+  })();
+
+  async function _adUploadSong(file) {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch('/api/upload', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.filename) {
+      $('adSongName').textContent = data.filename;
+      $('adSongLabel').textContent = file.name;
+      _adSongPath = null; // server stores it
+    }
+  }
+
+  // Preset description
+  const _presetDescs = {
+    music_video: 'Character-focused, mixed durations. Chorus = performance, Verse = narrative, Bridge = abstract.',
+    lyric_video: 'Text overlays, abstract/ambient visuals, slower pacing.',
+    cinematic_short: 'Longer scenes (8-10s), film grain + vignette, slower transitions.',
+    performance_video: 'Character in every scene, same environment, fast cuts on chorus.',
+  };
+  if ($('adPresetSelect')) $('adPresetSelect').addEventListener('change', function() {
+    const desc = _presetDescs[this.value] || '';
+    $('adPresetDesc').textContent = desc;
+  });
+
+  // Character picker
+  window._adAddCharacter = async function() {
+    const res = await fetch('/api/pos/characters');
+    const data = await res.json();
+    const chars = data.characters || [];
+    if (!chars.length) { alert('No characters in library. Create characters in the Characters tab first.'); return; }
+    const existing = _adSelectedChars.map(c => c.id);
+    const available = chars.filter(c => !existing.includes(c.id));
+    if (!available.length) { alert('All characters already added.'); return; }
+    const names = available.map(c => c.name);
+    const choice = prompt('Select character (type number):\n' + names.map((n,i) => (i+1)+'. '+n).join('\n'));
+    if (!choice) return;
+    const idx = parseInt(choice) - 1;
+    if (idx >= 0 && idx < available.length) {
+      _adSelectedChars.push(available[idx]);
+      _adRenderCharCards();
+    }
+  };
+
+  function _adRenderCharCards() {
+    const container = $('adCharacterCards');
+    if (!_adSelectedChars.length) {
+      container.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:8px;">No characters selected (optional)</div>';
+      return;
+    }
+    container.innerHTML = _adSelectedChars.map((c, i) => `
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;min-width:100px;position:relative;">
+        ${c.referencePhoto ? `<img src="/api/pos/characters/${c.id}" style="width:60px;height:60px;object-fit:cover;border-radius:4px;display:block;margin-bottom:4px;" onerror="this.style.display='none'">` : ''}
+        <div style="font-size:12px;font-weight:600;color:var(--text);">${escHtml(c.name)}</div>
+        <div style="font-size:10px;color:${i===0?'#7c5cff':'var(--text-dim)'};margin-top:2px;">${i===0?'Main':'Featured'}</div>
+        <button onclick="_adSelectedChars.splice(${i},1);_adRenderCharCards();" style="position:absolute;top:4px;right:4px;background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:14px;">x</button>
+      </div>
+    `).join('');
+  }
+
+  // Environment picker
+  window._adAddEnvironment = async function() {
+    const res = await fetch('/api/pos/environments');
+    const data = await res.json();
+    const envs = data.environments || [];
+    if (!envs.length) { alert('No environments in library. Create environments in the Environments tab first.'); return; }
+    const existing = _adSelectedEnvs.map(e => e.id);
+    const available = envs.filter(e => !existing.includes(e.id));
+    if (!available.length) { alert('All environments already added.'); return; }
+    const names = available.map(e => e.name);
+    const choice = prompt('Select environment (type number):\n' + names.map((n,i) => (i+1)+'. '+n).join('\n'));
+    if (!choice) return;
+    const idx = parseInt(choice) - 1;
+    if (idx >= 0 && idx < available.length) {
+      _adSelectedEnvs.push(available[idx]);
+      _adRenderEnvCards();
+    }
+  };
+
+  function _adRenderEnvCards() {
+    const container = $('adEnvironmentCards');
+    if (!_adSelectedEnvs.length) {
+      container.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:8px;">No environments selected (optional)</div>';
+      return;
+    }
+    container.innerHTML = _adSelectedEnvs.map((e, i) => `
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;min-width:120px;position:relative;">
+        <div style="font-size:12px;font-weight:600;color:var(--text);">${escHtml(e.name)}</div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:2px;">${escHtml((e.description||'').substring(0,40))}</div>
+        <button onclick="_adSelectedEnvs.splice(${i},1);_adRenderEnvCards();" style="position:absolute;top:4px;right:4px;background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:14px;">x</button>
+      </div>
+    `).join('');
+  }
+
+  // Plan video
+  window._adPlanVideo = async function() {
+    const style = $('adStyleInput').value || 'cinematic';
+    const engine = $('adEngineSelect').value || 'grok';
+    const presetId = $('adPresetSelect').value || null;
+    const budget = parseFloat($('adBudgetInput').value) || 12.0;
+
+    $('adPlanBtn').disabled = true;
+    $('adPlanBtn').textContent = 'Planning...';
+
+    try {
+      const res = await fetch('/api/auto-director/plan', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          style: style,
+          engine: engine,
+          preset_id: presetId,
+          natural_pacing: true,
+          budget: budget,
+          character_ids: _adSelectedChars.map(c => c.id),
+          environment_ids: _adSelectedEnvs.map(e => e.id),
+        }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert('Planning error: ' + data.error);
+        return;
+      }
+      _adCurrentPlan = data.plan;
+      _adRenderScenePlan(data.plan);
+
+      // Show generate button
+      $('adGenerateBtn').style.display = '';
+      $('adToManualBtn').style.display = '';
+    } catch (e) {
+      alert('Plan error: ' + e);
+    } finally {
+      $('adPlanBtn').disabled = false;
+      $('adPlanBtn').textContent = 'PLAN VIDEO';
+    }
+  };
+
+  function _adRenderScenePlan(plan) {
+    const panel = $('adScenePlanPanel');
+    const grid = $('adSceneGrid');
+    const est = $('adEstimateText');
+    panel.style.display = '';
+
+    const estimate = plan.estimate || {};
+    est.innerHTML = `<b>${plan.scenes.length}</b> scenes &nbsp;|&nbsp; ~<b>$${(estimate.total_cost||0).toFixed(2)}</b> &nbsp;|&nbsp; ~<b>${estimate.total_time_min||'?'} min</b> render time &nbsp;|&nbsp; ${(plan.bpm||0).toFixed(0)} BPM`;
+
+    const sectionColors = {
+      intro: '#5ca0ff', verse: '#00ffa3', chorus: '#ff5ca0',
+      bridge: '#7c5cff', outro: '#ffa500',
+    };
+
+    grid.innerHTML = plan.scenes.map((s, i) => {
+      const col = sectionColors[s.section_type] || '#888';
+      return `
+        <div style="background:var(--bg);border:1px solid var(--border);border-left:3px solid ${col};border-radius:var(--radius);padding:10px;font-size:11px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+            <span style="font-weight:700;color:var(--text);">Scene ${i+1}</span>
+            <span style="background:${col}22;color:${col};padding:1px 6px;border-radius:3px;font-size:9px;text-transform:uppercase;font-weight:600;">${escHtml(s.section_type)}</span>
+          </div>
+          ${s.characterName ? `<div style="color:var(--cyan);font-size:10px;">Character: ${escHtml(s.characterName)}</div>` : ''}
+          ${s.environmentName ? `<div style="color:var(--amber);font-size:10px;">Env: ${escHtml(s.environmentName)}</div>` : ''}
+          ${s.costumeName ? `<div style="color:var(--magenta);font-size:10px;">Costume: ${escHtml(s.costumeName)}</div>` : ''}
+          <div style="color:var(--text-dim);margin-top:4px;line-height:1.3;max-height:40px;overflow:hidden;">${escHtml((s.prompt||'').substring(0,120))}${(s.prompt||'').length>120?'...':''}</div>
+          <div style="display:flex;gap:8px;margin-top:4px;color:var(--text-dim);font-size:9px;">
+            <span>${s.duration}s</span>
+            <span>${escHtml(s.camera_movement||'')}</span>
+            <span>${escHtml(s.transition||'')}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Generate video
+  window._adGenerateVideo = async function() {
+    if (!_adCurrentPlan) { alert('Plan a video first.'); return; }
+    $('adGenerateBtn').disabled = true;
+    $('adGenerateBtn').textContent = 'STARTING...';
+
+    try {
+      const res = await fetch('/api/auto-director/generate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: '{}',
+      });
+      const data = await res.json();
+      if (data.error) { alert(data.error); return; }
+
+      // Show progress panel and start polling
+      $('adProgressPanel').style.display = '';
+      $('adFinalPanel').style.display = 'none';
+      _adStartPolling();
+    } catch (e) {
+      alert('Generate error: ' + e);
+    } finally {
+      $('adGenerateBtn').disabled = false;
+      $('adGenerateBtn').textContent = 'GENERATE MUSIC VIDEO';
+    }
+  };
+
+  function _adStartPolling() {
+    if (_adPollTimer) clearInterval(_adPollTimer);
+    _adPollTimer = setInterval(_adPollStatus, 2000);
+    _adPollStatus();
+  }
+
+  async function _adPollStatus() {
+    try {
+      const res = await fetch('/api/auto-director/status');
+      const data = await res.json();
+
+      const phase = data.phase || 'idle';
+      const total = data.total_scenes || 0;
+      const done = data.completed_scenes || 0;
+      const failed = data.failed_scenes || 0;
+      const scenes = data.scenes || [];
+
+      // Update progress bar
+      const pct = total > 0 ? Math.round(((done + failed) / total) * 100) : 0;
+      $('adProgressFill').style.width = pct + '%';
+      $('adProgressTitle').textContent = phase === 'generating' ? `Generating... ${done}/${total} scenes` :
+                                         phase === 'stitching' ? 'Stitching final video...' :
+                                         phase === 'done' ? 'Complete!' :
+                                         phase === 'error' ? 'Error' : 'Working...';
+
+      // Render scene statuses
+      const sectionColors = {
+        intro: '#5ca0ff', verse: '#00ffa3', chorus: '#ff5ca0',
+        bridge: '#7c5cff', outro: '#ffa500',
+      };
+      $('adProgressGrid').innerHTML = scenes.map((s, i) => {
+        const col = sectionColors[s.section_type] || '#888';
+        let statusColor = 'var(--text-dim)';
+        let statusIcon = '';
+        if (s.status === 'done') { statusColor = 'var(--green)'; statusIcon = '&#10003;'; }
+        else if (s.status === 'queued') { statusColor = 'var(--text-dim)'; statusIcon = '&#9675;'; }
+        else if (s.status && s.status.startsWith('rendering')) { statusColor = '#7c5cff'; statusIcon = '&#9881;'; }
+        else if (s.status && s.status.startsWith('failed')) { statusColor = 'var(--red)'; statusIcon = '&#10007;'; }
+        return `
+          <div style="background:var(--bg);border:1px solid var(--border);border-left:3px solid ${col};border-radius:var(--radius);padding:6px 8px;font-size:10px;">
+            <div style="display:flex;justify-content:space-between;">
+              <span style="font-weight:600;color:var(--text);">Scene ${i+1}</span>
+              <span style="color:${statusColor};">${statusIcon} ${escHtml((s.status||'').substring(0,30))}</span>
+            </div>
+            ${s.characterName ? `<span style="color:var(--cyan);font-size:9px;">${escHtml(s.characterName)}</span>` : ''}
+            ${s.environmentName ? `<span style="color:var(--amber);font-size:9px;margin-left:6px;">${escHtml(s.environmentName)}</span>` : ''}
+          </div>
+        `;
+      }).join('');
+
+      // Check completion
+      if (phase === 'done') {
+        clearInterval(_adPollTimer);
+        $('adFinalPanel').style.display = '';
+        $('adFinalVideo').src = '/output/auto_director_final.mp4?t=' + Date.now();
+      } else if (phase === 'error') {
+        clearInterval(_adPollTimer);
+        alert('Auto Director error: ' + (data.error || 'Unknown'));
+      }
+    } catch (e) {
+      // Polling error, continue
+    }
+  }
+
+  // Transfer to manual mode
+  window._adToManual = async function() {
+    if (!confirm('This will copy all Auto Director scenes to Manual Mode for fine-tuning. Continue?')) return;
+    try {
+      const res = await fetch('/api/auto-director/to-manual', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: '{}',
+      });
+      const data = await res.json();
+      if (data.ok) {
+        alert(data.message);
+        window._setMode('manual');
+      } else {
+        alert('Error: ' + (data.error || 'unknown'));
+      }
+    } catch (e) {
+      alert('Error: ' + e);
+    }
+  };
+
+  // ===================== MANUAL MODE: ENTITY DROPDOWNS =====================
+
+  // Add character/environment dropdowns to manual scene cards
+  // These get injected into renderManualScenes
+
+  const _origRenderManualScenes = renderManualScenes;
+  renderManualScenes = function() {
+    _origRenderManualScenes();
+    // After rendering, inject entity dropdowns into each scene card
+    setTimeout(() => _injectEntityDropdowns(), 50);
+  };
+
+  let _posCharsCache = [];
+  let _posEnvsCache = [];
+  let _posCostumesCache = [];
+
+  async function _loadEntityCaches() {
+    try {
+      const [charRes, envRes, cosRes] = await Promise.all([
+        fetch('/api/pos/characters').then(r=>r.json()),
+        fetch('/api/pos/environments').then(r=>r.json()),
+        fetch('/api/pos/costumes').then(r=>r.json()),
+      ]);
+      _posCharsCache = charRes.characters || [];
+      _posEnvsCache = envRes.environments || [];
+      _posCostumesCache = cosRes.costumes || [];
+    } catch(e) {}
+  }
+
+  _loadEntityCaches();
+
+  function _injectEntityDropdowns() {
+    if (!manualScenes || !manualScenes.length) return;
+    if (!_posCharsCache.length && !_posEnvsCache.length) return;
+
+    manualScenes.forEach((s) => {
+      const card = document.getElementById('msc-' + s.id);
+      if (!card) return;
+      const controlsArea = card.querySelector('.scene-controls-area');
+      if (!controlsArea) return;
+
+      // Check if already injected
+      if (card.querySelector('.entity-row')) return;
+
+      // Build character dropdown
+      let charOpts = '<option value="">-- No Character --</option>';
+      _posCharsCache.forEach(c => {
+        const sel = (s.characterId === c.id) ? 'selected' : '';
+        charOpts += `<option value="${c.id}" ${sel}>${escHtml(c.name)}</option>`;
+      });
+
+      // Build environment dropdown
+      let envOpts = '<option value="">-- No Environment --</option>';
+      _posEnvsCache.forEach(e => {
+        const sel = (s.environmentId === e.id) ? 'selected' : '';
+        envOpts += `<option value="${e.id}" ${sel}>${escHtml(e.name)}</option>`;
+      });
+
+      // Build costume dropdown (filtered by selected character)
+      let cosOpts = '<option value="">-- No Costume --</option>';
+      const charCostumes = s.characterId ? _posCostumesCache.filter(c => c.characterId === s.characterId) : _posCostumesCache;
+      charCostumes.forEach(c => {
+        const sel = (s.costumeId === c.id) ? 'selected' : '';
+        cosOpts += `<option value="${c.id}" ${sel}>${escHtml(c.name)}</option>`;
+      });
+
+      const row = document.createElement('div');
+      row.className = 'scene-row entity-row';
+      row.style.cssText = 'margin-top:2px;';
+      row.innerHTML = `
+        <span class="row-label" style="color:#7c5cff;">Entity:</span>
+        <select class="styled-select" onchange="window._manualUpdateScene('${s.id}', {characterId: this.value || null}); setTimeout(()=>_loadEntityCaches().then(()=>loadManualScenes()),200);" data-tooltip="Character from Prompt OS">
+          ${charOpts}
+        </select>
+        <select class="styled-select" onchange="window._manualUpdateScene('${s.id}', {environmentId: this.value || null})" data-tooltip="Environment from Prompt OS">
+          ${envOpts}
+        </select>
+        <select class="styled-select" onchange="window._manualUpdateScene('${s.id}', {costumeId: this.value || null})" data-tooltip="Costume from Prompt OS">
+          ${cosOpts}
+        </select>
+      `;
+      controlsArea.appendChild(row);
+    });
+  }
 
   // ===================== INIT =====================
 
