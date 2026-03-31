@@ -6585,6 +6585,15 @@
   let _adSongPath = null;
 
   window._adInit = function() {
+    // Load saved Director state from settings
+    fetch('/api/settings').then(r=>r.json()).then(settings => {
+      var ds = settings.director_state || {};
+      if (ds.style && $('adStyleInput')) $('adStyleInput').value = ds.style;
+      if (ds.storyline && $('adStorylineInput')) $('adStorylineInput').value = ds.storyline;
+      if (ds.engine && $('adEngineSelect')) $('adEngineSelect').value = ds.engine;
+      if (ds.preset && $('adPresetSelect')) $('adPresetSelect').value = ds.preset;
+      if (ds.songName && $('adSongLabel')) $('adSongLabel').textContent = ds.songName;
+    }).catch(()=>{});
     // Load any existing plan
     fetch('/api/auto-director/plan').then(r=>r.json()).then(data => {
       if (data && data.scenes && data.scenes.length > 0) {
@@ -6593,6 +6602,28 @@
       }
     }).catch(()=>{});
   };
+
+  // Save Director state on changes
+  window._adSaveState = function() {
+    var state = {
+      style: $('adStyleInput') ? $('adStyleInput').value : '',
+      storyline: $('adStorylineInput') ? $('adStorylineInput').value : '',
+      engine: $('adEngineSelect') ? $('adEngineSelect').value : '',
+      preset: $('adPresetSelect') ? $('adPresetSelect').value : '',
+      songName: $('adSongLabel') ? $('adSongLabel').textContent : '',
+    };
+    fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({director_state: state})}).catch(()=>{});
+  };
+  // Auto-save on input changes
+  ['adStyleInput','adStorylineInput'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener('change', window._adSaveState);
+  });
+  ['adEngineSelect','adPresetSelect'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener('change', window._adSaveState);
+  });
 
   // Song upload
   (function() {

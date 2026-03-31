@@ -5952,11 +5952,16 @@ class Handler(BaseHTTPRequestHandler):
             plan = _load_manual_plan()
             song_path = plan.get("song_path")
         if not song_path or not os.path.isfile(song_path):
-            # Check uploads for any audio file
+            # Find the MOST RECENTLY uploaded audio file
+            audio_files = []
             for f in os.listdir(UPLOADS_DIR):
                 if f.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac')):
-                    song_path = os.path.join(UPLOADS_DIR, f)
-                    break
+                    fp = os.path.join(UPLOADS_DIR, f)
+                    audio_files.append((os.path.getmtime(fp), fp, f))
+            if audio_files:
+                audio_files.sort(reverse=True)  # newest first
+                song_path = audio_files[0][1]
+                print(f"[DIRECTOR] Using most recent song: {audio_files[0][2]}")
 
         if not song_path or not os.path.isfile(song_path):
             self._send_json({"error": "No song uploaded. Upload a song first."}, 400)
