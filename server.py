@@ -2837,6 +2837,12 @@ class Handler(BaseHTTPRequestHandler):
             "vocal_path": None,   # per-scene voiceover audio
             "vocal_volume": 80,   # voiceover volume 0-100
             "loop": False,        # boomerang effect
+            "reversed": False,
+            "effect": "none",
+            "effect_intensity": 0.5,
+            "characterId": None,  # link to Prompt OS character
+            "costumeId": None,    # link to Prompt OS costume
+            "environmentId": None,# link to Prompt OS environment
             "previous_clip_path": None,  # for comparison view
         }
 
@@ -2874,8 +2880,20 @@ class Handler(BaseHTTPRequestHandler):
             scene["prompt"] = params.get("prompt", "")
             scene["duration"] = params.get("duration", 8)
             scene["transition"] = params.get("transition", "crossfade")
-            if "engine" in params and params["engine"] in SUPPORTED_ENGINES:
+            if "engine" in params:
                 scene["engine"] = params["engine"]
+            if "characterId" in params:
+                scene["characterId"] = params["characterId"]
+            if "costumeId" in params:
+                scene["costumeId"] = params["costumeId"]
+            if "environmentId" in params:
+                scene["environmentId"] = params["environmentId"]
+            if "camera_movement" in params:
+                scene["camera_movement"] = params["camera_movement"]
+            if "effect" in params:
+                scene["effect"] = params["effect"]
+            if "effect_intensity" in params:
+                scene["effect_intensity"] = params["effect_intensity"]
 
         plan["scenes"].append(scene)
         _save_manual_plan(plan)
