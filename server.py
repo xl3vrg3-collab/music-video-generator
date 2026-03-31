@@ -73,6 +73,7 @@ from lib.prompt_assistant import (
     extract_palette,
 )
 from lib.storyboard_generator import generate_storyboard
+from lib.project_manager import ProjectManager
 PORT = 3849
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOADS_DIR = os.path.join(PROJECT_DIR, "uploads")
@@ -114,6 +115,8 @@ RENDER_TIME_ESTIMATES = {
     "openai": 50,
 }
 STITCH_TIME_PER_CLIP = 5
+WAVEFORM_CACHE_PATH = os.path.join(OUTPUT_DIR, "waveform_cache.json")
+TAKES_DIR = os.path.join(OUTPUT_DIR, "takes")
 
 # Cost defaults
 COST_PER_VIDEO_GEN = 0.15
@@ -136,6 +139,10 @@ os.makedirs(SCENE_VOCALS_DIR, exist_ok=True)
 os.makedirs(FULL_PROJECTS_DIR, exist_ok=True)
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
 os.makedirs(GIFS_DIR, exist_ok=True)
+os.makedirs(TAKES_DIR, exist_ok=True)
+
+# ---- Project Manager instance ----
+_project_mgr = ProjectManager(FULL_PROJECTS_DIR, OUTPUT_DIR, UPLOADS_DIR, REFERENCES_DIR)
 
 # ---- Global generation state ----
 gen_state = {
@@ -150,6 +157,18 @@ gen_state = {
     "song_path": None,
 }
 gen_lock = threading.Lock()
+
+# ---- Batch queue state (Feature 2 + 10) ----
+batch_queue_state = {
+    "active": False,
+    "cancelled": False,
+    "scenes": [],        # [{id, index, status, elapsed, error, prompt}]
+    "total": 0,
+    "completed": 0,
+    "failed": 0,
+    "start_time": 0,
+}
+batch_lock = threading.Lock()
 
 
 def _reset_state():
@@ -524,6 +543,8 @@ def _run_manual_generate_scene(scene_id: str):
         old_clip = scene.get("clip_path", "")
         if old_clip and os.path.isfile(old_clip):
             scene["previous_clip_path"] = old_clip
+            # Feature 4: Save as take for A/B comparison
+            _save_take(scene_id, old_clip, scene.get("prompt", ""))
 
         # If user uploaded a video, use it directly as the clip
         video_path = scene.get("video_path", "")
@@ -606,9 +627,23 @@ def _run_manual_generate_scene(scene_id: str):
         }
 
         print(f"[_run_manual_generate_scene] Calling generate_scene with photo_path={scene_photo_path}, engine={gen_scene['engine']}")
-        clip_path = generate_scene(gen_scene, scene_idx, MANUAL_CLIPS_DIR,
-                                   progress_cb=on_progress, cost_cb=_record_cost,
-                                   photo_path=scene_photo_path)
+        try:
+            clip_path = generate_scene(gen_scene, scene_idx, MANUAL_CLIPS_DIR,
+                                       progress_cb=on_progress, cost_cb=_record_cost,
+                                       photo_path=scene_photo_path)
+        except Exception as first_err:
+            # Feature 9: Auto-retry once on failure
+            print(f"[_run_manual_generate_scene] First attempt failed: {first_err}, retrying...")
+            with gen_lock:
+                if gen_state["progress"]:
+                    gen_state["progress"][0]["status"] = f"retrying after: {str(first_err)[:40]}"
+            try:
+                clip_path = generate_scene(gen_scene, scene_idx, MANUAL_CLIPS_DIR,
+                                           progress_cb=on_progress, cost_cb=_record_cost,
+                                           photo_path=scene_photo_path)
+            except Exception as retry_err:
+                raise RuntimeError(f"Failed after retry: {retry_err}") from retry_err
+
         scene["clip_path"] = clip_path
         scene["has_clip"] = True
         plan["scenes"][scene_idx] = scene
@@ -790,6 +825,285 @@ def _run_manual_generate_all():
             gen_state["phase"] = "error"
             gen_state["error"] = str(e)
             gen_state["running"] = False
+
+
+def _run_batch_generate_queue():
+    """Background thread: generate scenes concurrently (2 at a time), fault-tolerant."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    try:
+        plan = _load_manual_plan()
+        scenes_to_gen = []
+        for i, s in enumerate(plan["scenes"]):
+            if not s.get("has_clip") or not s.get("clip_path") \
+               or not os.path.isfile(s.get("clip_path", "")):
+                scenes_to_gen.append((i, s))
+
+        if not scenes_to_gen:
+            with batch_lock:
+                batch_queue_state["active"] = False
+            return
+
+        with batch_lock:
+            batch_queue_state["active"] = True
+            batch_queue_state["cancelled"] = False
+            batch_queue_state["total"] = len(scenes_to_gen)
+            batch_queue_state["completed"] = 0
+            batch_queue_state["failed"] = 0
+            batch_queue_state["start_time"] = time.time()
+            batch_queue_state["scenes"] = [
+                {"id": s["id"], "index": i, "status": "queued",
+                 "elapsed": 0, "error": None,
+                 "prompt": (s.get("prompt", ""))[:80]}
+                for i, s in scenes_to_gen
+            ]
+
+        def generate_one(idx_scene_tuple):
+            scene_idx, scene = idx_scene_tuple
+            scene_id = scene["id"]
+            # Check cancellation
+            with batch_lock:
+                if batch_queue_state["cancelled"]:
+                    return scene_id, False, "cancelled"
+                # Update status
+                for sq in batch_queue_state["scenes"]:
+                    if sq["id"] == scene_id:
+                        sq["status"] = "rendering"
+                        sq["elapsed"] = 0
+                        break
+
+            start = time.time()
+
+            # Skip if user uploaded a video
+            video_path = scene.get("video_path", "")
+            if video_path and os.path.isfile(video_path):
+                scene["clip_path"] = video_path
+                scene["has_clip"] = True
+                return scene_id, True, None
+
+            gen_prompt = scene["prompt"]
+            scene_photo_path = None
+            single_photo = scene.get("photo_path", "")
+            if single_photo and os.path.isfile(single_photo):
+                scene_photo_path = single_photo
+
+            plan_continuity = plan.get("continuity_mode", True)
+            gen_scene = {
+                "prompt": gen_prompt,
+                "duration": scene.get("duration", 8),
+                "camera_movement": scene.get("camera_movement", "zoom_in"),
+                "engine": scene.get("engine", ""),
+                "id": scene.get("id", ""),
+                "continuity_mode": plan_continuity,
+            }
+
+            def on_progress(index, status):
+                with batch_lock:
+                    for sq in batch_queue_state["scenes"]:
+                        if sq["id"] == scene_id:
+                            sq["status"] = f"rendering: {status}"
+                            sq["elapsed"] = round(time.time() - start, 1)
+                            break
+
+            try:
+                clip_path = generate_scene(gen_scene, scene_idx, MANUAL_CLIPS_DIR,
+                                           progress_cb=on_progress,
+                                           cost_cb=_record_cost,
+                                           photo_path=scene_photo_path)
+                scene["clip_path"] = clip_path
+                scene["has_clip"] = True
+                return scene_id, True, None
+            except Exception as e:
+                # Auto-retry once (Feature 9)
+                try:
+                    on_progress(scene_idx, f"retry after: {str(e)[:40]}")
+                    clip_path = generate_scene(gen_scene, scene_idx, MANUAL_CLIPS_DIR,
+                                               progress_cb=on_progress,
+                                               cost_cb=_record_cost,
+                                               photo_path=scene_photo_path)
+                    scene["clip_path"] = clip_path
+                    scene["has_clip"] = True
+                    return scene_id, True, None
+                except Exception as e2:
+                    return scene_id, False, str(e2)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_to_scene = {}
+            for item in scenes_to_gen:
+                with batch_lock:
+                    if batch_queue_state["cancelled"]:
+                        break
+                future = executor.submit(generate_one, item)
+                future_to_scene[future] = item
+
+            for future in as_completed(future_to_scene):
+                scene_id, success, error = future.result()
+                with batch_lock:
+                    for sq in batch_queue_state["scenes"]:
+                        if sq["id"] == scene_id:
+                            if success:
+                                sq["status"] = "done"
+                                batch_queue_state["completed"] += 1
+                            else:
+                                sq["status"] = f"failed: {error or 'unknown'}"
+                                sq["error"] = error
+                                batch_queue_state["failed"] += 1
+                            sq["elapsed"] = round(time.time() - batch_queue_state["start_time"], 1)
+                            break
+
+                # Save plan after each scene
+                plan_now = _load_manual_plan()
+                for i, s in enumerate(plan_now["scenes"]):
+                    scene_idx, scene_data = next(
+                        ((idx, sd) for idx, sd in scenes_to_gen if sd["id"] == s["id"]),
+                        (None, None)
+                    )
+                    if scene_data and scene_data.get("clip_path"):
+                        s["clip_path"] = scene_data["clip_path"]
+                        s["has_clip"] = scene_data.get("has_clip", False)
+                        plan_now["scenes"][i] = s
+                _save_manual_plan(plan_now)
+
+        with batch_lock:
+            batch_queue_state["active"] = False
+
+    except Exception as e:
+        with batch_lock:
+            batch_queue_state["active"] = False
+            for sq in batch_queue_state["scenes"]:
+                if sq["status"] in ("queued", "rendering"):
+                    sq["status"] = f"failed: {str(e)}"
+                    sq["error"] = str(e)
+
+
+def _save_take(scene_id: str, clip_path: str, prompt: str):
+    """Save a clip as a take for A/B comparison (Feature 4)."""
+    if not clip_path or not os.path.isfile(clip_path):
+        return
+    scene_takes_dir = os.path.join(TAKES_DIR, scene_id)
+    os.makedirs(scene_takes_dir, exist_ok=True)
+    # Count existing takes
+    existing = [f for f in os.listdir(scene_takes_dir) if f.startswith("take_")]
+    take_num = len(existing) + 1
+    ext = os.path.splitext(clip_path)[1] or ".mp4"
+    take_filename = f"take_{take_num}{ext}"
+    take_path = os.path.join(scene_takes_dir, take_filename)
+    import shutil
+    shutil.copy2(clip_path, take_path)
+    # Save take metadata
+    meta_path = os.path.join(scene_takes_dir, "takes.json")
+    takes = []
+    if os.path.isfile(meta_path):
+        try:
+            with open(meta_path, "r") as f:
+                takes = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            takes = []
+    takes.append({
+        "take_num": take_num,
+        "clip_path": take_path,
+        "prompt": prompt,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    })
+    with open(meta_path, "w") as f:
+        json.dump(takes, f, indent=2)
+
+
+def _get_takes(scene_id: str) -> list:
+    """Get all takes for a scene (Feature 4)."""
+    scene_takes_dir = os.path.join(TAKES_DIR, scene_id)
+    meta_path = os.path.join(scene_takes_dir, "takes.json")
+    if not os.path.isfile(meta_path):
+        return []
+    try:
+        with open(meta_path, "r") as f:
+            takes = json.load(f)
+        # Add clip_url and verify existence
+        result = []
+        for t in takes:
+            cp = t.get("clip_path", "")
+            if cp and os.path.isfile(cp):
+                t["clip_url"] = f"/api/clips/{os.path.basename(cp)}"
+                t["exists"] = True
+            else:
+                t["clip_url"] = None
+                t["exists"] = False
+            result.append(t)
+        return result
+    except (json.JSONDecodeError, IOError):
+        return []
+
+
+def _generate_waveform(audio_path: str) -> list:
+    """Generate waveform data from audio file (Feature 3)."""
+    if not audio_path or not os.path.isfile(audio_path):
+        return []
+    # Check cache
+    if os.path.isfile(WAVEFORM_CACHE_PATH):
+        try:
+            with open(WAVEFORM_CACHE_PATH, "r") as f:
+                cache = json.load(f)
+            if cache.get("source") == audio_path:
+                return cache.get("data", [])
+        except (json.JSONDecodeError, IOError):
+            pass
+    # Generate via ffmpeg: extract raw audio, downsample to ~500 points
+    try:
+        cmd = [
+            "ffmpeg", "-i", audio_path,
+            "-ac", "1", "-ar", "500", "-f", "s16le",
+            "-acodec", "pcm_s16le", "-",
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=30,
+                                **_subprocess_kwargs())
+        if result.returncode != 0:
+            print(f"[WAVEFORM] ffmpeg error: {result.stderr[:200]}")
+            return []
+        raw = result.stdout
+        import struct
+        n_samples = len(raw) // 2
+        if n_samples == 0:
+            return []
+        samples = struct.unpack(f"<{n_samples}h", raw[:n_samples * 2])
+        # Normalize to 0..1 range
+        max_val = max(abs(s) for s in samples) or 1
+        data = [round(abs(s) / max_val, 3) for s in samples]
+        # Downsample to ~500 points
+        target = 500
+        if len(data) > target:
+            step = len(data) / target
+            data = [data[int(i * step)] for i in range(target)]
+        # Cache result
+        cache = {"source": audio_path, "data": data}
+        with open(WAVEFORM_CACHE_PATH, "w") as f:
+            json.dump(cache, f)
+        return data
+    except Exception as e:
+        print(f"[WAVEFORM] Error: {e}")
+        return []
+
+
+def _auto_resize_photo(photo_path: str, max_w: int = 1280, max_h: int = 720) -> str:
+    """Auto-resize a photo to max dimensions (Feature 6). Returns the path."""
+    try:
+        from PIL import Image
+        with Image.open(photo_path) as img:
+            orig_w, orig_h = img.size
+            if orig_w <= max_w and orig_h <= max_h:
+                return photo_path  # Already small enough
+            # Determine orientation
+            if orig_w > orig_h:
+                target = (max_w, max_h)
+            else:
+                target = (max_h, max_w)
+            img.thumbnail(target, Image.LANCZOS)
+            img.save(photo_path, quality=90)
+            new_w, new_h = img.size
+            print(f"[RESIZE] Resized {orig_w}x{orig_h} -> {new_w}x{new_h}")
+    except ImportError:
+        print("[RESIZE] PIL not available, skipping resize")
+    except Exception as e:
+        print(f"[RESIZE] Error: {e}")
+    return photo_path
 
 
 def _run_manual_stitch():
@@ -1189,10 +1503,17 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/api/clips/"):
             filename = path[len("/api/clips/"):]
             safe = os.path.basename(filename)
-            # Try auto clips dir first, then manual clips dir
+            # Try auto clips dir first, then manual clips dir, then search takes
             clip_file = os.path.join(CLIPS_DIR, safe)
             if not os.path.isfile(clip_file):
                 clip_file = os.path.join(MANUAL_CLIPS_DIR, safe)
+            if not os.path.isfile(clip_file):
+                # Search in takes directories
+                for scene_dir in os.listdir(TAKES_DIR) if os.path.isdir(TAKES_DIR) else []:
+                    candidate = os.path.join(TAKES_DIR, scene_dir, safe)
+                    if os.path.isfile(candidate):
+                        clip_file = candidate
+                        break
             self._send_file(clip_file)
 
         elif path == "/api/references":
@@ -1452,6 +1773,49 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/api/pos/world-rules":
             self._send_json({"worldRules": _prompt_os.get_world_rules()})
+
+        # ──── Feature 1: Project Browser ────
+        elif path == "/api/projects":
+            projects = _project_mgr.list_projects()
+            current = _project_mgr.get_current_project()
+            self._send_json({"projects": projects, "current": current})
+
+        elif path == "/api/projects/current":
+            current = _project_mgr.get_current_project()
+            self._send_json({"current": current})
+
+        elif re.match(r'^/api/projects/([^/]+)/thumbnail$', path):
+            m = re.match(r'^/api/projects/([^/]+)/thumbnail$', path)
+            thumb = os.path.join(FULL_PROJECTS_DIR, m.group(1), "thumbnail.jpg")
+            if os.path.isfile(thumb):
+                self._send_file(thumb)
+            else:
+                self.send_error(404)
+
+        # ──── Feature 2+10: Batch Queue Status ────
+        elif path == "/api/manual/queue-status":
+            with batch_lock:
+                data = {
+                    "active": batch_queue_state["active"],
+                    "total": batch_queue_state["total"],
+                    "completed": batch_queue_state["completed"],
+                    "failed": batch_queue_state["failed"],
+                    "scenes": list(batch_queue_state["scenes"]),
+                    "elapsed": round(time.time() - batch_queue_state["start_time"], 1) if batch_queue_state["active"] else 0,
+                }
+            self._send_json(data)
+
+        # ──── Feature 4: Takes/Compare ────
+        elif re.match(r'^/api/manual/scene/([^/]+)/takes$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/takes$', path)
+            takes = _get_takes(m.group(1))
+            self._send_json({"takes": takes})
+
+        # Serve take clips
+        elif path.startswith("/api/takes/"):
+            rel = path[len("/api/takes/"):]
+            safe = os.path.normpath(rel)
+            self._send_file(os.path.join(TAKES_DIR, safe))
 
         else:
             self.send_error(404)
@@ -1799,6 +2163,95 @@ class Handler(BaseHTTPRequestHandler):
             rules = _prompt_os.set_world_rules(body.get("worldRules", []))
             self._send_json({"ok": True, "worldRules": rules})
 
+        # ──── Feature 1: Project Browser ────
+        elif path == "/api/projects":
+            body = json.loads(self._read_body())
+            name = body.get("name", "Untitled Project")
+            meta = _project_mgr.create_project(name)
+            self._send_json({"ok": True, "project": meta})
+
+        elif re.match(r'^/api/projects/([^/]+)/load$', path):
+            m = re.match(r'^/api/projects/([^/]+)/load$', path)
+            meta = _project_mgr.load_project(m.group(1))
+            if meta:
+                self._send_json({"ok": True, "project": meta})
+            else:
+                self._send_json({"error": "Project not found"}, 404)
+
+        elif re.match(r'^/api/projects/([^/]+)/save$', path):
+            _project_mgr.save_current()
+            self._send_json({"ok": True})
+
+        # ──── Feature 2+10: Batch Generation Queue ────
+        elif path == "/api/manual/generate-queue":
+            with batch_lock:
+                if batch_queue_state["active"]:
+                    self._send_json({"error": "Batch already running"}, 409)
+                    return
+            thread = threading.Thread(target=_run_batch_generate_queue, daemon=True)
+            thread.start()
+            self._send_json({"ok": True, "message": "Batch queue started"})
+
+        elif path == "/api/manual/cancel-queue":
+            with batch_lock:
+                batch_queue_state["cancelled"] = True
+            self._send_json({"ok": True})
+
+        # ──── Feature 3: Audio Waveform ────
+        elif path == "/api/audio/waveform":
+            plan = _load_manual_plan()
+            audio_path = plan.get("song_path", "")
+            if not audio_path or not os.path.isfile(audio_path):
+                self._send_json({"error": "No audio uploaded"}, 404)
+            else:
+                data = _generate_waveform(audio_path)
+                # Also get beats from analysis if available
+                beats = []
+                try:
+                    analysis = analyze(audio_path)
+                    total_dur = analysis.get("duration", 0)
+                    beats = analysis.get("beats", [])
+                except Exception:
+                    total_dur = 0
+                self._send_json({"ok": True, "waveform": data,
+                                 "beats": beats, "duration": total_dur})
+
+        # ──── Feature 4: Select Take ────
+        elif re.match(r'^/api/manual/scene/([^/]+)/select-take$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/select-take$', path)
+            body = json.loads(self._read_body())
+            scene_id = m.group(1)
+            take_num = body.get("take_num", 0)
+            takes = _get_takes(scene_id)
+            selected = next((t for t in takes if t["take_num"] == take_num), None)
+            if not selected or not selected.get("exists"):
+                self._send_json({"error": "Take not found"}, 404)
+            else:
+                import shutil as _shutil
+                plan = _load_manual_plan()
+                for s in plan["scenes"]:
+                    if s["id"] == scene_id:
+                        s["clip_path"] = selected["clip_path"]
+                        s["has_clip"] = True
+                        _save_manual_plan(plan)
+                        self._send_json({"ok": True})
+                        return
+                self._send_json({"error": "Scene not found"}, 404)
+
+        # ──── Feature 5: Quick Preview ────
+        elif re.match(r'^/api/manual/scene/([^/]+)/quick-preview$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/quick-preview$', path)
+            self._handle_quick_preview(m.group(1))
+
+        # ──── Feature 8: Budget update ────
+        elif path == "/api/cost/budget":
+            body = json.loads(self._read_body())
+            budget = float(body.get("budget", DEFAULT_BUDGET))
+            tracker = _load_cost_tracker()
+            tracker["budget"] = budget
+            _save_cost_tracker(tracker)
+            self._send_json({"ok": True, "budget": budget})
+
         else:
             self.send_error(404)
 
@@ -1904,6 +2357,14 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/pos/scenes/([^/]+)$', path):
             m = re.match(r'^/api/pos/scenes/([^/]+)$', path)
             if _prompt_os.delete_scene(m.group(1)):
+                self._send_json({"ok": True})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        # ──── Feature 1: Delete Project ────
+        elif re.match(r'^/api/projects/([^/]+)$', path):
+            m = re.match(r'^/api/projects/([^/]+)$', path)
+            if _project_mgr.delete_project(m.group(1)):
                 self._send_json({"ok": True})
             else:
                 self._send_json({"error": "Not found"}, 404)
@@ -2383,6 +2844,8 @@ class Handler(BaseHTTPRequestHandler):
                 with open(photo_path, "wb") as f:
                     f.write(file_data)
                 s["photo_path"] = photo_path
+                # Feature 6: Auto-resize photo
+                _auto_resize_photo(photo_path)
                 _save_manual_plan(plan)
                 print(f"[upload_photo] Saved photo for scene {scene_id}: {photo_path} ({len(file_data)} bytes)")
                 self._send_json({"ok": True, "photo_url": f"/api/manual/scene-photo/{scene_id}"})
@@ -3080,6 +3543,55 @@ class Handler(BaseHTTPRequestHandler):
         """Return current cost tracking data."""
         tracker = _load_cost_tracker()
         self._send_json(tracker)
+
+    def _handle_quick_preview(self, scene_id: str):
+        """Feature 5: Generate a 1-second preview or first frame for a scene."""
+        plan = _load_manual_plan()
+        scene = None
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                scene = s
+                break
+        if scene is None:
+            self._send_json({"error": "Scene not found"}, 404)
+            return
+        prompt = scene.get("prompt", "cinematic scene")
+        if not prompt.strip():
+            self._send_json({"error": "Scene has no prompt"}, 400)
+            return
+        # Generate a quick preview image using Grok image API (cheap $0.02)
+        try:
+            from lib.video_generator import _get_api_key
+            import requests as _requests
+            api_key = _get_api_key()
+            resp = _requests.post(
+                "https://api.x.ai/v1/images/generations",
+                headers={"Authorization": f"Bearer {api_key}",
+                         "Content-Type": "application/json"},
+                json={"model": "grok-2-image", "prompt": prompt,
+                      "n": 1, "size": "512x512"},
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                img_url = data.get("data", [{}])[0].get("url", "")
+                if img_url:
+                    # Download and save
+                    img_resp = _requests.get(img_url, timeout=30)
+                    if img_resp.status_code == 200:
+                        preview_path = os.path.join(PREVIEWS_DIR, f"preview_{scene_id}.jpg")
+                        with open(preview_path, "wb") as f:
+                            f.write(img_resp.content)
+                        _record_cost(str(scene_id), "image")
+                        self._send_json({
+                            "ok": True,
+                            "preview_url": f"/api/previews/preview_{scene_id}.jpg",
+                        })
+                        return
+            # Fallback: just save a placeholder
+            self._send_json({"error": "Could not generate preview"}, 500)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
 
     # ---- Lyrics Sync ----
 

@@ -1234,6 +1234,170 @@
     .preset-card { min-width: 80px; padding: 8px 10px; }
     .mode-btn { padding: 8px 16px; font-size: 10px; letter-spacing: 2px; }
   }
+
+  /* ---- Feature 1: Project Browser ---- */
+  .project-browser-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.92); z-index: 10001;
+    align-items: center; justify-content: center;
+  }
+  .project-browser-overlay.open { display: flex; }
+  .project-browser {
+    background: var(--surface); border: 1px solid var(--cyan);
+    border-radius: var(--radius-lg); padding: 24px;
+    max-width: 700px; width: 95%; max-height: 85vh; overflow-y: auto;
+    box-shadow: 0 0 60px var(--cyan-dim);
+  }
+  .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-top: 16px; }
+  .project-card {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px; cursor: pointer;
+    transition: all var(--transition); position: relative;
+  }
+  .project-card:hover { border-color: var(--cyan); box-shadow: 0 0 12px var(--cyan-dim); }
+  .project-card.active { border-color: var(--green); box-shadow: 0 0 12px var(--green-dim); }
+  .project-card .pc-name { font-size: 13px; color: var(--cyan); font-weight: 500; margin-bottom: 6px; }
+  .project-card .pc-meta { font-size: 9px; color: var(--text-dim); letter-spacing: 1px; }
+  .project-card .pc-scenes { font-size: 10px; color: var(--amber); margin-top: 4px; }
+  .project-card .pc-delete {
+    position: absolute; top: 6px; right: 6px; background: transparent;
+    border: 1px solid var(--red); color: var(--red); font-size: 10px;
+    width: 18px; height: 18px; border-radius: 50%; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity 0.2s;
+  }
+  .project-card:hover .pc-delete { opacity: 1; }
+  .project-card .pc-delete:hover { background: var(--red); color: #fff; }
+
+  /* ---- Feature 2+10: Batch Render Grid ---- */
+  .render-grid-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.9); z-index: 10002;
+    align-items: center; justify-content: center;
+  }
+  .render-grid-overlay.open { display: flex; }
+  .render-grid-panel {
+    background: var(--surface); border: 1px solid var(--cyan);
+    border-radius: var(--radius-lg); padding: 24px;
+    max-width: 850px; width: 95%; max-height: 90vh; overflow-y: auto;
+    box-shadow: 0 0 60px var(--cyan-dim);
+  }
+  .render-grid-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .render-grid-title { font-size: 11px; color: var(--cyan); text-transform: uppercase; letter-spacing: 3px; }
+  .render-grid-progress { font-size: 12px; color: var(--amber); }
+  .render-grid-eta { font-size: 10px; color: var(--text-dim); margin-top: 4px; }
+  .render-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+  .render-cell {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 10px; text-align: center;
+    transition: all 0.3s;
+  }
+  .render-cell.queued { border-color: var(--text-dim); }
+  .render-cell.rendering { border-color: var(--cyan); animation: pulse-border 1.5s ease-in-out infinite; }
+  .render-cell.done { border-color: var(--green); }
+  .render-cell.failed { border-color: var(--red); }
+  .render-cell .rc-num { font-size: 14px; font-weight: 700; color: var(--amber); }
+  .render-cell .rc-status { font-size: 9px; color: var(--text-dim); margin-top: 4px; letter-spacing: 1px; text-transform: uppercase; }
+  .render-cell .rc-elapsed { font-size: 9px; color: var(--text-dim); margin-top: 2px; }
+  .render-cell.done .rc-status { color: var(--green); }
+  .render-cell.failed .rc-status { color: var(--red); }
+  .render-cell.rendering .rc-status { color: var(--cyan); }
+
+  /* ---- Feature 3: Waveform Timeline ---- */
+  .waveform-container {
+    position: relative; width: 100%; height: 60px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 12px;
+    overflow: hidden; cursor: crosshair;
+  }
+  .waveform-canvas { width: 100%; height: 100%; display: block; }
+  .waveform-scene-overlay {
+    position: absolute; top: 0; height: 100%;
+    background: rgba(0,212,255,0.1); border-left: 1px solid var(--cyan);
+    border-right: 1px solid var(--cyan);
+    pointer-events: none;
+  }
+  .waveform-beat-marker {
+    position: absolute; top: 0; width: 1px; height: 100%;
+    background: rgba(255,170,0,0.3); pointer-events: none;
+  }
+
+  /* ---- Feature 4: Compare Modal ---- */
+  .compare-container {
+    display: flex; gap: 12px; margin-top: 12px;
+  }
+  .compare-side {
+    flex: 1; text-align: center;
+  }
+  .compare-side video {
+    width: 100%; border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+  .compare-label {
+    font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .take-list { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; justify-content: center; }
+  .take-btn {
+    padding: 4px 10px; font-size: 10px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-dim); border-radius: 3px;
+    cursor: pointer; font-family: inherit; transition: all 0.2s;
+  }
+  .take-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+  .take-btn.active { border-color: var(--amber); color: var(--amber); background: var(--amber-dim); }
+
+  /* ---- Feature 7: Fullscreen Prompt Editor ---- */
+  .prompt-editor-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.92); z-index: 10003;
+    align-items: center; justify-content: center;
+  }
+  .prompt-editor-overlay.open { display: flex; }
+  .prompt-editor-panel {
+    background: var(--surface); border: 1px solid var(--cyan);
+    border-radius: var(--radius-lg); padding: 24px;
+    width: 85%; max-width: 900px; max-height: 85vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 0 60px var(--cyan-dim);
+  }
+  .prompt-editor-textarea {
+    width: 100%; flex: 1; min-height: 300px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px;
+    color: var(--text); font-family: inherit; font-size: 14px;
+    resize: none; line-height: 1.7;
+  }
+  .prompt-editor-textarea:focus { outline: none; border-color: var(--cyan); }
+  .prompt-editor-footer {
+    display: flex; gap: 8px; align-items: center; margin-top: 12px;
+    flex-wrap: wrap;
+  }
+  .prompt-char-count { font-size: 10px; color: var(--text-dim); margin-left: auto; }
+
+  /* ---- Feature 8: Budget Progress Bar ---- */
+  .cost-tracker-expanded {
+    display: flex; flex-direction: column; gap: 4px; cursor: pointer;
+  }
+  .cost-progress-bar {
+    width: 80px; height: 4px; background: var(--border);
+    border-radius: 2px; overflow: hidden;
+  }
+  .cost-progress-fill {
+    height: 100%; border-radius: 2px; transition: width 0.5s, background 0.5s;
+    background: var(--green);
+  }
+  .cost-progress-fill.warning { background: var(--amber); }
+  .cost-progress-fill.danger { background: var(--red); }
+
+  /* ---- Feature 5: Quick Preview Badge ---- */
+  .msc-preview-thumb {
+    width: 60px; height: 40px; border-radius: 3px;
+    border: 1px solid var(--border); object-fit: cover;
+    margin-right: 4px; vertical-align: middle;
+  }
 </style>
 </head>
 <body>
@@ -1241,9 +1405,18 @@
 <div class="glow-br"></div>
 
 <!-- Cost Tracker (fixed top-right) -->
-<div class="cost-tracker" id="costTracker">
-  <span class="cost-label">API Cost</span>
-  <span class="cost-value" id="costValue">$0.00</span>
+<div class="cost-tracker" id="costTracker" onclick="window._showCostBreakdown()" style="cursor:pointer;" data-tooltip="Click for details">
+  <div class="cost-tracker-expanded">
+    <div style="display:flex;align-items:center;gap:6px;">
+      <span style="font-size:12px;">&#128176;</span>
+      <span class="cost-value" id="costValue">$0.00</span>
+      <span style="color:var(--text-dim);font-size:10px;">/</span>
+      <span style="color:var(--text-dim);font-size:10px;" id="budgetDisplay">$10.00</span>
+    </div>
+    <div class="cost-progress-bar">
+      <div class="cost-progress-fill" id="costProgressFill" style="width:0%;"></div>
+    </div>
+  </div>
 </div>
 
 <!-- Hidden file inputs -->
@@ -1260,12 +1433,13 @@
 
   <div class="header">
     <h1>Music Video Generator</h1>
-    <div class="sub">AI Video Synthesis Engine</div>
+    <div class="sub">AI Video Synthesis Engine <span id="currentProjectLabel" style="color:var(--green);margin-left:8px;"></span></div>
   </div>
 
   <!-- ============ TOOLBAR ============ -->
   <div class="toolbar">
     <div class="toolbar-group">
+      <button class="btn-toolbar" style="background:rgba(0,212,255,0.15);color:var(--cyan);border-color:rgba(0,212,255,0.3)" onclick="window._showProjectBrowser()" data-tooltip="Browse and manage projects">Projects</button>
       <button class="btn-toolbar" style="background:rgba(255,34,85,0.15);color:#ff2255;border-color:rgba(255,34,85,0.3)" onclick="window._resetProject()" data-tooltip="Clear everything and start fresh">New Project</button>
     </div>
     <div class="toolbar-sep"></div>
@@ -1625,6 +1799,11 @@
           <div class="timeline-total" id="timelineTotal"></div>
         </div>
 
+        <!-- Feature 3: Audio Waveform Timeline -->
+        <div class="waveform-container hidden" id="waveformContainer" onclick="window._waveformClick(event)">
+          <canvas class="waveform-canvas" id="waveformCanvas"></canvas>
+        </div>
+
         <!-- Card view -->
         <div id="cardView">
           <div class="manual-scene-list" id="manualSceneList"></div>
@@ -1747,6 +1926,7 @@
         </div>
         <div class="manual-bottom-bar" style="border-top:none;margin-top:0;padding-top:0;">
           <button class="btn" id="manualGenerateAllBtn">Generate All</button>
+          <button class="btn btn-green" id="manualBatchQueueBtn" onclick="window._startBatchQueue()">Batch Queue</button>
           <button class="btn btn-amber" id="manualPreviewAllBtn" onclick="window._previewAll()">Preview All</button>
           <button class="btn btn-amber" id="manualStitchBtn">Stitch Video</button>
           <a class="btn btn-magenta hidden" id="manualDownloadBtn" href="#" download="music_video.mp4">Download</a>
@@ -2406,6 +2586,102 @@
     <button class="modal-close" onclick="window._closeModal('framesModal')">&times;</button>
     <div class="modal-title">Extracted Frames</div>
     <div class="frames-grid" id="framesGrid"></div>
+  </div>
+</div>
+
+<!-- Feature 1: Project Browser Overlay -->
+<div class="project-browser-overlay" id="projectBrowserOverlay">
+  <div class="project-browser">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div class="modal-title" style="margin-bottom:0;">Project Browser</div>
+      <button class="modal-close" onclick="window._closeProjectBrowser()" style="position:static;">&times;</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <input type="text" id="newProjectName" class="msc-overlay-input" placeholder="New project name..." style="flex:1;">
+      <button class="btn btn-small btn-green" onclick="window._createProject()">Create Project</button>
+    </div>
+    <div class="project-grid" id="projectGrid">
+      <div style="color:var(--text-dim);font-size:12px;padding:20px;text-align:center;grid-column:1/-1;">Loading projects...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Feature 2+10: Batch Render Grid Overlay -->
+<div class="render-grid-overlay" id="renderGridOverlay">
+  <div class="render-grid-panel">
+    <div class="render-grid-header">
+      <div>
+        <div class="render-grid-title">Batch Render</div>
+        <div class="render-grid-progress" id="renderGridProgress">0 / 0 scenes complete</div>
+        <div class="render-grid-eta" id="renderGridEta"></div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-small btn-red" onclick="window._cancelBatchQueue()">Cancel</button>
+        <button class="modal-close" onclick="window._closeRenderGrid()" style="position:static;">&times;</button>
+      </div>
+    </div>
+    <div class="progress-bar-track" style="margin-bottom:16px;">
+      <div class="progress-bar-fill" id="renderGridFill"></div>
+    </div>
+    <div class="render-grid" id="renderGrid"></div>
+  </div>
+</div>
+
+<!-- Feature 4: Compare/Takes Modal -->
+<div class="modal-overlay" id="compareModal">
+  <div class="modal-content" style="max-width:900px;">
+    <button class="modal-close" onclick="window._closeModal('compareModal')">&times;</button>
+    <div class="modal-title">Compare Takes</div>
+    <div class="compare-container" id="compareContainer">
+      <div class="compare-side">
+        <div class="compare-label" style="color:var(--green);">Current Take</div>
+        <video id="compareVideoA" controls></video>
+      </div>
+      <div class="compare-side">
+        <div class="compare-label" style="color:var(--amber);">Previous Take</div>
+        <video id="compareVideoB" controls></video>
+      </div>
+    </div>
+    <div class="take-list" id="takeList"></div>
+    <div class="btn-row" style="margin-top:12px;">
+      <button class="btn btn-small btn-green" id="keepLeftBtn">Keep Current</button>
+      <button class="btn btn-small btn-amber" id="keepRightBtn">Keep Selected</button>
+    </div>
+  </div>
+</div>
+
+<!-- Feature 7: Fullscreen Prompt Editor -->
+<div class="prompt-editor-overlay" id="promptEditorOverlay">
+  <div class="prompt-editor-panel">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div class="modal-title" style="margin-bottom:0;">Prompt Editor</div>
+      <button class="modal-close" onclick="window._closePromptEditor()" style="position:static;">&times;</button>
+    </div>
+    <textarea class="prompt-editor-textarea" id="promptEditorTextarea" placeholder="Write your scene prompt..."></textarea>
+    <div class="prompt-editor-footer">
+      <button class="btn btn-small btn-purple" onclick="window._promptEditorInsertChar()">Insert Character</button>
+      <button class="btn btn-small btn-green" onclick="window._promptEditorInsertEnv()">Insert Environment</button>
+      <button class="btn btn-small btn-amber" onclick="window._promptEditorEnhance()">Enhance with AI</button>
+      <span class="prompt-char-count" id="promptEditorCharCount">0 chars</span>
+    </div>
+    <div class="btn-row" style="margin-top:12px;">
+      <button class="btn btn-green" onclick="window._savePromptEditor()">Save &amp; Close</button>
+      <button class="btn" onclick="window._closePromptEditor()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Feature 8: Cost Breakdown Modal -->
+<div class="modal-overlay" id="costBreakdownModal">
+  <div class="modal-content" style="max-width:500px;">
+    <button class="modal-close" onclick="window._closeModal('costBreakdownModal')">&times;</button>
+    <div class="modal-title">Cost Breakdown</div>
+    <div id="costBreakdownContent" style="font-size:11px;"></div>
+    <div style="margin-top:12px;">
+      <span class="msc-label">Budget:</span>
+      <input type="number" id="budgetInput" class="msc-overlay-input" style="width:100px;" step="1" min="1" value="10">
+      <button class="btn btn-small btn-green" onclick="window._updateBudget()" style="margin-left:6px;">Update</button>
+    </div>
   </div>
 </div>
 
@@ -3359,8 +3635,11 @@
                 <div class="palette-dots" id="palette-${s.id}"></div>
               </div>
               <div class="msc-prompt-col">
-                <textarea class="msc-prompt-input" id="msc-prompt-${s.id}" placeholder="Describe what this scene should look like..."
-                          onchange="window._manualUpdateScene('${s.id}', {prompt: this.value})">${escHtml(s.prompt || '')}</textarea>
+                <div style="position:relative;">
+                  <textarea class="msc-prompt-input" id="msc-prompt-${s.id}" placeholder="Describe what this scene should look like..."
+                            onchange="window._manualUpdateScene('${s.id}', {prompt: this.value})">${escHtml(s.prompt || '')}</textarea>
+                  <button style="position:absolute;top:4px;right:4px;background:var(--surface);border:1px solid var(--border);color:var(--text-dim);font-size:12px;width:22px;height:22px;border-radius:3px;cursor:pointer;display:flex;align-items:center;justify-content:center;" onclick="window._openPromptEditor('${s.id}')" data-tooltip="Expand editor">&#10530;</button>
+                </div>
                 ${hasPhoto ? `<div class="msc-grok-note"><em>grok-imagine-video</em> does not accept image input. Use <em>"Gen Photo"</em> for photo-to-video.</div>` : ''}
               </div>
               <div class="msc-controls-col">
@@ -3445,6 +3724,8 @@
               ${hasClip ? `<button class="btn-icon btn-small" onclick="window._extractFrames('${s.id}')" data-tooltip="Extract frames">&#127902;</button>` : ''}
               ${hasClip ? `<button class="btn-upscale" onclick="window._upscaleScene('${s.id}', this)" data-tooltip="Upscale 2x">2x</button>` : ''}
               ${hasClip ? `<button class="btn btn-small" onclick="window._manualPreviewClip('${s.id}')">Preview</button>` : ''}
+              ${hasClip ? `<button class="btn btn-small btn-amber" onclick="window._compareTakes('${s.id}')" data-tooltip="Compare takes">Compare</button>` : ''}
+              <button class="btn btn-small" onclick="window._quickPreview('${s.id}')" data-tooltip="Quick 1-frame preview ($0.02)">Quick</button>
               ${(window._sceneCosts && window._sceneCosts[s.id]) ? `<span class="msc-cost-badge">$` + window._sceneCosts[s.id].toFixed(2) + `</span>` : ''}
               <span class="msc-status" id="msc-status-${s.id}"></span>
             </div>
@@ -3456,6 +3737,7 @@
               <span class="split-pct-label" id="split-pct-${s.id}">50%</span>
               <button class="split-confirm-btn" onclick="window._manualSplitSceneAt('${s.id}')">Confirm</button>
             </div>
+            <div id="quick-preview-${s.id}" style="margin-top:4px;"></div>
             <div id="frames-inline-${s.id}"></div>
             ${clipHtml}
           </div>
@@ -5261,6 +5543,469 @@
         alert('Could not create scene: ' + (result.error||'unknown error'));
       }
     }, 500);
+  };
+
+  // ===================== FEATURE 1: PROJECT BROWSER =====================
+
+  window._showProjectBrowser = async function() {
+    $('projectBrowserOverlay').classList.add('open');
+    await window._loadProjects();
+  };
+
+  window._closeProjectBrowser = function() {
+    $('projectBrowserOverlay').classList.remove('open');
+  };
+
+  window._loadProjects = async function() {
+    const data = await apiGet('/api/projects');
+    const projects = data.projects || [];
+    const current = data.current;
+    const grid = $('projectGrid');
+    if (!projects.length) {
+      grid.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:20px;text-align:center;grid-column:1/-1;">No projects yet. Create one above.</div>';
+      return;
+    }
+    grid.innerHTML = projects.map(p => {
+      const isActive = current && current.id === p.id;
+      const thumbHtml = p.thumbnail ? '<img src="'+p.thumbnail+'?t='+Date.now()+'" style="width:100%;height:60px;object-fit:cover;border-radius:3px;margin-bottom:6px;border:1px solid var(--border);">' : '';
+      return '<div class="project-card '+(isActive?'active':'')+'" ondblclick="window._openProject(\''+p.id+'\')">'
+        + '<button class="pc-delete" onclick="event.stopPropagation();window._deleteProject(\''+p.id+'\')">&times;</button>'
+        + thumbHtml
+        + '<div class="pc-name">'+escHtml(p.name)+'</div>'
+        + '<div class="pc-scenes">'+p.scene_count+' scenes</div>'
+        + '<div class="pc-meta">'+escHtml((p.modified||p.created||'').replace('T',' '))+'</div>'
+        + '<button class="btn btn-small '+(isActive?'btn-green':'btn-amber')+'" style="margin-top:6px;width:100%;" onclick="event.stopPropagation();window._openProject(\''+p.id+'\')">'+(isActive?'Current':'Open')+'</button>'
+        + '</div>';
+    }).join('');
+  };
+
+  window._createProject = async function() {
+    const name = $('newProjectName').value.trim() || 'Untitled Project';
+    const data = await apiPost('/api/projects', { name });
+    if (data.ok) {
+      $('newProjectName').value = '';
+      // Auto-open the new project
+      await window._openProject(data.project.id);
+    }
+  };
+
+  window._openProject = async function(projectId) {
+    const data = await apiPost('/api/projects/' + projectId + '/load');
+    if (data.ok) {
+      window._closeProjectBrowser();
+      await loadManualScenes();
+      await refreshCost();
+      window._updateProjectLabel();
+    } else {
+      alert('Failed to open project: ' + (data.error || 'unknown'));
+    }
+  };
+
+  window._deleteProject = async function(projectId) {
+    if (!confirm('Delete this project? This cannot be undone.')) return;
+    await fetch('/api/projects/' + projectId, { method: 'DELETE' });
+    await window._loadProjects();
+    window._updateProjectLabel();
+  };
+
+  window._updateProjectLabel = async function() {
+    const data = await apiGet('/api/projects/current');
+    const label = $('currentProjectLabel');
+    if (data.current && data.current.name) {
+      label.textContent = '[ ' + data.current.name + ' ]';
+    } else {
+      label.textContent = '';
+    }
+  };
+
+  // Load project label on startup
+  window._updateProjectLabel();
+
+  // ===================== FEATURE 2+10: BATCH QUEUE =====================
+
+  let batchQueuePollTimer = null;
+
+  window._startBatchQueue = async function() {
+    // Save all prompts first
+    for (const s of manualScenes) {
+      const promptEl = document.getElementById('msc-prompt-' + s.id);
+      if (promptEl && promptEl.value !== s.prompt) {
+        await window._manualUpdateScene(s.id, { prompt: promptEl.value });
+      }
+    }
+    const data = await apiPost('/api/manual/generate-queue');
+    if (!data.ok) { alert('Error: ' + (data.error || 'failed')); return; }
+    // Show render grid overlay
+    $('renderGridOverlay').classList.add('open');
+    batchQueuePollTimer = setInterval(window._pollBatchQueue, 1500);
+    window._pollBatchQueue();
+  };
+
+  window._pollBatchQueue = async function() {
+    const data = await apiGet('/api/manual/queue-status');
+    const grid = $('renderGrid');
+    const progress = $('renderGridProgress');
+    const eta = $('renderGridEta');
+    const fill = $('renderGridFill');
+
+    const total = data.total || 0;
+    const completed = data.completed || 0;
+    const failed = data.failed || 0;
+    const done = completed + failed;
+
+    progress.textContent = completed + ' / ' + total + ' scenes complete' + (failed ? ' (' + failed + ' failed)' : '');
+    fill.style.width = (total > 0 ? Math.round((done / total) * 100) : 0) + '%';
+
+    // ETA calculation
+    if (data.active && completed > 0 && data.elapsed > 0) {
+      const avgTime = data.elapsed / completed;
+      const remaining = (total - done) * avgTime;
+      const mins = Math.floor(remaining / 60);
+      const secs = Math.round(remaining % 60);
+      eta.textContent = 'Estimated: ~' + mins + 'm ' + secs + 's remaining';
+    } else if (!data.active) {
+      eta.textContent = data.failed > 0 ? 'Complete (with ' + data.failed + ' failures)' : 'Complete';
+    } else {
+      eta.textContent = 'Estimating...';
+    }
+
+    // Render grid cells
+    const scenes = data.scenes || [];
+    grid.innerHTML = scenes.map((s, i) => {
+      let cls = 'queued';
+      let icon = '&#9203;'; // hourglass
+      if (s.status === 'done') { cls = 'done'; icon = '&#9989;'; }
+      else if (s.status.startsWith('failed')) { cls = 'failed'; icon = '&#10060;'; }
+      else if (s.status.startsWith('rendering')) { cls = 'rendering'; icon = '&#128260;'; }
+      return '<div class="render-cell '+cls+'">'
+        + '<div class="rc-num">'+icon+' #'+(s.index+1)+'</div>'
+        + '<div class="rc-status">'+escHtml(s.status.substring(0,25))+'</div>'
+        + (s.elapsed > 0 ? '<div class="rc-elapsed">'+Math.round(s.elapsed)+'s</div>' : '')
+        + '</div>';
+    }).join('');
+
+    // Stop polling when done
+    if (!data.active) {
+      clearInterval(batchQueuePollTimer);
+      batchQueuePollTimer = null;
+      await loadManualScenes();
+    }
+  };
+
+  window._cancelBatchQueue = async function() {
+    await apiPost('/api/manual/cancel-queue');
+  };
+
+  window._closeRenderGrid = function() {
+    $('renderGridOverlay').classList.remove('open');
+    if (batchQueuePollTimer) { clearInterval(batchQueuePollTimer); batchQueuePollTimer = null; }
+  };
+
+  // ===================== FEATURE 3: AUDIO WAVEFORM =====================
+
+  let waveformData = null;
+  let waveformDuration = 0;
+  let waveformBeats = [];
+
+  async function loadWaveform() {
+    const data = await apiPost('/api/audio/waveform');
+    if (!data.ok || !data.waveform || !data.waveform.length) return;
+    waveformData = data.waveform;
+    waveformDuration = data.duration || 0;
+    waveformBeats = data.beats || [];
+    const container = $('waveformContainer');
+    container.classList.remove('hidden');
+    drawWaveform();
+  }
+
+  function drawWaveform() {
+    const canvas = $('waveformCanvas');
+    if (!canvas || !waveformData) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.parentElement.clientWidth;
+    const h = 60;
+    canvas.width = w;
+    canvas.height = h;
+    ctx.clearRect(0, 0, w, h);
+
+    // Draw waveform bars
+    const barWidth = w / waveformData.length;
+    ctx.fillStyle = '#00d4ff44';
+    for (let i = 0; i < waveformData.length; i++) {
+      const val = waveformData[i];
+      const barH = val * h * 0.9;
+      const x = i * barWidth;
+      ctx.fillRect(x, (h - barH) / 2, Math.max(barWidth - 0.5, 1), barH);
+    }
+
+    // Draw beat markers
+    if (waveformDuration > 0) {
+      ctx.strokeStyle = 'rgba(255,170,0,0.3)';
+      ctx.lineWidth = 1;
+      for (const beat of waveformBeats) {
+        const x = (beat / waveformDuration) * w;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
+      }
+
+      // Draw scene overlays
+      if (manualScenes.length) {
+        let runningTime = 0;
+        for (const s of manualScenes) {
+          const dur = s.duration || 8;
+          const startX = (runningTime / waveformDuration) * w;
+          const sceneW = (dur / waveformDuration) * w;
+          ctx.fillStyle = s.clip_exists ? 'rgba(0,255,136,0.12)' : 'rgba(255,170,0,0.08)';
+          ctx.fillRect(startX, 0, sceneW, h);
+          ctx.strokeStyle = 'rgba(0,212,255,0.4)';
+          ctx.strokeRect(startX, 0, sceneW, h);
+          runningTime += dur;
+        }
+      }
+    }
+  }
+
+  window._waveformClick = function(e) {
+    if (!waveformDuration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const pct = x / rect.width;
+    const timePos = pct * waveformDuration;
+    // Find which scene this corresponds to
+    let runningTime = 0;
+    for (let i = 0; i < manualScenes.length; i++) {
+      const dur = manualScenes[i].duration || 8;
+      if (timePos >= runningTime && timePos < runningTime + dur) {
+        const el = document.getElementById('msc-' + manualScenes[i].id);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        break;
+      }
+      runningTime += dur;
+    }
+  };
+
+  // Reload waveform when audio is uploaded
+  const _origUploadManualAudio = uploadManualAudio;
+  uploadManualAudio = async function(file) {
+    await _origUploadManualAudio(file);
+    setTimeout(loadWaveform, 1000);
+  };
+
+  // Try loading waveform on page load
+  setTimeout(loadWaveform, 2000);
+
+  // ===================== FEATURE 4: COMPARE TAKES =====================
+
+  let _compareSceneId = null;
+
+  window._compareTakes = async function(sceneId) {
+    _compareSceneId = sceneId;
+    const data = await apiGet('/api/manual/scene/' + sceneId + '/takes');
+    const takes = data.takes || [];
+    const scene = manualScenes.find(s => s.id === sceneId);
+
+    // Set current clip
+    const vidA = $('compareVideoA');
+    if (scene && scene.clip_url) {
+      vidA.src = scene.clip_url + '?t=' + Date.now();
+    }
+
+    // Set previous take or first take
+    const vidB = $('compareVideoB');
+    if (takes.length > 0) {
+      const lastTake = takes[takes.length - 1];
+      if (lastTake.clip_url) vidB.src = lastTake.clip_url + '?t=' + Date.now();
+    } else if (scene && scene.previous_clip_url) {
+      vidB.src = scene.previous_clip_url + '?t=' + Date.now();
+    }
+
+    // Build take list
+    const takeList = $('takeList');
+    takeList.innerHTML = takes.map(t =>
+      '<button class="take-btn" onclick="window._selectTake(\''+sceneId+'\', '+t.take_num+', \''+escHtml(t.clip_url||'')+'\')">Take '+t.take_num+'</button>'
+    ).join('');
+
+    // Wire up keep buttons
+    $('keepLeftBtn').onclick = function() { window._closeModal('compareModal'); };
+    $('keepRightBtn').onclick = async function() {
+      const activeBtn = takeList.querySelector('.take-btn.active');
+      if (activeBtn) {
+        const takeNum = parseInt(activeBtn.textContent.replace('Take ',''));
+        await apiPost('/api/manual/scene/' + sceneId + '/select-take', { take_num: takeNum });
+        await loadManualScenes();
+      }
+      window._closeModal('compareModal');
+    };
+
+    $('compareModal').classList.add('open');
+    // Play both simultaneously
+    setTimeout(() => { vidA.play(); vidB.play(); }, 300);
+  };
+
+  window._selectTake = function(sceneId, takeNum, clipUrl) {
+    const vidB = $('compareVideoB');
+    if (clipUrl) vidB.src = clipUrl + '?t=' + Date.now();
+    // Highlight active take
+    $('takeList').querySelectorAll('.take-btn').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+    setTimeout(() => { $('compareVideoA').play(); vidB.play(); }, 100);
+  };
+
+  // ===================== FEATURE 5: QUICK PREVIEW =====================
+
+  window._quickPreview = async function(sceneId) {
+    const statusEl = document.getElementById('msc-status-' + sceneId);
+    if (statusEl) { statusEl.textContent = 'PREVIEWING...'; statusEl.style.color = 'var(--amber)'; }
+    const data = await apiPost('/api/manual/scene/' + sceneId + '/quick-preview');
+    if (data.ok && data.preview_url) {
+      const previewEl = document.getElementById('quick-preview-' + sceneId);
+      if (previewEl) {
+        previewEl.innerHTML = '<img class="msc-preview-thumb" src="'+data.preview_url+'?t='+Date.now()+'" alt="Preview" onclick="window.open(\''+data.preview_url+'\',\'_blank\')">';
+      }
+      if (statusEl) { statusEl.textContent = 'PREVIEW OK'; statusEl.style.color = 'var(--green)'; }
+    } else {
+      if (statusEl) { statusEl.textContent = data.error || 'FAILED'; statusEl.style.color = 'var(--red)'; }
+    }
+  };
+
+  // ===================== FEATURE 7: FULLSCREEN PROMPT EDITOR =====================
+
+  let _promptEditorSceneId = null;
+
+  window._openPromptEditor = function(sceneId) {
+    _promptEditorSceneId = sceneId;
+    const promptEl = document.getElementById('msc-prompt-' + sceneId);
+    const textarea = $('promptEditorTextarea');
+    textarea.value = promptEl ? promptEl.value : '';
+    $('promptEditorCharCount').textContent = textarea.value.length + ' chars';
+    textarea.oninput = function() {
+      $('promptEditorCharCount').textContent = this.value.length + ' chars';
+    };
+    $('promptEditorOverlay').classList.add('open');
+    setTimeout(() => textarea.focus(), 100);
+  };
+
+  window._closePromptEditor = function() {
+    $('promptEditorOverlay').classList.remove('open');
+    _promptEditorSceneId = null;
+  };
+
+  window._savePromptEditor = function() {
+    if (!_promptEditorSceneId) return;
+    const textarea = $('promptEditorTextarea');
+    const promptEl = document.getElementById('msc-prompt-' + _promptEditorSceneId);
+    if (promptEl) promptEl.value = textarea.value;
+    window._manualUpdateScene(_promptEditorSceneId, { prompt: textarea.value });
+    window._closePromptEditor();
+  };
+
+  window._promptEditorInsertChar = async function() {
+    const data = await apiGet('/api/pos/characters');
+    const chars = data.characters || [];
+    if (!chars.length) { alert('No characters defined in Prompt OS.'); return; }
+    const names = chars.map(c => c.name);
+    const pick = prompt('Insert character:\n' + names.join('\n') + '\n\nType name:', names[0]);
+    if (!pick) return;
+    const char = chars.find(c => c.name.toLowerCase() === pick.toLowerCase());
+    if (char) {
+      const desc = [char.physical, char.hair, char.skinTone].filter(Boolean).join(', ');
+      const textarea = $('promptEditorTextarea');
+      textarea.value += ' ' + (desc || char.name);
+      textarea.oninput();
+    }
+  };
+
+  window._promptEditorInsertEnv = async function() {
+    const data = await apiGet('/api/pos/environments');
+    const envs = data.environments || [];
+    if (!envs.length) { alert('No environments defined in Prompt OS.'); return; }
+    const names = envs.map(e => e.name);
+    const pick = prompt('Insert environment:\n' + names.join('\n') + '\n\nType name:', names[0]);
+    if (!pick) return;
+    const env = envs.find(e => e.name.toLowerCase() === pick.toLowerCase());
+    if (env) {
+      const desc = [env.description, env.lighting, env.atmosphere].filter(Boolean).join(', ');
+      const textarea = $('promptEditorTextarea');
+      textarea.value += ' ' + (desc || env.name);
+      textarea.oninput();
+    }
+  };
+
+  window._promptEditorEnhance = async function() {
+    const textarea = $('promptEditorTextarea');
+    if (!textarea.value.trim()) { alert('Write a prompt first.'); return; }
+    const data = await apiPost('/api/enhance-prompt', { prompt: textarea.value });
+    if (data.enhanced) { textarea.value = data.enhanced; textarea.oninput(); }
+  };
+
+  // Close prompt editor on Escape
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && $('promptEditorOverlay').classList.contains('open')) {
+      window._closePromptEditor();
+    }
+  });
+
+  // ===================== FEATURE 8: PROMINENT COST DISPLAY =====================
+
+  const _origRefreshCost = refreshCost;
+  refreshCost = async function() {
+    const data = await apiGet('/api/cost');
+    const total = data.total_cost || 0;
+    const budget = data.budget || 10;
+    const costVal = $('costValue');
+    costVal.textContent = '$' + total.toFixed(2);
+
+    // Update budget display
+    const budgetDisp = $('budgetDisplay');
+    if (budgetDisp) budgetDisp.textContent = '$' + budget.toFixed(2);
+
+    // Update progress bar
+    const pct = budget > 0 ? Math.min(100, (total / budget) * 100) : 0;
+    const fill = $('costProgressFill');
+    if (fill) {
+      fill.style.width = pct + '%';
+      fill.className = 'cost-progress-fill';
+      if (pct >= 80) fill.classList.add('danger');
+      else if (pct >= 50) fill.classList.add('warning');
+    }
+
+    if (total >= budget) {
+      costVal.classList.add('over-budget');
+    } else {
+      costVal.classList.remove('over-budget');
+    }
+    window._sceneCosts = data.scene_costs || {};
+  };
+
+  window._showCostBreakdown = async function() {
+    const data = await apiGet('/api/cost');
+    const content = $('costBreakdownContent');
+    const total = data.total_cost || 0;
+    const budget = data.budget || 10;
+    const videoCost = (data.video_generations || 0) * 0.15;
+    const imageCost = (data.image_generations || 0) * 0.02;
+
+    content.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
+        <div class="stat-box"><div class="val" style="font-size:18px;">$${total.toFixed(2)}</div><div class="lbl">Total Cost</div></div>
+        <div class="stat-box"><div class="val" style="font-size:18px;">$${budget.toFixed(2)}</div><div class="lbl">Budget</div></div>
+        <div class="stat-box"><div class="val" style="font-size:16px;">${data.video_generations||0}</div><div class="lbl">Videos ($${videoCost.toFixed(2)})</div></div>
+        <div class="stat-box"><div class="val" style="font-size:16px;">${data.image_generations||0}</div><div class="lbl">Images ($${imageCost.toFixed(2)})</div></div>
+      </div>
+      <div class="progress-bar-track"><div class="progress-bar-fill" style="width:${Math.min(100,(total/budget)*100)}%;"></div></div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">${Math.round((total/budget)*100)}% of budget used</div>
+    `;
+    $('budgetInput').value = budget;
+    $('costBreakdownModal').classList.add('open');
+  };
+
+  window._updateBudget = async function() {
+    const budget = parseFloat($('budgetInput').value) || 10;
+    await apiPost('/api/cost/budget', { budget });
+    await refreshCost();
+    window._closeModal('costBreakdownModal');
   };
 
   // ===================== INIT =====================
