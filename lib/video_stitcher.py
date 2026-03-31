@@ -62,14 +62,43 @@ AUDIO_VIZ_STYLES = ["waveform", "spectrum", "both"]
 
 # ---- Supported transition types ----
 TRANSITION_TYPES = [
+    # Basic
     "crossfade",    # xfade=transition=fade
     "hard_cut",     # instant concat, no filter
     "fade_black",   # fade out + black gap + fade in
+    "dissolve",     # xfade=transition=dissolve (longer duration)
+    # Directional
     "wipe_left",    # xfade=transition=wipeleft
     "wipe_right",   # xfade=transition=wiperight
-    "dissolve",     # xfade=transition=dissolve (longer duration)
+    "slide_left",   # xfade=transition=slideleft
+    "slide_right",  # xfade=transition=slideright
+    "slide_up",     # xfade=transition=slideup
+    "slide_down",   # xfade=transition=slidedown
+    # Creative
     "zoom_in",      # xfade=transition=zoomin
     "glitch",       # rapid 0.1s alternating cuts
+    "rotate",       # xfade=transition=circleopen
+    "blur_transition",  # xfade=transition=smoothleft
+    "flash_white",  # xfade=transition=fadewhite
+    "flash_black",  # xfade=transition=fadeblack
+    "pixelate",     # xfade=transition=pixelize
+    "squeeze",      # xfade=transition=squeezeh
+    "circular_reveal",  # xfade=transition=circleopen
+]
+
+# ---- Scene effect presets (applied per-clip before stitching) ----
+SCENE_EFFECTS = [
+    "none",
+    "film_grain",
+    "vignette",
+    "shake",
+    "strobe",
+    "mirror",
+    "tilt_shift",
+    "old_film",
+    "glitch_effect",
+    "dream",
+    "night_vision",
 ]
 
 
@@ -122,6 +151,17 @@ def _get_xfade_name(transition: str) -> str | None:
         "wipe_right": "wiperight",
         "dissolve": "dissolve",
         "zoom_in": "zoomin",
+        "slide_left": "slideleft",
+        "slide_right": "slideright",
+        "slide_up": "slideup",
+        "slide_down": "slidedown",
+        "rotate": "circleopen",
+        "blur_transition": "smoothleft",
+        "flash_white": "fadewhite",
+        "flash_black": "fadeblack",
+        "pixelate": "pixelize",
+        "squeeze": "squeezeh",
+        "circular_reveal": "circleopen",
     }
     return mapping.get(transition)
 
@@ -138,8 +178,10 @@ def _get_transition_duration(transition: str, base_crossfade: float,
     """
     if transition == "dissolve":
         return min(base_crossfade * 2.0, 2.0)  # slower dissolve
-    if transition in ("hard_cut", "glitch", "fade_black"):
+    if transition in ("hard_cut", "glitch"):
         return 0.0  # these don't use xfade
+    if transition in ("flash_white", "flash_black"):
+        return min(base_crossfade * 0.8, 0.6)  # quick flash
 
     # Area 4 item 7: Vary crossfade based on clip length
     if clip_duration > 0:
@@ -243,6 +285,93 @@ def _apply_reverse(clip_path: str, output_dir: str, index: int,
         if progress_cb:
             progress_cb(f"reverse failed for clip {index}, using original")
         return clip_path
+
+
+def apply_effect(input_path: str, output_path: str, effect_name: str,
+                 intensity: float = 0.5) -> str:
+    """
+    Apply a visual effect to a video clip using ffmpeg filters.
+
+    Args:
+        input_path: source video clip
+        output_path: destination video
+        effect_name: one of SCENE_EFFECTS
+        intensity: 0.1 to 1.0 (controls effect strength)
+
+    Returns:
+        path to the output video with effect applied
+    """
+    _check_ffmpeg()
+
+    if not effect_name or effect_name == "none":
+        import shutil
+        shutil.copy2(input_path, output_path)
+        return output_path
+
+    if not os.path.isfile(input_path):
+        raise FileNotFoundError(f"Clip not found: {input_path}")
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
+    intensity = max(0.1, min(1.0, intensity))
+
+    # Build filter based on effect name
+    noise_str = int(20 * intensity)
+    blur_sigma = 2 + intensity * 4
+    brightness = 0.03 + intensity * 0.07
+    shake_px = int(5 + intensity * 15)
+
+    effect_filters = {
+        "film_grain": f"noise=alls={noise_str}:allf=t",
+        "vignette": f"vignette=PI/{max(2, int(6 - intensity * 4))}",
+        "shake": f"crop=iw-{shake_px}:ih-{shake_px}:{shake_px//2}+random(0)*{shake_px//2}:{shake_px//2}+random(0)*{shake_px//2}",
+        "strobe": f"eq=brightness=0.15*sin(2*PI*t*{4 + intensity * 8}):eval=frame",
+        "mirror": "crop=iw/2:ih:0:0,split[l][r];[r]hflip[rr];[l][rr]hstack",
+        "tilt_shift": f"split[a][b];[a]crop=iw:ih*0.4:0:ih*0.3[center];[b]boxblur={int(4 + intensity * 8)}[blurred];[blurred][center]overlay=0:(H-h)/2",
+        "old_film": f"colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131,noise=alls={int(15 + intensity * 20)}:allf=t,eq=contrast=1.1:brightness=-0.02",
+        "glitch_effect": f"rgbashift=rh=-{int(3 + intensity * 7)}:bh={int(3 + intensity * 7)},noise=alls={int(5 + intensity * 10)}",
+        "dream": f"gblur=sigma={blur_sigma:.1f},eq=brightness={brightness:.2f}:saturation={1.0 + intensity * 0.3:.1f}",
+        "night_vision": f"colorchannelmixer=0:1:0:0:0:1:0:0:0:1:0,noise=alls={int(10 + intensity * 10)},vignette",
+    }
+
+    vf = effect_filters.get(effect_name)
+    if not vf:
+        import shutil
+        shutil.copy2(input_path, output_path)
+        return output_path
+
+    # Some effects use filter_complex (mirror, tilt_shift), others use -vf
+    uses_filter_complex = effect_name in ("mirror", "tilt_shift")
+
+    if uses_filter_complex:
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_path,
+            "-filter_complex", vf,
+            "-an",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            output_path,
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_path,
+            "-vf", vf,
+            "-an",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            output_path,
+        ]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+    except subprocess.CalledProcessError:
+        # Fallback: copy original if effect fails
+        import shutil
+        shutil.copy2(input_path, output_path)
+
+    return output_path
 
 
 def apply_audio_crossfade(clips_audio_segments: list, output_path: str,
@@ -1827,13 +1956,12 @@ def reverse_clip(input_path: str, output_path: str) -> str:
 
 def boomerang_clip(input_path: str, output_path: str) -> str:
     """Create a boomerang (forward + reverse) clip."""
-    import tempfile
-    rev_path = tempfile.mktemp(suffix="_rev.mp4")
+    import tempfile as _tempfile
+    rev_path = _tempfile.mktemp(suffix="_rev.mp4")
+    list_path = _tempfile.mktemp(suffix="_list.txt")
     try:
         reverse_clip(input_path, rev_path)
-        # Concat original + reversed
-        list_path = tempfile.mktemp(suffix="_list.txt")
-        with open(list_path, "w") as f:
+        with open(list_path, "w", encoding="utf-8") as f:
             f.write(f"file '{os.path.abspath(input_path)}'\n")
             f.write(f"file '{os.path.abspath(rev_path)}'\n")
         cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
@@ -1842,117 +1970,11 @@ def boomerang_clip(input_path: str, output_path: str) -> str:
         return output_path
     finally:
         for p in [rev_path, list_path]:
-            try: os.unlink(p)
-            except: pass
-
-
-# ---- GIF Export (Roadmap Item 34) ----
-
-def export_gif(input_path: str, output_path: str, max_width: int = 480,
-               max_duration: float = 10.0) -> str:
-    """Export a video clip as an animated GIF."""
-    import tempfile
-    palette = tempfile.mktemp(suffix="_palette.png")
-    try:
-        # Generate palette
-        cmd1 = ["ffmpeg", "-y", "-t", str(max_duration), "-i", input_path,
-                "-vf", f"fps=12,scale={max_width}:-1:flags=lanczos,palettegen",
-                palette]
-        subprocess.run(cmd1, check=True, capture_output=True, **_subprocess_kwargs())
-        # Create GIF with palette
-        cmd2 = ["ffmpeg", "-y", "-t", str(max_duration), "-i", input_path,
-                "-i", palette,
-                "-lavfi", f"fps=12,scale={max_width}:-1:flags=lanczos[x];[x][1:v]paletteuse",
-                output_path]
-        subprocess.run(cmd2, check=True, capture_output=True, **_subprocess_kwargs())
-        return output_path
-    finally:
-        try: os.unlink(palette)
-        except: pass
-
-
-# ---- Audio Ducking (Roadmap Item 20) ----
-
-def apply_audio_ducking(video_path: str, output_path: str,
-                        duck_segments: list, duck_level: float = 0.3) -> str:
-    """Apply volume ducking to segments where vocals exist.
-    duck_segments: [{start_sec, end_sec}]
-    duck_level: 0.0 = silent, 1.0 = full volume (default 0.3 = 30%)
-    """
-    if not duck_segments:
-        import shutil
-        shutil.copy2(video_path, output_path)
-        return output_path
-    
-    # Build volume filter with enable expressions
-    filters = []
-    for seg in duck_segments:
-        filters.append(
-            f"volume=enable='between(t,{seg['start_sec']},{seg['end_sec']})':volume={duck_level}"
-        )
-    filter_str = ",".join(filters)
-    
-    cmd = ["ffmpeg", "-y", "-i", video_path,
-           "-af", filter_str,
-           "-c:v", "copy", "-c:a", "aac", output_path]
-    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
-    return output_path
-
-
-# ---- Speed Ramp (Roadmap Item 16) ----
-
-def apply_speed_ramp(input_path: str, output_path: str, ramp_type: str = "slow_mid") -> str:
-    """Apply variable speed ramp to a clip.
-    ramp_types:
-        slow_in: starts slow, speeds up to normal
-        slow_out: normal speed, slows down at end
-        slow_mid: normal, slow in middle, normal at end
-    """
-    ramp_filters = {
-        # setpts with if/then expressions for speed ramps
-        "slow_in": "setpts='if(lt(T,1),2*PTS,PTS+1)'",
-        "slow_out": "setpts='if(gt(T,DURATION-1),2*PTS-DURATION+1,PTS)'", 
-        "slow_mid": "setpts='if(between(T,DURATION*0.3,DURATION*0.7),1.5*PTS,PTS)'",
-    }
-    filt = ramp_filters.get(ramp_type, ramp_filters["slow_mid"])
-    cmd = ["ffmpeg", "-y", "-i", input_path, "-vf", filt,
-           "-c:v", "libx264", "-an", output_path]
-    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
-    return output_path
-
-
-# ---- Audio Crossfade Between Scenes (Roadmap Item 19) ----
-
-def apply_audio_crossfade(clips: list, output_path: str, crossfade_sec: float = 0.5) -> str:
-    """Apply audio crossfade between adjacent clips during concat."""
-    if len(clips) < 2:
-        import shutil
-        shutil.copy2(clips[0], output_path)
-        return output_path
-    
-    # Build complex filter for audio crossfade
-    inputs = " ".join(f"-i {c}" for c in clips)
-    n = len(clips)
-    # Simple approach: concat with audio crossfade via acrossfade
-    filter_parts = []
-    for i in range(n - 1):
-        if i == 0:
-            filter_parts.append(f"[{i}:a][{i+1}:a]acrossfade=d={crossfade_sec}[a{i}]")
-        else:
-            filter_parts.append(f"[a{i-1}][{i+1}:a]acrossfade=d={crossfade_sec}[a{i}]")
-    
-    # This gets complex for many clips — simpler to just concat
-    # For now, use concat with short crossfade
-    list_path = output_path + ".txt"
-    with open(list_path, "w") as f:
-        for c in clips:
-            f.write(f"file '{os.path.abspath(c)}'\n")
-    cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
-           "-c:v", "libx264", "-c:a", "aac", output_path]
-    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
-    try: os.unlink(list_path)
-    except: pass
-    return output_path
+            if os.path.isfile(p):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
 
 
 # ---- Picture-in-Picture (Roadmap Item 14) ----

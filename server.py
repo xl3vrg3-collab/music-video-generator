@@ -66,6 +66,7 @@ from lib.video_stitcher import (
     align_scenes_to_beats, overlay_scene_vocals, add_beat_cuts_to_stitch,
     _apply_speed_ramp, _apply_reverse, apply_audio_crossfade, SPEED_RAMP_TYPES,
     apply_loop_boomerang, apply_audio_ducking, export_gif,
+    apply_effect, reverse_clip, boomerang_clip, SCENE_EFFECTS,
 )
 from lib.prompt_assistant import (
     STYLE_PRESETS, get_preset, enhance_prompt, suggest_from_song_name,
@@ -224,7 +225,7 @@ def _record_prompt_history(prompt: str, scene_index: int = -1):
     # Keep last 100 entries
     history["prompts"] = history["prompts"][:100]
 
-    with open(PROMPT_HISTORY_PATH, "w") as f:
+    with open(PROMPT_HISTORY_PATH, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2)
 
 
@@ -1140,7 +1141,22 @@ def _run_manual_stitch():
         reversed_clips = [s.get("reversed", False) for s in plan["scenes"]]
         audio_crossfade_dur = plan.get("audio_crossfade", 0.0)
 
-        stitch(clip_paths, audio, output_path,
+        # Apply per-scene effects before stitching
+        processed_clip_paths = list(clip_paths)
+        for idx, s in enumerate(plan["scenes"]):
+            effect_name = s.get("effect", "none")
+            if effect_name and effect_name != "none" and idx < len(processed_clip_paths):
+                cp = processed_clip_paths[idx]
+                if cp and os.path.isfile(cp):
+                    intensity = s.get("effect_intensity", 0.5)
+                    effect_out = os.path.join(MANUAL_CLIPS_DIR, f"_fx_{s.get('id', idx)}_{effect_name}.mp4")
+                    try:
+                        apply_effect(cp, effect_out, effect_name, intensity=intensity)
+                        processed_clip_paths[idx] = effect_out
+                    except Exception as e:
+                        print(f"[STITCH] Effect {effect_name} failed for scene {idx}: {e}")
+
+        stitch(processed_clip_paths, audio, output_path,
                transitions=transitions,
                speeds=speeds,
                text_overlays=text_overlays,
@@ -1675,18 +1691,8 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r'^/api/manual/scene/([^/]+)/previous-clip$', path)
             self._handle_get_previous_clip(m.group(1))
 
-        elif path == "/api/prompt-history":
-            self._handle_prompt_history()
-
         elif path == "/api/estimate-render":
             self._handle_estimate_render_time()
-
-        elif path == "/api/project/autosave":
-            autosave_path = os.path.join(OUTPUT_DIR, "autosave.json")
-            if os.path.isfile(autosave_path):
-                self._send_file(autosave_path, "application/json")
-            else:
-                self._send_json({"exists": False})
 
         elif path.startswith("/output/gifs/"):
             filename = os.path.basename(path)
@@ -2032,49 +2038,6 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/manual/scene/([^/]+)/reverse$', path):
             m = re.match(r'^/api/manual/scene/([^/]+)/reverse$', path)
             self._handle_reverse_clip(m.group(1))
-
-        # Roadmap: Boomerang clip
-        elif re.match(r'^/api/manual/scene/([^/]+)/boomerang$', path):
-            m = re.match(r'^/api/manual/scene/([^/]+)/boomerang$', path)
-            self._handle_boomerang_clip(m.group(1))
-
-        # Roadmap: Export GIF
-        elif re.match(r'^/api/manual/scene/([^/]+)/export-gif$', path):
-            m = re.match(r'^/api/manual/scene/([^/]+)/export-gif$', path)
-            self._handle_export_gif(m.group(1))
-
-        # Roadmap: Color palette from photo
-        elif re.match(r'^/api/manual/scene/([^/]+)/palette$', path):
-            m = re.match(r'^/api/manual/scene/([^/]+)/palette$', path)
-            self._handle_get_palette(m.group(1))
-
-        # Roadmap: Prompt history
-        elif path == "/api/prompt-history":
-            self._handle_prompt_history()
-
-        # Roadmap: Star a prompt
-        elif path == "/api/prompt-history/star":
-            self._handle_star_prompt()
-
-        # Roadmap: Style mixing
-        elif path == "/api/mix-styles":
-            self._handle_mix_styles()
-
-        # Roadmap: Emotion detection from lyrics
-        elif path == "/api/detect-emotion":
-            self._handle_detect_emotion()
-
-        # Roadmap: Auto-save
-        elif path == "/api/project/autosave":
-            self._handle_autosave()
-
-        # Roadmap: Style mixing
-        elif path == "/api/mix-styles":
-            self._handle_mix_styles()
-
-        # Roadmap: Emotion detection
-        elif path == "/api/detect-emotion":
-            self._handle_detect_emotion()
 
         # Roadmap: QR code
         elif path == "/api/qr-code":
@@ -2654,6 +2617,9 @@ class Handler(BaseHTTPRequestHandler):
             entry["vocal_volume"] = s.get("vocal_volume", 80)
             # Item 18: Loop/boomerang state
             entry["loop"] = s.get("loop", False)
+            # Scene effects
+            entry["effect"] = s.get("effect", "none")
+            entry["effect_intensity"] = s.get("effect_intensity", 0.5)
             # Item 46: Previous clip for comparison
             prev_clip = s.get("previous_clip_path", "")
             entry["has_previous_clip"] = bool(prev_clip and os.path.isfile(prev_clip))
@@ -2780,6 +2746,13 @@ class Handler(BaseHTTPRequestHandler):
                         s["speed_ramp"] = ramp
                 if "loop" in params:
                     s["loop"] = bool(params["loop"])
+                if "effect" in params:
+                    s["effect"] = params["effect"]
+                if "effect_intensity" in params:
+                    try:
+                        s["effect_intensity"] = max(0.1, min(1.0, float(params["effect_intensity"])))
+                    except (ValueError, TypeError):
+                        s["effect_intensity"] = 0.5
                 _save_manual_plan(plan)
                 self._send_json({"ok": True, "scene": s})
                 return
@@ -5154,88 +5127,14 @@ class Handler(BaseHTTPRequestHandler):
         plan = _load_manual_plan()
         for s in plan.get("scenes", []):
             if s.get("id") == scene_id and s.get("clip_path") and os.path.isfile(s["clip_path"]):
-                from lib.video_stitcher import reverse_clip
                 rev_path = s["clip_path"].replace(".mp4", "_rev.mp4")
                 reverse_clip(s["clip_path"], rev_path)
-                os.replace(rev_path, s["clip_path"])  # overwrite original
+                os.replace(rev_path, s["clip_path"])
                 s["reversed"] = not s.get("reversed", False)
                 _save_manual_plan(plan)
                 self._send_json({"ok": True, "reversed": s["reversed"]})
                 return
         self._send_json({"ok": False, "error": "Scene or clip not found"})
-
-    def _handle_boomerang_clip(self, scene_id):
-        plan = _load_manual_plan()
-        for s in plan.get("scenes", []):
-            if s.get("id") == scene_id and s.get("clip_path") and os.path.isfile(s["clip_path"]):
-                from lib.video_stitcher import boomerang_clip
-                boom_path = s["clip_path"].replace(".mp4", "_boom.mp4")
-                boomerang_clip(s["clip_path"], boom_path)
-                os.replace(boom_path, s["clip_path"])
-                s["boomerang"] = True
-                _save_manual_plan(plan)
-                self._send_json({"ok": True})
-                return
-        self._send_json({"ok": False, "error": "Scene or clip not found"})
-
-    def _handle_export_gif(self, scene_id):
-        plan = _load_manual_plan()
-        for s in plan.get("scenes", []):
-            if s.get("id") == scene_id and s.get("clip_path") and os.path.isfile(s["clip_path"]):
-                from lib.video_stitcher import export_gif
-                gif_dir = os.path.join(OUTPUT_DIR, "gifs")
-                os.makedirs(gif_dir, exist_ok=True)
-                gif_path = os.path.join(gif_dir, f"scene_{scene_id}.gif")
-                export_gif(s["clip_path"], gif_path)
-                self._send_json({"ok": True, "gif_url": f"/output/gifs/scene_{scene_id}.gif"})
-                return
-        self._send_json({"ok": False, "error": "Scene or clip not found"})
-
-    def _handle_get_palette(self, scene_id):
-        plan = _load_manual_plan()
-        for s in plan.get("scenes", []):
-            if s.get("id") == scene_id:
-                photo = s.get("photo_path") or (s.get("photo_paths", [None])[0])
-                if photo and os.path.isfile(photo):
-                    from lib.prompt_assistant import extract_palette, suggest_grade_from_palette
-                    colors = extract_palette(photo)
-                    grade = suggest_grade_from_palette(colors)
-                    self._send_json({"ok": True, "palette": colors, "suggested_grade": grade})
-                    return
-                self._send_json({"ok": False, "error": "No photo found"})
-                return
-        self._send_json({"ok": False, "error": "Scene not found"})
-
-    def _handle_prompt_history(self):
-        history_path = os.path.join(OUTPUT_DIR, "prompt_history.json")
-        if os.path.isfile(history_path):
-            data = json.loads(open(history_path, encoding="utf-8").read())
-        else:
-            data = {"prompts": [], "favorites": []}
-        self._send_json(data)
-
-    def _handle_star_prompt(self):
-        body = self._read_body()
-        params = json.loads(body) if body else {}
-        prompt = params.get("prompt", "")
-        history_path = os.path.join(OUTPUT_DIR, "prompt_history.json")
-        if os.path.isfile(history_path):
-            data = json.loads(open(history_path, encoding="utf-8").read())
-        else:
-            data = {"prompts": [], "favorites": []}
-        if prompt and prompt not in data["favorites"]:
-            data["favorites"].append(prompt)
-        with open(history_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        self._send_json({"ok": True})
-
-    def _handle_autosave(self):
-        body = self._read_body()
-        autosave_path = os.path.join(OUTPUT_DIR, "autosave.json")
-        with open(autosave_path, "w", encoding="utf-8") as f:
-            f.write(body.decode("utf-8") if isinstance(body, bytes) else body)
-        self._send_json({"ok": True})
-
 
     def _handle_estimate_render_time(self):
         """Estimate total render time based on scenes and engines."""
@@ -5540,13 +5439,13 @@ class Handler(BaseHTTPRequestHandler):
         # Reset generation state
         with gen_lock:
             gen_state["running"] = False
-            gen_state["phase"] = ""
-            gen_state["progress"] = 0
+            gen_state["phase"] = "idle"
+            gen_state["progress"] = []
             gen_state["total_scenes"] = 0
             gen_state["error"] = None
             gen_state["output_file"] = None
             gen_state["analysis"] = None
-            gen_state["scenes"] = []
+            gen_state["scenes"] = None
 
         print(f"[RESET] Full project reset. Cleared: {', '.join(cleared)}")
         self._send_json({"ok": True, "cleared": cleared})

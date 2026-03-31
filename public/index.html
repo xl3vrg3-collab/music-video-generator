@@ -2780,7 +2780,13 @@
   let editorScenes = [];
   let selectedPreset = null;
   let gen_state_cache = null;
-  const TRANSITION_TYPES = ['crossfade','hard_cut','fade_black','wipe_left','wipe_right','dissolve','zoom_in','glitch'];
+  const TRANSITION_TYPES = ['crossfade','hard_cut','fade_black','dissolve','wipe_left','wipe_right','slide_left','slide_right','slide_up','slide_down','zoom_in','glitch','rotate','blur_transition','flash_white','flash_black','pixelate','squeeze','circular_reveal'];
+  const TRANSITION_GROUPS = {
+    'Basic': ['crossfade','hard_cut','fade_black','dissolve'],
+    'Directional': ['wipe_left','wipe_right','slide_left','slide_right','slide_up','slide_down'],
+    'Creative': ['zoom_in','glitch','rotate','blur_transition','flash_white','flash_black','pixelate','squeeze','circular_reveal'],
+  };
+  const SCENE_EFFECTS = ['none','film_grain','vignette','shake','strobe','mirror','tilt_shift','old_film','glitch_effect','dream','night_vision'];
 
   const PRESET_COLORS = {
     cyberpunk: 'linear-gradient(135deg, #7b2ff7, #00d4ff)',
@@ -3109,11 +3115,15 @@
         </div>`;
       }
 
-      const transOptions = ['auto'].concat(TRANSITION_TYPES).map(t => {
-        const sel = (t === currentTrans) ? 'selected' : '';
-        const label = t === 'auto' ? 'Auto' : t.replace(/_/g, ' ');
-        return `<option value="${t}" ${sel}>${label}</option>`;
-      }).join('');
+      let transOptions = `<option value="auto" ${currentTrans === 'auto' ? 'selected' : ''}>Auto</option>`;
+      Object.entries(TRANSITION_GROUPS).forEach(([group, types]) => {
+        transOptions += `<optgroup label="${group}">`;
+        types.forEach(t => {
+          const sel = (t === currentTrans) ? 'selected' : '';
+          transOptions += `<option value="${t}" ${sel}>${t.replace(/_/g, ' ')}</option>`;
+        });
+        transOptions += `</optgroup>`;
+      });
 
       html += `
         <div class="se-scene" data-index="${i}" id="se-scene-${i}">
@@ -3313,7 +3323,7 @@
   let availableEngines = [];
   let globalSettings = { default_engine: 'grok', character_references: {} };
 
-  const MANUAL_TRANSITIONS = ['crossfade','hard_cut','fade_black','wipe_left','wipe_right','dissolve','zoom_in','glitch'];
+  const MANUAL_TRANSITIONS = TRANSITION_TYPES;
   const COLOR_GRADES = ['none','warm','cold','vintage','high_contrast','noir','cyberpunk','sepia'];
   const OVERLAY_POSITIONS = ['top','center','bottom'];
   const OVERLAY_SIZES = ['small','medium','large'];
@@ -3593,9 +3603,11 @@
           <div class="transition-controls" id="trans-ctrl-${s.id}">
             <span class="msc-label">Transition:</span>
             <select class="styled-select" onchange="window._manualUpdateScene('${s.id}', {transition: this.value}); window._refreshTransitionLabel('${s.id}', this.value);">
-              ${MANUAL_TRANSITIONS.map(t => {
-                const sel = (t === (s.transition || 'crossfade')) ? 'selected' : '';
-                return `<option value="${t}" ${sel}>${t.replace(/_/g, ' ')}</option>`;
+              ${Object.entries(TRANSITION_GROUPS).map(([group, types]) => {
+                return '<optgroup label="' + group + '">' + types.map(t => {
+                  const sel = (t === (s.transition || 'crossfade')) ? 'selected' : '';
+                  return '<option value="' + t + '" ' + sel + '>' + t.replace(/_/g, ' ') + '</option>';
+                }).join('') + '</optgroup>';
               }).join('')}
             </select>
             ${bothHaveClips ? `<button class="btn btn-small" onclick="window._previewTransition('${prevScene.id}', '${s.id}', this)">Preview</button>` : `<span class="msc-grok-note">Both scenes need clips for preview</span>`}
@@ -3685,6 +3697,23 @@
                     <option value="slow_out" ${s.speed_ramp==='slow_out'?'selected':''}>Slow Out</option>
                     <option value="slow_mid" ${s.speed_ramp==='slow_mid'?'selected':''}>Slow Mid</option>
                   </select>
+                </div>
+                <div class="msc-control-item">
+                  <span class="msc-label">Effect:</span>
+                  <select class="styled-select" style="flex:1;" onchange="window._manualUpdateScene('${s.id}', {effect: this.value})">
+                    ${SCENE_EFFECTS.map(e => {
+                      const sel = (e === (s.effect || 'none')) ? 'selected' : '';
+                      return '<option value="' + e + '" ' + sel + '>' + e.replace(/_/g, ' ') + '</option>';
+                    }).join('')}
+                  </select>
+                </div>
+                <div class="msc-control-item">
+                  <span class="msc-label">FX Int:</span>
+                  <div class="slider-group" style="flex:1;">
+                    <input type="range" class="styled-slider magenta-slider" min="10" max="100" step="5" value="${Math.round((s.effect_intensity || 0.5) * 100)}"
+                           oninput="this.nextElementSibling.textContent=this.value+'%'" onchange="window._manualUpdateScene('${s.id}', {effect_intensity: parseFloat(this.value)/100})" style="flex:1;">
+                    <span class="slider-val magenta">${Math.round((s.effect_intensity || 0.5) * 100)}%</span>
+                  </div>
                 </div>
               </div>
             </div>

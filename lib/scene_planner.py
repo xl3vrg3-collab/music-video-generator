@@ -11,14 +11,28 @@ import random
 
 # ---- Transition types ----
 TRANSITION_TYPES = [
+    # Basic
     "crossfade",    # xfade=transition=fade (default)
     "hard_cut",     # instant cut, no filter
     "fade_black",   # fade to black, then fade in
+    "dissolve",     # like crossfade but slower duration
+    # Directional
     "wipe_left",    # horizontal wipe left
     "wipe_right",   # horizontal wipe right
-    "dissolve",     # like crossfade but slower duration
+    "slide_left",   # next scene slides in from right
+    "slide_right",  # next scene slides in from left
+    "slide_up",     # next scene slides up from bottom
+    "slide_down",   # next scene slides down from top
+    # Creative
     "zoom_in",      # zoom into center, next scene zooms out
     "glitch",       # rapid 0.1s alternating cuts (cyberpunk)
+    "rotate",       # rotational transition (circleopen)
+    "blur_transition",  # blur out, blur in (smoothleft)
+    "flash_white",  # quick flash to white
+    "flash_black",  # quick flash to black
+    "pixelate",     # pixelate out, pixelate in
+    "squeeze",      # squeeze horizontally
+    "circular_reveal",  # circular wipe from center
 ]
 
 # Auto-assign transitions based on section flow (from_type -> to_type)
