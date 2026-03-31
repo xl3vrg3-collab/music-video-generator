@@ -2274,6 +2274,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/auto-director/plan":
             self._handle_auto_director_plan()
 
+        elif path == "/api/auto-director/ai-plan":
+            self._handle_auto_director_ai_plan()
+
         elif path == "/api/auto-director/generate":
             self._handle_auto_director_generate()
 
@@ -6003,6 +6006,75 @@ class Handler(BaseHTTPRequestHandler):
 
             self._send_json({"ok": True, "plan": plan})
         except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_auto_director_ai_plan(self):
+        """Plan a full video via AI Story Planner (LLM-driven)."""
+        body = json.loads(self._read_body())
+        lyrics = body.get("lyrics", "")
+        creative_direction = body.get("creative_direction", body.get("style", "cinematic"))
+        engine = body.get("engine", "grok")
+        preset_id = body.get("preset_id")
+        natural_pacing = body.get("natural_pacing", True)
+        budget = body.get("budget")
+
+        # Get song path
+        song_path = body.get("song_path")
+        if not song_path:
+            plan = _load_manual_plan()
+            song_path = plan.get("song_path")
+        if not song_path or not os.path.isfile(song_path):
+            audio_files = []
+            for f in os.listdir(UPLOADS_DIR):
+                if f.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac')):
+                    fp = os.path.join(UPLOADS_DIR, f)
+                    audio_files.append((os.path.getmtime(fp), fp, f))
+            if audio_files:
+                audio_files.sort(reverse=True)
+                song_path = audio_files[0][1]
+                print(f"[AI PLANNER] Using most recent song: {audio_files[0][2]}")
+
+        if not song_path or not os.path.isfile(song_path):
+            self._send_json({"error": "No song uploaded. Upload a song first."}, 400)
+            return
+
+        # Resolve characters and environments
+        char_ids = body.get("character_ids", [])
+        env_ids = body.get("environment_ids", [])
+
+        characters = []
+        for cid in char_ids:
+            c = _prompt_os.get_character(cid)
+            if c:
+                characters.append(c)
+
+        environments = []
+        for eid in env_ids:
+            e = _prompt_os.get_environment(eid)
+            if e:
+                environments.append(e)
+
+        try:
+            plan = _auto_director.plan_with_ai(
+                song_path=song_path,
+                creative_direction=creative_direction,
+                lyrics=lyrics,
+                characters=characters,
+                environments=environments,
+                engine=engine,
+                natural_pacing=natural_pacing,
+                preset_id=preset_id,
+                budget=budget,
+            )
+
+            # Save plan (same path so generate/to-manual work)
+            with open(AUTO_DIRECTOR_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
+
+            self._send_json({"ok": True, "plan": plan})
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
             self._send_json({"error": str(e)}, 500)
 
     def _handle_auto_director_generate(self):

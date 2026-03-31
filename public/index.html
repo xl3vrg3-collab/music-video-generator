@@ -2195,10 +2195,24 @@
           <div id="adPresetDesc" style="color:var(--text-dim);font-size:11px;margin-top:4px;"></div>
         </div>
 
-        <!-- Step 2.5: Storyline -->
+        <!-- Step 2.5: Lyrics -->
         <div style="margin-bottom:18px;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-            <span style="background:#7c5cff;color:#fff;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">✎</span>
+            <span style="background:#7c5cff;color:#fff;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">&#9835;</span>
+            <span style="color:var(--text);font-weight:600;font-size:13px;letter-spacing:1px;">LYRICS</span>
+            <span style="color:var(--text-dim);font-size:10px;">(optional — paste song lyrics for AI planning)</span>
+          </div>
+          <textarea class="styled-input" id="adLyricsInput" rows="4" placeholder="Paste your song lyrics here. The AI planner will match scene emotions and story beats to specific lyrics at each timestamp..."
+            style="width:100%;resize:vertical;font-size:12px;line-height:1.5;font-family:monospace;"></textarea>
+          <div style="color:var(--text-dim);font-size:10px;margin-top:4px;">
+            When lyrics are provided, AI planning creates scenes that match the emotional arc of the song.
+          </div>
+        </div>
+
+        <!-- Step 2.6: Storyline / Creative Direction -->
+        <div style="margin-bottom:18px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="background:#7c5cff;color:#fff;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">&#10000;</span>
             <span style="color:var(--text);font-weight:600;font-size:13px;letter-spacing:1px;">STORYLINE</span>
             <span style="color:var(--text-dim);font-size:10px;">(optional — tells AI what story to tell)</span>
           </div>
@@ -2206,6 +2220,20 @@
             style="width:100%;resize:vertical;font-size:12px;line-height:1.5;"></textarea>
           <div style="color:var(--text-dim);font-size:10px;margin-top:4px;">
             Describe the narrative arc. The AI will distribute story beats across scenes to create a coherent video, not random clips.
+          </div>
+        </div>
+
+        <!-- Planning Mode Toggle -->
+        <div style="margin-bottom:18px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="color:var(--text);font-weight:600;font-size:13px;letter-spacing:1px;">PLANNING MODE</span>
+          </div>
+          <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;width:fit-content;">
+            <button id="adModeTemplate" onclick="window._adSetPlanMode('template')" style="padding:6px 16px;font-size:11px;font-weight:600;border:none;cursor:pointer;background:var(--surface);color:var(--text-dim);transition:all 0.2s;">Template Plan</button>
+            <button id="adModeAI" onclick="window._adSetPlanMode('ai')" style="padding:6px 16px;font-size:11px;font-weight:600;border:none;border-left:1px solid var(--border);cursor:pointer;background:#7c5cff;color:#fff;transition:all 0.2s;">AI Plan</button>
+          </div>
+          <div id="adPlanModeDesc" style="color:var(--text-dim);font-size:10px;margin-top:4px;">
+            AI Plan: LLM creates a coherent storyline from lyrics + direction (~$0.003 per plan via Grok)
           </div>
         </div>
 
@@ -2267,6 +2295,7 @@
           <button class="btn" id="adPlanBtn" onclick="window._adPlanVideo()" style="background:#7c5cff;border-color:#7c5cff;font-size:14px;padding:10px 28px;letter-spacing:2px;">PLAN VIDEO</button>
           <button class="btn" id="adGenerateBtn" onclick="window._adGenerateVideo()" style="background:linear-gradient(135deg,#7c5cff,#ff5ca0);border-color:#7c5cff;font-size:14px;padding:10px 28px;letter-spacing:2px;display:none;">GENERATE MUSIC VIDEO</button>
           <button class="btn btn-small" id="adToManualBtn" onclick="window._adToManual()" style="display:none;">Edit in Manual Mode</button>
+          <span id="adPlanMethodBadge" style="display:none;font-size:10px;padding:3px 8px;border-radius:3px;font-weight:600;"></span>
         </div>
       </div>
     </div>
@@ -6583,16 +6612,41 @@
   let _adCurrentPlan = null;
   let _adPollTimer = null;
   let _adSongPath = null;
+  let _adPlanMode = 'ai'; // 'template' or 'ai'
+
+  // Planning mode toggle
+  window._adSetPlanMode = function(mode) {
+    _adPlanMode = mode;
+    var tmplBtn = $('adModeTemplate');
+    var aiBtn = $('adModeAI');
+    var desc = $('adPlanModeDesc');
+    if (mode === 'template') {
+      tmplBtn.style.background = '#7c5cff';
+      tmplBtn.style.color = '#fff';
+      aiBtn.style.background = 'var(--surface)';
+      aiBtn.style.color = 'var(--text-dim)';
+      desc.textContent = 'Template Plan: Fast, no API cost. Uses energy-based templates to assign scenes.';
+    } else {
+      aiBtn.style.background = '#7c5cff';
+      aiBtn.style.color = '#fff';
+      tmplBtn.style.background = 'var(--surface)';
+      tmplBtn.style.color = 'var(--text-dim)';
+      desc.textContent = 'AI Plan: LLM creates a coherent storyline from lyrics + direction (~$0.003 per plan via Grok)';
+    }
+    window._adSaveState();
+  };
 
   window._adInit = function() {
     // Load saved Director state from settings
     fetch('/api/settings').then(r=>r.json()).then(settings => {
       var ds = settings.director_state || {};
       if (ds.style && $('adStyleInput')) $('adStyleInput').value = ds.style;
+      if (ds.lyrics && $('adLyricsInput')) $('adLyricsInput').value = ds.lyrics;
       if (ds.storyline && $('adStorylineInput')) $('adStorylineInput').value = ds.storyline;
       if (ds.engine && $('adEngineSelect')) $('adEngineSelect').value = ds.engine;
       if (ds.preset && $('adPresetSelect')) $('adPresetSelect').value = ds.preset;
       if (ds.songName && $('adSongLabel')) $('adSongLabel').textContent = ds.songName;
+      if (ds.planMode) window._adSetPlanMode(ds.planMode);
     }).catch(()=>{});
     // Load any existing plan
     fetch('/api/auto-director/plan').then(r=>r.json()).then(data => {
@@ -6607,16 +6661,18 @@
   window._adSaveState = function() {
     var state = {
       style: $('adStyleInput') ? $('adStyleInput').value : '',
+      lyrics: $('adLyricsInput') ? $('adLyricsInput').value : '',
       storyline: $('adStorylineInput') ? $('adStorylineInput').value : '',
       engine: $('adEngineSelect') ? $('adEngineSelect').value : '',
       preset: $('adPresetSelect') ? $('adPresetSelect').value : '',
       songName: $('adSongLabel') ? $('adSongLabel').textContent : '',
+      planMode: _adPlanMode,
     };
     fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({director_state: state})}).catch(()=>{});
   };
   // Auto-save on input changes
-  ['adStyleInput','adStorylineInput'].forEach(function(id) {
+  ['adStyleInput','adLyricsInput','adStorylineInput'].forEach(function(id) {
     var el = document.getElementById(id);
     if (el) el.addEventListener('change', window._adSaveState);
   });
@@ -6738,28 +6794,37 @@
   // Plan video
   window._adPlanVideo = async function() {
     const style = $('adStyleInput').value || 'cinematic';
+    const lyrics = $('adLyricsInput') ? $('adLyricsInput').value : '';
     const storyline = $('adStorylineInput') ? $('adStorylineInput').value : '';
     const engine = $('adEngineSelect').value || 'grok';
     const presetId = $('adPresetSelect').value || null;
     const budget = parseFloat($('adBudgetInput').value) || 12.0;
 
+    // Determine planning method
+    const useAI = _adPlanMode === 'ai';
+    const endpoint = useAI ? '/api/auto-director/ai-plan' : '/api/auto-director/plan';
+
     $('adPlanBtn').disabled = true;
-    $('adPlanBtn').textContent = 'Planning...';
+    $('adPlanBtn').textContent = useAI ? 'AI Planning...' : 'Planning...';
 
     try {
-      const res = await fetch('/api/auto-director/plan', {
+      const bodyData = {
+        style: style,
+        creative_direction: style + (storyline ? '. ' + storyline : ''),
+        lyrics: lyrics,
+        storyline: storyline,
+        engine: engine,
+        preset_id: presetId,
+        natural_pacing: true,
+        budget: budget,
+        character_ids: _adSelectedChars.map(c => c.id),
+        environment_ids: _adSelectedEnvs.map(e => e.id),
+      };
+
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          style: style,
-          storyline: storyline,
-          engine: engine,
-          preset_id: presetId,
-          natural_pacing: true,
-          budget: budget,
-          character_ids: _adSelectedChars.map(c => c.id),
-          environment_ids: _adSelectedEnvs.map(e => e.id),
-        }),
+        body: JSON.stringify(bodyData),
       });
       const data = await res.json();
       if (data.error) {
@@ -6768,6 +6833,23 @@
       }
       _adCurrentPlan = data.plan;
       _adRenderScenePlan(data.plan);
+
+      // Show planning method badge
+      var badge = $('adPlanMethodBadge');
+      if (badge) {
+        var method = (data.plan && data.plan.planning_method) || (useAI ? 'ai' : 'template');
+        badge.style.display = '';
+        if (method === 'ai') {
+          badge.textContent = 'AI PLANNED';
+          badge.style.background = 'linear-gradient(135deg,#7c5cff,#ff5ca0)';
+          badge.style.color = '#fff';
+        } else {
+          badge.textContent = 'TEMPLATE';
+          badge.style.background = 'var(--surface)';
+          badge.style.color = 'var(--text-dim)';
+          badge.style.border = '1px solid var(--border)';
+        }
+      }
 
       // Show generate button
       $('adGenerateBtn').style.display = '';
@@ -6796,12 +6878,19 @@
 
     grid.innerHTML = plan.scenes.map((s, i) => {
       const col = sectionColors[s.section_type] || '#888';
+      const isAI = s.planning_method === 'ai';
       return `
         <div style="background:var(--bg);border:1px solid var(--border);border-left:3px solid ${col};border-radius:var(--radius);padding:10px;font-size:11px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
             <span style="font-weight:700;color:var(--text);">Scene ${i+1}</span>
-            <span style="background:${col}22;color:${col};padding:1px 6px;border-radius:3px;font-size:9px;text-transform:uppercase;font-weight:600;">${escHtml(s.section_type)}</span>
+            <div style="display:flex;gap:4px;align-items:center;">
+              ${isAI ? '<span style="background:linear-gradient(135deg,#7c5cff44,#ff5ca044);color:#c09cff;padding:1px 5px;border-radius:3px;font-size:8px;font-weight:600;">AI</span>' : ''}
+              <span style="background:${col}22;color:${col};padding:1px 6px;border-radius:3px;font-size:9px;text-transform:uppercase;font-weight:600;">${escHtml(s.section_type)}</span>
+            </div>
           </div>
+          ${s.ai_story_beat ? `<div style="color:#c09cff;font-size:10px;font-style:italic;margin-bottom:2px;">${escHtml(s.ai_story_beat.substring(0,80))}${s.ai_story_beat.length>80?'...':''}</div>` : ''}
+          ${s.ai_emotion ? `<div style="color:var(--amber);font-size:9px;margin-bottom:2px;">Mood: ${escHtml(s.ai_emotion)}</div>` : ''}
+          ${s.ai_lyrics ? `<div style="color:var(--text-dim);font-size:9px;font-style:italic;margin-bottom:2px;opacity:0.7;">"${escHtml(s.ai_lyrics.substring(0,60))}${s.ai_lyrics.length>60?'...':''}"</div>` : ''}
           ${s.characterName ? `<div style="color:var(--cyan);font-size:10px;">Character: ${escHtml(s.characterName)}</div>` : ''}
           ${s.environmentName ? `<div style="color:var(--amber);font-size:10px;">Env: ${escHtml(s.environmentName)}</div>` : ''}
           ${s.costumeName ? `<div style="color:var(--magenta);font-size:10px;">Costume: ${escHtml(s.costumeName)}</div>` : ''}

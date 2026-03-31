@@ -22,6 +22,7 @@ from lib.video_generator import (
 )
 from lib.video_stitcher import stitch
 from lib.prompt_os import PromptOS
+from lib.story_planner import StoryPlanner
 
 # ---- Workflow Presets ----
 
@@ -421,6 +422,263 @@ class AutoDirector:
             "total_time_min": total_time_min,
             "engine": engine,
         }
+
+    # ---- AI Story Planning ----
+
+    def plan_with_ai(self, song_path: str, creative_direction: str,
+                      lyrics: str = "", characters=None, environments=None,
+                      engine="grok", natural_pacing=True, preset_id=None,
+                      budget=None) -> dict:
+        """
+        Plan a full music video using LLM-driven story planning.
+
+        1. Analyzes audio to get sections/beats/energy
+        2. Calls StoryPlanner to get AI-generated scene prompts from lyrics + direction
+        3. Maps AI suggestions to character/environment IDs
+        4. Falls back to template planning if AI fails
+        5. Returns the same plan format as plan_full_video()
+        """
+        characters = characters or []
+        environments = environments or []
+
+        # Load preset settings
+        preset_settings = None
+        if preset_id and preset_id in WORKFLOW_PRESETS:
+            preset_settings = WORKFLOW_PRESETS[preset_id]["settings"]
+
+        # 1. Analyze audio
+        analysis = analyze(song_path)
+        sections = analysis.get("sections", [])
+        beats = analysis.get("beats", [])
+        bpm = analysis.get("bpm", 120)
+        duration = analysis.get("duration", 180)
+
+        if not sections:
+            sections = [
+                {"start": 0, "end": duration * 0.1, "type": "intro", "energy": 0.3},
+                {"start": duration * 0.1, "end": duration * 0.4, "type": "verse", "energy": 0.5},
+                {"start": duration * 0.4, "end": duration * 0.6, "type": "chorus", "energy": 0.8},
+                {"start": duration * 0.6, "end": duration * 0.75, "type": "verse", "energy": 0.5},
+                {"start": duration * 0.75, "end": duration * 0.9, "type": "chorus", "energy": 0.9},
+                {"start": duration * 0.9, "end": duration, "type": "outro", "energy": 0.3},
+            ]
+
+        num_scenes = len(sections)
+
+        # 2. Call AI Story Planner
+        ai_scenes = None
+        ai_error = None
+        try:
+            planner = StoryPlanner()
+            ai_scenes = planner.plan_story(
+                lyrics=lyrics,
+                creative_direction=creative_direction,
+                num_scenes=num_scenes,
+                characters=characters,
+                environments=environments,
+                section_info=sections,
+            )
+        except Exception as e:
+            ai_error = str(e)
+            print(f"[AI PLANNER] Failed, falling back to template: {e}")
+
+        # 3. If AI failed, fall back to template planning
+        if not ai_scenes:
+            return self.plan_full_video(
+                song_path=song_path, style=creative_direction,
+                characters=characters, environments=environments,
+                engine=engine, natural_pacing=natural_pacing,
+                preset_id=preset_id, budget=budget,
+                storyline="",
+            )
+
+        # 4. Build scene plan from AI output, mapping to our format
+        # Build name->object lookup maps for characters and environments
+        char_by_name = {}
+        for c in characters:
+            char_by_name[c.get("name", "").lower()] = c
+        env_by_name = {}
+        for e in environments:
+            env_by_name[e.get("name", "").lower()] = e
+
+        scenes = []
+        for i, ai_scene in enumerate(ai_scenes):
+            section = sections[i] if i < len(sections) else sections[-1]
+            stype = section.get("type", "verse")
+            energy = section.get("energy", 0.5)
+            start = section["start"]
+            end = section["end"]
+
+            # Map AI character suggestion to actual character object
+            ai_char_name = ai_scene.get("character")
+            char = None
+            if ai_char_name:
+                char = char_by_name.get(ai_char_name.lower())
+                # Fuzzy match: try partial name match
+                if not char:
+                    for cname, cobj in char_by_name.items():
+                        if ai_char_name.lower() in cname or cname in ai_char_name.lower():
+                            char = cobj
+                            break
+            # Fallback: if AI didn't suggest, use template assignment logic
+            if not char and characters:
+                temp_assignments = self.assign_characters_to_sections(characters, [section])
+                char = temp_assignments[0]
+
+            # Map AI environment suggestion to actual environment object
+            ai_env_name = ai_scene.get("environment")
+            env = None
+            if ai_env_name:
+                env = env_by_name.get(ai_env_name.lower())
+                if not env:
+                    for ename, eobj in env_by_name.items():
+                        if ai_env_name.lower() in ename or ename in ai_env_name.lower():
+                            env = eobj
+                            break
+            if not env and environments:
+                temp_assignments = self.assign_environments_to_sections(environments, [section])
+                env = temp_assignments[0]
+
+            # Costume lookup
+            costume = None
+            if char:
+                char_costumes = self.pos.get_costumes(char.get("id"))
+                if char_costumes:
+                    costume = char_costumes[0]
+
+            # Duration
+            if natural_pacing:
+                clip_dur = _pick_natural_duration(stype, energy, beats=beats, start=start, end=end)
+            else:
+                clip_dur = round(end - start, 3)
+            clip_dur = get_valid_duration(engine, int(clip_dur))
+
+            # Transition
+            if i == 0:
+                transition = "crossfade"
+            else:
+                prev_type = sections[i - 1].get("type", "verse") if i < len(sections) else "verse"
+                transition = auto_assign_transition(prev_type, stype)
+
+            if preset_settings:
+                trans_style = preset_settings.get("transition_style", "mixed")
+                if trans_style == "slow" and transition == "hard_cut":
+                    transition = "dissolve"
+                elif trans_style == "fast" and transition in ("dissolve", "fade_black"):
+                    transition = "hard_cut"
+
+            # Camera from AI or fallback
+            camera = ai_scene.get("camera", "static")
+            # Normalize camera to our known values
+            cam_map = {
+                "slow pan right": "pan_right", "pan right": "pan_right",
+                "slow pan left": "pan_left", "pan left": "pan_left",
+                "slow zoom in": "zoom_in", "slow zoom out": "zoom_out",
+                "tracking shot": "tracking", "track": "tracking",
+                "orbital": "orbit", "orbiting": "orbit",
+                "dolly": "tracking", "dolly in": "zoom_in",
+                "crane up": "zoom_out", "crane down": "zoom_in",
+                "handheld": "static", "steady": "static",
+            }
+            camera_lower = camera.lower().strip()
+            camera = cam_map.get(camera_lower, camera_lower)
+            # Validate against known cameras
+            valid_cams = {"zoom_in", "zoom_out", "pan_left", "pan_right", "orbit", "tracking", "static"}
+            if camera not in valid_cams:
+                cam_pool = SECTION_CAMERAS.get(stype, SECTION_CAMERAS["verse"])
+                camera = random.choice(cam_pool)
+
+            # Build prompt: use AI visual_prompt as the primary prompt
+            visual_prompt = ai_scene.get("visual_prompt", "")
+            story_beat = ai_scene.get("story_beat", "")
+            emotion = ai_scene.get("emotion", "")
+
+            # Enhance with entity descriptions if not already included
+            prompt_parts = [visual_prompt]
+            if char and char.get("description", char.get("physicalDescription", "")):
+                char_desc = char.get("description", char.get("physicalDescription", ""))
+                if char_desc.lower() not in visual_prompt.lower():
+                    prompt_parts.append(char_desc)
+            if costume and costume.get("description", ""):
+                costume_desc = costume["description"]
+                if costume_desc.lower() not in visual_prompt.lower():
+                    prompt_parts.append(f"wearing {costume_desc}")
+            if env and env.get("description", ""):
+                env_desc = env["description"]
+                if env_desc.lower() not in visual_prompt.lower():
+                    prompt_parts.append(f"in {env_desc}")
+            prompt_parts.append(QUALITY_SUFFIX)
+            prompt = ", ".join(p for p in prompt_parts if p)
+
+            # Character reference photo
+            char_photo = None
+            if char and char.get("referencePhoto"):
+                ref_photo = char["referencePhoto"]
+                if os.path.isfile(ref_photo):
+                    char_photo = ref_photo
+
+            scene = {
+                "id": f"ai_{i:03d}",
+                "index": i,
+                "start_sec": start,
+                "end_sec": end,
+                "duration": clip_dur,
+                "prompt": prompt,
+                "section_type": stype,
+                "energy": energy,
+                "transition": transition,
+                "camera_movement": camera,
+                "engine": engine,
+                "characterId": char["id"] if char else None,
+                "characterName": char["name"] if char else None,
+                "environmentId": env["id"] if env else None,
+                "environmentName": env["name"] if env else None,
+                "costumeId": costume["id"] if costume else None,
+                "costumeName": costume["name"] if costume else None,
+                "character_photo_path": char_photo,
+                "clip_path": None,
+                "has_clip": False,
+                "status": "planned",
+                "error": None,
+                # AI-specific metadata
+                "ai_story_beat": story_beat,
+                "ai_emotion": emotion,
+                "ai_lyrics": ai_scene.get("lyrics_at_this_point", ""),
+                "planning_method": "ai",
+            }
+            scenes.append(scene)
+
+        # 5. Coherence pass
+        scenes = coherence_pass(scenes)
+
+        # 6. Cost estimate
+        estimate = self.estimate_cost(len(scenes), engine)
+
+        plan = {
+            "song_path": song_path,
+            "style": creative_direction,
+            "lyrics": lyrics,
+            "engine": engine,
+            "preset_id": preset_id,
+            "planning_method": "ai",
+            "ai_error": ai_error,
+            "bpm": bpm,
+            "duration": duration,
+            "num_sections": len(sections),
+            "scenes": scenes,
+            "estimate": estimate,
+            "analysis": {
+                "bpm": bpm,
+                "duration": duration,
+                "num_beats": len(beats),
+                "sections": sections,
+            },
+            "characters": [{"id": c["id"], "name": c["name"]} for c in characters],
+            "environments": [{"id": e["id"], "name": e["name"]} for e in environments],
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+
+        return plan
 
     # ---- Full Video Planning ----
 
