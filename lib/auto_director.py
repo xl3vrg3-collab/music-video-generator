@@ -427,7 +427,8 @@ class AutoDirector:
     def plan_full_video(self, song_path: str, style: str,
                          characters=None, environments=None,
                          engine="gen4_5", natural_pacing=True,
-                         preset_id=None, budget=None) -> dict:
+                         preset_id=None, budget=None,
+                         storyline: str = "") -> dict:
         """
         Plan an entire music video automatically.
 
@@ -512,12 +513,29 @@ class AutoDirector:
             cam_pool = SECTION_CAMERAS.get(stype, SECTION_CAMERAS["verse"])
             camera = random.choice(cam_pool)
 
-            # Build prompt
+            # Build prompt with storyline beat
+            story_beat = ""
+            if storyline:
+                # Split storyline into beats distributed across scenes
+                story_sentences = [s.strip() for s in storyline.replace(". ", ".\n").split("\n") if s.strip()]
+                if story_sentences:
+                    beat_idx = min(i, len(story_sentences) - 1)
+                    # Distribute: map scene index to story sentence
+                    if len(sections) <= len(story_sentences):
+                        story_beat = story_sentences[beat_idx]
+                    else:
+                        # More scenes than sentences: repeat/distribute
+                        ratio = len(story_sentences) / len(sections)
+                        story_beat = story_sentences[int(i * ratio)]
+
             prompt = self.build_section_prompt(
                 character=char, costume=costume, environment=env,
                 style=style, energy=energy, section_type=stype,
                 preset_settings=preset_settings,
             )
+            # Append story beat to prompt
+            if story_beat:
+                prompt = f"{story_beat}. {prompt}"
 
             # Character reference photo
             char_photo = None

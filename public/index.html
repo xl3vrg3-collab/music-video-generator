@@ -2195,6 +2195,20 @@
           <div id="adPresetDesc" style="color:var(--text-dim);font-size:11px;margin-top:4px;"></div>
         </div>
 
+        <!-- Step 2.5: Storyline -->
+        <div style="margin-bottom:18px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="background:#7c5cff;color:#fff;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">✎</span>
+            <span style="color:var(--text);font-weight:600;font-size:13px;letter-spacing:1px;">STORYLINE</span>
+            <span style="color:var(--text-dim);font-size:10px;">(optional — tells AI what story to tell)</span>
+          </div>
+          <textarea class="styled-input" id="adStorylineInput" rows="3" placeholder="Example: The character walks through a rainy city at night, remembering lost love. As the chorus hits, they find strength and start running through the streets. The bridge shows flashbacks. The outro shows them standing on a rooftop at sunrise, at peace."
+            style="width:100%;resize:vertical;font-size:12px;line-height:1.5;"></textarea>
+          <div style="color:var(--text-dim);font-size:10px;margin-top:4px;">
+            Describe the narrative arc. The AI will distribute story beats across scenes to create a coherent video, not random clips.
+          </div>
+        </div>
+
         <!-- Step 3: Characters -->
         <div style="margin-bottom:18px;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
@@ -6693,6 +6707,7 @@
   // Plan video
   window._adPlanVideo = async function() {
     const style = $('adStyleInput').value || 'cinematic';
+    const storyline = $('adStorylineInput') ? $('adStorylineInput').value : '';
     const engine = $('adEngineSelect').value || 'grok';
     const presetId = $('adPresetSelect').value || null;
     const budget = parseFloat($('adBudgetInput').value) || 12.0;
@@ -6706,6 +6721,7 @@
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
           style: style,
+          storyline: storyline,
           engine: engine,
           preset_id: presetId,
           natural_pacing: true,

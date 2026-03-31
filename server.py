@@ -5979,6 +5979,7 @@ class Handler(BaseHTTPRequestHandler):
                 environments.append(e)
 
         try:
+            storyline = params.get("storyline", "")
             plan = _auto_director.plan_full_video(
                 song_path=song_path,
                 style=style,
@@ -5988,6 +5989,7 @@ class Handler(BaseHTTPRequestHandler):
                 natural_pacing=natural_pacing,
                 preset_id=preset_id,
                 budget=budget,
+                storyline=storyline,
             )
 
             # Save plan
