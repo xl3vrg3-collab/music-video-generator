@@ -3322,8 +3322,10 @@ class Handler(BaseHTTPRequestHandler):
                 settings["default_engine"] = engine
 
         if "character_references" in params:
-            # Expects dict like {"TB": "path/to/bear.jpg", "HERO": "path/to/hero.jpg"}
             settings["character_references"] = params["character_references"]
+
+        if "project_title" in params:
+            settings["project_title"] = params["project_title"]
 
         _save_settings(settings)
         self._send_json({"ok": True, "settings": settings})

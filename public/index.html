@@ -1524,7 +1524,17 @@
 
   <div class="header">
     <h1>Music Video Generator</h1>
-    <div class="sub">AI Video Synthesis Engine <span id="currentProjectLabel" style="color:var(--green);margin-left:8px;"></span></div>
+    <div class="sub" style="display:flex;align-items:center;gap:12px;">
+      <span>Project:</span>
+      <input type="text" id="projectTitleInput" placeholder="Untitled Project"
+        style="background:transparent;border:1px solid var(--border);color:var(--green);
+        padding:3px 8px;border-radius:3px;font-family:inherit;font-size:12px;width:200px;
+        letter-spacing:1px;"
+        onchange="window._saveProjectTitle(this.value)"
+        onfocus="this.style.borderColor='var(--green)'"
+        onblur="this.style.borderColor='var(--border)'">
+      <span id="currentProjectLabel" style="color:var(--text-dim);font-size:10px;"></span>
+    </div>
   </div>
 
   <!-- ============ TOOLBAR ============ -->
@@ -1559,9 +1569,8 @@
 
   <!-- Mode Toggle / Tab Bar -->
   <div class="mode-toggle">
-    <button class="mode-btn active" id="autoModeBtn" onclick="window._setMode('auto')">Auto</button>
+    <button class="mode-btn active" id="directorModeBtn" onclick="window._setMode('director')" style="background:linear-gradient(135deg,#7c5cff22,#ff5ca022);border-color:#7c5cff;">Director</button>
     <button class="mode-btn" id="manualModeBtn" onclick="window._setMode('manual')">Manual</button>
-    <button class="mode-btn" id="directorModeBtn" onclick="window._setMode('director')" style="background:linear-gradient(135deg,#7c5cff22,#ff5ca022);border-color:#7c5cff;">Director</button>
     <button class="mode-btn pos-tab" id="posPromptsBtn" onclick="window._setMode('pos-prompts')">Prompts</button>
     <button class="mode-btn pos-tab" id="posCharsBtn" onclick="window._setMode('pos-characters')">Characters</button>
     <button class="mode-btn pos-tab" id="posCostumesBtn" onclick="window._setMode('pos-costumes')">Costumes</button>
@@ -1570,8 +1579,8 @@
     <button class="mode-btn pos-tab" id="posOutputBtn" onclick="window._setMode('pos-output')">Output</button>
   </div>
 
-  <!-- ============ AUTO MODE ============ -->
-  <div id="autoModeContainer">
+  <!-- AUTO MODE REMOVED — Director replaces it -->
+  <div id="autoModeContainer" class="hidden" style="display:none!important">
 
   <!-- Upload Panel -->
   <div class="panel" id="uploadPanel">
@@ -3533,7 +3542,6 @@
 
   // All tab containers and buttons
   const _allTabContainers = {
-    'auto': autoModeContainer,
     'manual': manualModeContainer,
     'director': $('directorModeContainer'),
     'pos-prompts': $('posPromptsContainer'),
@@ -3544,7 +3552,6 @@
     'pos-output': $('posOutputContainer'),
   };
   const _allTabBtns = {
-    'auto': autoModeBtn,
     'manual': manualModeBtn,
     'director': $('directorModeBtn'),
     'pos-prompts': $('posPromptsBtn'),
@@ -6927,6 +6934,20 @@
       controlsArea.appendChild(envRow);
     });
   }
+
+  // Project title save/load
+  window._saveProjectTitle = async function(title) {
+    await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({project_title: title})});
+  };
+  // Load project title on init
+  fetch('/api/settings').then(r=>r.json()).then(d => {
+    const inp = $('projectTitleInput');
+    if (inp && d.project_title) inp.value = d.project_title;
+  }).catch(()=>{});
+
+  // Default to Director mode on page load
+  setTimeout(() => window._setMode('director'), 100);
 
   // Multi-character checkbox handler
   window._updateSceneCharacters = function(sceneId) {
