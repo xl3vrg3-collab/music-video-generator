@@ -1055,6 +1055,72 @@
   }
   .frames-grid img:hover { border-color: var(--cyan); transform: scale(1.05); }
 
+  /* ---- Toggle Icons (Part 3) ---- */
+  .toggle-icon {
+    display: inline-block; cursor: pointer; font-size: 16px;
+    padding: 4px 6px; border-radius: 3px; opacity: 0.4;
+    transition: all 0.2s; user-select: none;
+  }
+  .toggle-icon.active { opacity: 1; background: rgba(124,92,255,0.2); color: #7c5cff; }
+  .toggle-icon:hover { opacity: 0.8; }
+
+  /* ---- More Menu (Part 5) ---- */
+  .more-menu-btn {
+    background: none; border: 1px solid var(--border); color: var(--text-dim);
+    padding: 2px 8px; border-radius: 3px; cursor: pointer; font-size: 14px;
+    transition: all 0.2s;
+  }
+  .more-menu-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+  .more-menu-wrap { position: relative; display: inline-block; }
+  .more-menu {
+    position: absolute; right: 0; top: 100%; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 4px; z-index: 100;
+    min-width: 160px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); display: none;
+  }
+  .more-menu.open { display: block; }
+  .more-item {
+    padding: 8px 14px; font-size: 11px; cursor: pointer; color: var(--text);
+    transition: all 0.15s;
+  }
+  .more-item:hover { background: rgba(124,92,255,0.1); color: #7c5cff; }
+
+  /* ---- Scene Row (Compact controls, Part 2) ---- */
+  .scene-row {
+    display: flex; align-items: center; gap: 8px; font-size: 11px;
+    padding: 4px 0; flex-wrap: wrap;
+  }
+  .scene-row > label:first-child,
+  .scene-row > .row-label {
+    font-size: 10px; color: var(--amber); text-transform: uppercase;
+    letter-spacing: 1px; min-width: 50px; font-weight: 700; flex-shrink: 0;
+  }
+  .scene-row select { max-width: 160px; }
+  .scene-row .styled-slider { width: 80px; }
+  .scene-row .cb-label {
+    display: flex; align-items: center; gap: 4px; font-size: 10px;
+    color: var(--text-dim); cursor: pointer; white-space: nowrap;
+  }
+  .scene-row .cb-label input[type="checkbox"] { accent-color: #7c5cff; }
+
+  .scene-controls-area {
+    border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px;
+  }
+
+  /* ---- Compact Stitch Settings (Part 8) ---- */
+  .stitch-grid {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px 16px; align-items: center;
+  }
+  .stitch-grid .stitch-checkbox-label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 10px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 1px; cursor: pointer;
+  }
+  .stitch-grid .stitch-checkbox-label input[type="checkbox"] { accent-color: var(--cyan); }
+  .stitch-grid .stitch-inline {
+    display: flex; align-items: center; gap: 6px;
+  }
+
   /* ---- Footer ---- */
   .footer {
     text-align: center; padding: 30px 20px;
@@ -1214,6 +1280,7 @@
       grid-column: 1 / -1;
       flex-direction: row; flex-wrap: wrap;
     }
+    .stitch-grid { grid-template-columns: 1fr 1fr; }
   }
 
   @media (max-width: 768px) {
@@ -1224,7 +1291,8 @@
     .toolbar { gap: 4px; }
     .toolbar-sep { display: none; }
     .cost-tracker { top: auto; bottom: 12px; right: 12px; font-size: 10px; }
-    .stitch-settings-bar { flex-direction: column; align-items: flex-start; }
+    .stitch-grid { grid-template-columns: 1fr; }
+    .scene-row { flex-wrap: wrap; }
   }
 
   @media (max-width: 600px) {
@@ -1463,11 +1531,6 @@
     <div class="toolbar-group">
       <button class="btn-toolbar btn-tb-magenta" onclick="window._showAnalytics()" data-tooltip="Show project analytics">Analytics</button>
       <button class="btn-toolbar" onclick="window._showShortcuts()" data-tooltip="Keyboard shortcuts">?</button>
-    </div>
-    <div class="toolbar-sep"></div>
-    <div class="autosave-indicator" id="autosaveIndicator">
-      <span class="unsaved-dot"></span>
-      <span id="autosaveText">Saved</span>
     </div>
   </div>
 
@@ -1711,7 +1774,6 @@
           <span id="audioBpmDisplay" style="color:var(--cyan);font-size:12px;font-weight:700;">--</span>
           <button class="btn btn-small" onclick="window._detectKey()" data-tooltip="Detect musical key">Detect Key</button>
           <button class="btn btn-small btn-amber" onclick="window._alignToBeats()" data-tooltip="Snap scene boundaries to beats">Align to Beats</button>
-          <button class="btn btn-small" onclick="window._generateClickTrack()" data-tooltip="Generate metronome click track">Click Track</button>
           <button class="btn btn-small btn-magenta" onclick="window._autoMixMaster()" data-tooltip="Apply EQ/compression to audio">Auto-Mix</button>
         </div>
       </div>
@@ -1820,34 +1882,50 @@
         <span class="collapse-icon">&#9660;</span>
       </div>
       <div class="panel-body">
-        <div class="stitch-settings-bar" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">
-          <div class="stitch-setting-group">
-            <span class="msc-label">Default Engine:</span>
-            <select class="styled-select" id="globalEngineSelect" onchange="window._updateGlobalEngine(this.value)">
-              <optgroup label="─── xAI ───">
-                <option value="grok">Grok Video [$0.15, 30s]</option>
-              </optgroup>
-              <optgroup label="─── Runway ───">
-                <option value="gen4_5">Gen 4.5 (Best) 📸 [$0.10/5s, 3-4m]</option>
-                <option value="gen3a_turbo">Gen 3 Turbo (Fast) 📸 [$0.05/5s, 1-2m]</option>
-              </optgroup>
-              <optgroup label="─── Kling (via Runway) ───">
-                <option value="kling_pro">Kling 3.0 Pro 📸 [$0.08/5s, 2-3m]</option>
-                <option value="kling_standard">Kling 3.0 Standard 📸 [$0.04/5s, 1-2m]</option>
-              </optgroup>
-              <optgroup label="─── Google Veo (via Runway) ───">
-                <option value="veo3">Veo 3 📸 [$0.15/5s, 3-5m]</option>
-                <option value="veo3_1">Veo 3.1 (Latest) 📸 [$0.15/5s, 3-5m]</option>
-                <option value="veo3_1_fast">Veo 3.1 Fast 📸 [$0.08/5s, 1-2m]</option>
-              </optgroup>
-              <optgroup label="─── Other ───">
-                <option value="luma">Luma Ray2 📸 [$0.50/5s, 45s]</option>
-                <option value="openai">OpenAI GPT (Still Only) [$0.04, 10s]</option>
-              </optgroup>
-            </select>
-          </div>
-          <div class="stitch-setting-group">
-            <span class="msc-label">Color Grade:</span>
+        <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+          <span class="msc-label">Default Engine:</span>
+          <select class="styled-select" id="globalEngineSelect" onchange="window._updateGlobalEngine(this.value)">
+            <optgroup label="─── xAI ───">
+              <option value="grok">Grok Video [$0.15, 30s]</option>
+            </optgroup>
+            <optgroup label="─── Runway ───">
+              <option value="gen4_5">Gen 4.5 (Best) [$0.10/5s]</option>
+              <option value="gen3a_turbo">Gen 3 Turbo [$0.05/5s]</option>
+            </optgroup>
+            <optgroup label="─── Kling ───">
+              <option value="kling_pro">Kling 3.0 Pro [$0.08/5s]</option>
+              <option value="kling_standard">Kling 3.0 Std [$0.04/5s]</option>
+            </optgroup>
+            <optgroup label="─── Veo ───">
+              <option value="veo3">Veo 3 [$0.15/5s]</option>
+              <option value="veo3_1">Veo 3.1 [$0.15/5s]</option>
+              <option value="veo3_1_fast">Veo 3.1 Fast [$0.08/5s]</option>
+            </optgroup>
+            <optgroup label="─── Other ───">
+              <option value="luma">Luma Ray2 [$0.50/5s]</option>
+              <option value="openai">OpenAI GPT [$0.04]</option>
+            </optgroup>
+          </select>
+        </div>
+        <div class="stitch-grid">
+          <label class="stitch-checkbox-label">
+            <input type="checkbox" id="naturalPacingCheckbox" checked onchange="naturalPacingMode = this.checked; window._updateStitchSettings();">
+            Natural Pacing
+          </label>
+          <label class="stitch-checkbox-label">
+            <input type="checkbox" id="beatSyncCheckbox" onchange="window._updateStitchSettings()">
+            Beat Sync
+          </label>
+          <label class="stitch-checkbox-label">
+            <input type="checkbox" id="audioVizCheckbox" onchange="window._updateStitchSettings()">
+            Audio Viz
+          </label>
+          <label class="stitch-checkbox-label">
+            <input type="checkbox" id="autoDuckCheckbox" checked onchange="window._updateStitchSettings()">
+            Audio Ducking
+          </label>
+          <div class="stitch-inline">
+            <span class="msc-label">Color:</span>
             <select class="styled-select" id="globalColorGradeSelect" onchange="window._updateStitchSettings()">
               <option value="none">None</option>
               <option value="warm">Warm</option>
@@ -1859,54 +1937,23 @@
               <option value="sepia">Sepia</option>
             </select>
           </div>
-          <div class="stitch-setting-group">
-            <label class="stitch-checkbox-label">
-              <input type="checkbox" id="audioVizCheckbox" onchange="window._updateStitchSettings()">
-              Audio Viz
-            </label>
-            <select class="styled-select" id="audioVizStyleSelect" onchange="window._updateStitchSettings()">
-              <option value="waveform">Waveform</option>
-              <option value="spectrum">Spectrum</option>
-              <option value="both">Both</option>
+          <div class="stitch-inline">
+            <span class="msc-label">Crossfade:</span>
+            <select class="styled-select" id="audioCrossfadeSlider" onchange="window._updateStitchSettings()">
+              <option value="0">0s</option>
+              <option value="0.3">0.3s</option>
+              <option value="0.5" selected>0.5s</option>
+              <option value="1">1s</option>
+              <option value="1.5">1.5s</option>
+              <option value="2">2s</option>
             </select>
           </div>
-          <div class="stitch-setting-group">
-            <span class="msc-label">Crossfade:</span>
-            <div class="slider-group" style="flex:1;">
-              <input type="range" class="styled-slider" id="audioCrossfadeSlider" min="0" max="2" step="0.1" value="0"
-                     oninput="this.nextElementSibling.textContent=this.value+'s'" onchange="window._updateStitchSettings()">
-              <span class="slider-val" id="audioCrossfadeVal">0s</span>
-            </div>
-          </div>
-          <div class="stitch-setting-group">
-            <label class="stitch-checkbox-label">
-              <input type="checkbox" id="autoDuckCheckbox" onchange="window._updateStitchSettings()">
-              Auto Duck
-            </label>
-            <div class="slider-group" style="flex:1;">
-              <input type="range" class="styled-slider" id="duckLevelSlider" min="10" max="80" step="5" value="30"
-                     oninput="this.nextElementSibling.textContent=this.value+'%'" onchange="window._updateStitchSettings()">
-              <span class="slider-val" id="duckLevelVal">30%</span>
-            </div>
-          </div>
-          <div class="stitch-setting-group">
-            <label class="stitch-checkbox-label">
-              <input type="checkbox" id="beatSyncCheckbox" onchange="window._updateStitchSettings()">
-              Beat Sync
-            </label>
-          </div>
-          <div class="stitch-setting-group">
-            <label class="stitch-checkbox-label">
-              <input type="checkbox" id="continuityModeCheckbox" checked onchange="continuityMode = this.checked; window._updateStitchSettings();">
-              Continuity
-            </label>
-          </div>
-          <div class="stitch-setting-group">
-            <label class="stitch-checkbox-label">
-              <input type="checkbox" id="naturalPacingCheckbox" checked onchange="naturalPacingMode = this.checked; window._updateStitchSettings();">
-              Natural Pacing
-            </label>
-          </div>
+        </div>
+        <div style="display:none;">
+          <select id="audioVizStyleSelect"><option value="waveform">Waveform</option><option value="spectrum">Spectrum</option><option value="both">Both</option></select>
+          <input type="hidden" id="duckLevelSlider" value="30">
+          <span id="audioCrossfadeVal">0.5s</span>
+          <span id="duckLevelVal">30%</span>
         </div>
       </div>
     </div>
@@ -1970,8 +2017,6 @@
         </div>
         <div class="msc-label" style="margin-bottom:8px;">Extra</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
-          <button class="btn btn-small" onclick="window._generateQRCode()" data-tooltip="Generate QR code for video">QR Code</button>
-          <button class="btn btn-small" onclick="window._getEmbedCode()" data-tooltip="Get HTML embed snippet">Embed Code</button>
           <button class="btn btn-small btn-amber" onclick="window._exportStoryboardPdf()" data-tooltip="Export storyboard as printable HTML">Storyboard</button>
           <button class="btn btn-small btn-magenta" onclick="window._showVersions()" data-tooltip="View version history">Versions</button>
           <button class="btn btn-small btn-magenta" onclick="window._exportBestGifs()" data-tooltip="Export GIFs from top scenes">Best GIFs</button>
@@ -3504,11 +3549,8 @@
         if (acSlider) acSlider.value = data.audio_crossfade;
         if (acVal) acVal.textContent = data.audio_crossfade + 's';
       }
-      if (data.continuity_mode !== undefined) {
-        continuityMode = data.continuity_mode;
-        const cmCb = $('continuityModeCheckbox');
-        if (cmCb) cmCb.checked = continuityMode;
-      }
+      // Continuity mode always on (hardcoded)
+      continuityMode = true;
       if (data.natural_pacing !== undefined) {
         naturalPacingMode = data.natural_pacing;
         const npCb = $('naturalPacingCheckbox');
@@ -3615,6 +3657,22 @@
           </div>`;
       }
 
+      // Speed ramp checkbox state
+      const hasRamp = s.speed_ramp && s.speed_ramp !== 'none';
+
+      // Build speed options
+      const SPEED_OPTS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
+      const speedOptions = SPEED_OPTS.map(sp => {
+        const sel = (sp === currentSpeed) ? 'selected' : '';
+        return '<option value="' + sp + '" ' + sel + '>' + sp + 'x</option>';
+      }).join('');
+
+      // Ramp options for select (hidden unless ramp checked)
+      const rampOptions = ['slow_in','slow_out','slow_mid'].map(r => {
+        const sel = (r === (s.speed_ramp || 'slow_in')) ? 'selected' : '';
+        return '<option value="' + r + '" ' + sel + '>' + r.replace(/_/g, ' ') + '</option>';
+      }).join('');
+
       html += `
         <div class="manual-scene-card ${stateClass}" data-scene-id="${s.id}" id="msc-${s.id}"
              draggable="true"
@@ -3627,21 +3685,39 @@
           <div class="msc-header">
             <span class="msc-drag-handle" data-tooltip="Drag to reorder">&#8801;</span>
             <span class="msc-title">Scene ${i + 1}</span>
-            ${!isLast ? `<button class="msc-merge-btn" onclick="window._manualMergeScene('${s.id}')" data-tooltip="Merge with next scene">Merge</button>` : ''}
+            ${hasClip ? `<span class="toggle-icon ${s.reversed ? 'active' : ''}" onclick="window._reverseClip('${s.id}', this)" data-tooltip="Reverse">&#8634;</span>` : ''}
+            ${hasClip ? `<span class="toggle-icon ${s.boomerang ? 'active' : ''}" onclick="window._boomerangClip('${s.id}', this)" data-tooltip="Boomerang">&#8734;</span>` : ''}
+            <div class="more-menu-wrap">
+              <button class="more-menu-btn" onclick="window._toggleMoreMenu('${s.id}')">&#8943;</button>
+              <div class="more-menu" id="more-menu-${s.id}">
+                ${hasClip ? '<div class="more-item" onclick="window._exportGif(\'' + s.id + '\')">Export GIF</div>' : ''}
+                ${hasClip ? '<div class="more-item" onclick="window._extractFrames(\'' + s.id + '\')">Extract Frames</div>' : ''}
+                ${hasClip ? '<div class="more-item" onclick="window._upscaleScene(\'' + s.id + '\', this)">Upscale 2x</div>' : ''}
+                <div class="more-item" onclick="window._quickPreview('${s.id}')">Quick Preview</div>
+                ${hasClip ? '<div class="more-item" onclick="window._compareTakes(\'' + s.id + '\')">Compare Takes</div>' : ''}
+                ${hasPhoto ? '<div class="more-item" onclick="window._getPalette(\'' + s.id + '\')">View Palette</div>' : ''}
+                <div class="more-item" onclick="window._toggleSplitSlider('${s.id}')">Split Scene</div>
+                ${!isLast ? '<div class="more-item" onclick="window._manualMergeScene(\'' + s.id + '\')">Merge with Next</div>' : ''}
+                <div class="more-item" onclick="document.getElementById('msc-video-input-${s.id}').click()">Upload Video</div>
+                <div class="more-item" onclick="document.getElementById('msc-vocal-input-${s.id}').click()">Upload Vocal</div>
+              </div>
+            </div>
+            <input type="file" style="display:none" id="msc-video-input-${s.id}" accept=".mp4,.webm,.mov"
+                   onchange="window._manualUploadVideo('${s.id}', this.files[0])">
+            <input type="file" style="display:none" id="msc-vocal-input-${s.id}" accept=".mp3,.wav,.m4a,.ogg"
+                   onchange="window._manualUploadVocal('${s.id}', this.files[0])">
+            ${(window._sceneCosts && window._sceneCosts[s.id]) ? `<span class="msc-cost-badge">$` + window._sceneCosts[s.id].toFixed(2) + `</span>` : ''}
             <button class="msc-delete-btn" onclick="window._manualDeleteScene('${s.id}')">Delete</button>
           </div>
           <div class="msc-body">
-            <div class="msc-3col">
+            <!-- Photo + Prompt row -->
+            <div style="display:grid;grid-template-columns:140px 1fr;gap:12px;align-items:start;">
               <div class="msc-photo-area">
                 <div class="msc-photo-preview" onclick="document.getElementById('msc-photo-input-${s.id}').click()">
                   ${photoHtml}
                 </div>
                 <input type="file" class="msc-photo-input" id="msc-photo-input-${s.id}" accept="image/*"
                        onchange="window._manualUploadPhoto('${s.id}', this.files[0])">
-                <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">
-                  ${(s.photo_urls || []).map((url, pi) => '<img src="' + url + '&t=' + Date.now() + '" style="width:32px;height:32px;object-fit:cover;border-radius:3px;border:1px solid var(--border);" alt="Mood ' + (pi+1) + '">').join('')}
-                  ${(s.photo_urls || []).length < 4 ? '<button class="btn btn-small" style="padding:2px 6px;font-size:9px;" onclick="document.getElementById(\'msc-photos-input-' + s.id + '\').click()" data-tooltip="Add mood board photos">+</button>' : ''}
-                </div>
                 <input type="file" class="msc-photo-input" id="msc-photos-input-${s.id}" accept="image/*" multiple
                        onchange="window._manualUploadMoodPhotos('${s.id}', this.files)">
                 <div class="palette-dots" id="palette-${s.id}"></div>
@@ -3652,72 +3728,64 @@
                             onchange="window._manualUpdateScene('${s.id}', {prompt: this.value})">${escHtml(s.prompt || '')}</textarea>
                   <button style="position:absolute;top:4px;right:4px;background:var(--surface);border:1px solid var(--border);color:var(--text-dim);font-size:12px;width:22px;height:22px;border-radius:3px;cursor:pointer;display:flex;align-items:center;justify-content:center;" onclick="window._openPromptEditor('${s.id}')" data-tooltip="Expand editor">&#10530;</button>
                 </div>
-                ${hasPhoto ? `<div class="msc-grok-note"><em>grok-imagine-video</em> does not accept image input. Use <em>"Gen Photo"</em> for photo-to-video.</div>` : ''}
-              </div>
-              <div class="msc-controls-col">
-                <div class="msc-control-item">
-                  <span class="msc-label">Dur:</span>
-                  <select class="styled-select" id="msc-dur-select-${s.id}" style="flex:1;"
-                          onchange="window._manualUpdateScene('${s.id}', {duration: parseInt(this.value)})">
-                    ${buildDurationOptions(effectiveEngine, currentDuration)}
-                  </select>
-                  <span class="msc-grok-note" id="msc-dur-max-${s.id}" style="font-size:9px;white-space:nowrap;">(max ${getMaxDuration(effectiveEngine)}s)</span>
-                </div>
-                <div class="msc-control-item">
-                  <span class="msc-label">Speed:</span>
-                  <div class="slider-group" style="flex:1;">
-                    <input type="range" class="styled-slider" min="0.25" max="2" step="0.25" value="${currentSpeed}"
-                           oninput="this.nextElementSibling.textContent=this.value+'x'" onchange="window._manualUpdateScene('${s.id}', {speed: parseFloat(this.value)})" style="flex:1;">
-                    <span class="slider-val">${currentSpeed}x</span>
-                  </div>
-                </div>
-                <div class="msc-control-item">
-                  <span class="msc-label">Cam:</span>
-                  <select class="styled-select" style="flex:1;" onchange="window._manualUpdateScene('${s.id}', {camera_movement: this.value})">
-                    ${cameraOptions}
-                  </select>
-                </div>
-                <div class="msc-control-item">
-                  <span class="msc-label">Color:</span>
-                  <select class="styled-select" style="flex:1;" onchange="window._manualUpdateScene('${s.id}', {color_grade: this.value})">
-                    ${sceneGradeOptions}
-                  </select>
-                </div>
-                <div class="msc-control-item">
-                  <span class="msc-label">Engine:</span>
-                  <select class="styled-select" style="flex:1;" onchange="window._onEngineChange('${s.id}', this.value)">
-                    ${engineOptions}
-                  </select>
-                </div>
-                <div class="msc-control-item">
-                  <span class="msc-label">Ramp:</span>
-                  <select class="styled-select" style="flex:1;" onchange="window._manualUpdateScene('${s.id}', {speed_ramp: this.value})">
-                    <option value="none" ${(s.speed_ramp||'none')==='none'?'selected':''}>None</option>
-                    <option value="slow_in" ${s.speed_ramp==='slow_in'?'selected':''}>Slow In</option>
-                    <option value="slow_out" ${s.speed_ramp==='slow_out'?'selected':''}>Slow Out</option>
-                    <option value="slow_mid" ${s.speed_ramp==='slow_mid'?'selected':''}>Slow Mid</option>
-                  </select>
-                </div>
-                <div class="msc-control-item">
-                  <span class="msc-label">Effect:</span>
-                  <select class="styled-select" style="flex:1;" onchange="window._manualUpdateScene('${s.id}', {effect: this.value})">
-                    ${SCENE_EFFECTS.map(e => {
-                      const sel = (e === (s.effect || 'none')) ? 'selected' : '';
-                      return '<option value="' + e + '" ' + sel + '>' + e.replace(/_/g, ' ') + '</option>';
-                    }).join('')}
-                  </select>
-                </div>
-                <div class="msc-control-item">
-                  <span class="msc-label">FX Int:</span>
-                  <div class="slider-group" style="flex:1;">
-                    <input type="range" class="styled-slider magenta-slider" min="10" max="100" step="5" value="${Math.round((s.effect_intensity || 0.5) * 100)}"
-                           oninput="this.nextElementSibling.textContent=this.value+'%'" onchange="window._manualUpdateScene('${s.id}', {effect_intensity: parseFloat(this.value)/100})" style="flex:1;">
-                    <span class="slider-val magenta">${Math.round((s.effect_intensity || 0.5) * 100)}%</span>
-                  </div>
-                </div>
               </div>
             </div>
-            <div class="msc-overlay-row" style="margin-top:8px;">
+
+            <!-- Compact control rows -->
+            <div class="scene-controls-area">
+              <!-- Row 1: Look -->
+              <div class="scene-row">
+                <span class="row-label">Look:</span>
+                <select class="styled-select" onchange="window._manualUpdateScene('${s.id}', {effect: this.value}); var el=document.getElementById('fx-int-${s.id}'); if(el) el.style.display=this.value==='none'?'none':'inline-flex';">
+                  ${SCENE_EFFECTS.map(e => {
+                    const sel = (e === (s.effect || 'none')) ? 'selected' : '';
+                    return '<option value="' + e + '" ' + sel + '>' + e.replace(/_/g, ' ') + '</option>';
+                  }).join('')}
+                </select>
+                <div class="slider-group" id="fx-int-${s.id}" style="${(s.effect && s.effect !== 'none') ? '' : 'display:none;'}">
+                  <input type="range" class="styled-slider magenta-slider" min="10" max="100" step="5" value="${Math.round((s.effect_intensity || 0.5) * 100)}" style="width:70px;"
+                         oninput="this.nextElementSibling.textContent=this.value+'%'" onchange="window._manualUpdateScene('${s.id}', {effect_intensity: parseFloat(this.value)/100})">
+                  <span class="slider-val magenta">${Math.round((s.effect_intensity || 0.5) * 100)}%</span>
+                </div>
+                <select class="styled-select" onchange="window._manualUpdateScene('${s.id}', {color_grade: this.value})">
+                  ${sceneGradeOptions}
+                </select>
+              </div>
+
+              <!-- Row 2: Timing -->
+              <div class="scene-row">
+                <span class="row-label">Timing:</span>
+                <select class="styled-select" id="msc-dur-select-${s.id}"
+                        onchange="window._manualUpdateScene('${s.id}', {duration: parseInt(this.value)})">
+                  ${buildDurationOptions(effectiveEngine, currentDuration)}
+                </select>
+                <span class="msc-grok-note" id="msc-dur-max-${s.id}" style="font-size:9px;white-space:nowrap;display:none;">(max ${getMaxDuration(effectiveEngine)}s)</span>
+                <select class="styled-select" onchange="window._manualUpdateScene('${s.id}', {speed: parseFloat(this.value)})">
+                  ${speedOptions}
+                </select>
+                <label class="cb-label">
+                  <input type="checkbox" ${hasRamp ? 'checked' : ''} onchange="if(this.checked){window._manualUpdateScene('${s.id}', {speed_ramp:'slow_in'});document.getElementById('ramp-sel-${s.id}').style.display='inline-block';}else{window._manualUpdateScene('${s.id}', {speed_ramp:'none'});document.getElementById('ramp-sel-${s.id}').style.display='none';}">
+                  Ramp
+                </label>
+                <select class="styled-select" id="ramp-sel-${s.id}" style="${hasRamp ? '' : 'display:none;'}" onchange="window._manualUpdateScene('${s.id}', {speed_ramp: this.value})">
+                  ${rampOptions}
+                </select>
+              </div>
+
+              <!-- Row 3: Motion -->
+              <div class="scene-row">
+                <span class="row-label">Motion:</span>
+                <select class="styled-select" onchange="window._manualUpdateScene('${s.id}', {camera_movement: this.value})">
+                  ${cameraOptions}
+                </select>
+                <select class="styled-select" onchange="window._onEngineChange('${s.id}', this.value)">
+                  ${engineOptions}
+                </select>
+              </div>
+            </div>
+
+            <!-- Transition to next -->
+            <div class="msc-overlay-row" style="margin-top:6px;">
               <span class="msc-label">Text:</span>
               <input type="text" class="msc-overlay-input" id="msc-overlay-text-${s.id}"
                      placeholder="Overlay text..." value="${escHtml(overlayText)}"
@@ -3726,6 +3794,8 @@
               <select class="styled-select" id="msc-overlay-size-${s.id}" onchange="window._updateOverlay('${s.id}')">${overlaySizeOptions}</select>
               <select class="styled-select" id="msc-overlay-color-${s.id}" onchange="window._updateOverlay('${s.id}')">${overlayColorOptions}</select>
             </div>
+
+            <!-- Badges -->
             <div class="msc-badge-row">
               ${hasClip ? `<span class="msc-badge" style="background:${ENGINE_COLORS[effectiveEngine] || 'var(--cyan)'}20;color:${ENGINE_COLORS[effectiveEngine] || 'var(--cyan)'};">${ENGINE_LABELS[effectiveEngine] || effectiveEngine}</span>` : ''}
               ${s.has_video ? '<span class="msc-badge msc-badge-video">VIDEO</span>' : ''}
@@ -3735,29 +3805,15 @@
                 data-tooltip="Voiceover volume">
                 <span class="slider-val magenta">${s.vocal_volume || 80}%</span></div>` : ''}
             </div>
+
+            <!-- Actions -->
             <div class="msc-actions">
-              <button class="btn btn-small" onclick="window._manualGenerateScene('${s.id}')">Generate</button>
-              <button class="btn btn-small" onclick="document.getElementById('msc-video-input-${s.id}').click()" data-tooltip="Upload video clip">Upload Vid</button>
-              <input type="file" style="display:none" id="msc-video-input-${s.id}" accept=".mp4,.webm,.mov"
-                     onchange="window._manualUploadVideo('${s.id}', this.files[0])">
-              <button class="btn btn-small btn-magenta" onclick="document.getElementById('msc-vocal-input-${s.id}').click()" data-tooltip="Upload voiceover">Vocal</button>
-              <input type="file" style="display:none" id="msc-vocal-input-${s.id}" accept=".mp3,.wav,.m4a,.ogg"
-                     onchange="window._manualUploadVocal('${s.id}', this.files[0])">
-              ${hasPhoto ? `<button class="btn-gen-photo" onclick="window._generateFromPhoto('${s.id}')" data-tooltip="Photo-to-video">Gen Photo</button>` : ''}
-              ${hasPhoto ? `<button class="btn btn-small btn-amber" onclick="window._autoDescribePhoto('${s.id}')" data-tooltip="AI describes photo">Describe</button>` : ''}
-              ${hasPhoto ? `<button class="btn-icon btn-small" onclick="window._getPalette('${s.id}')" data-tooltip="Extract color palette">&#127912;</button>` : ''}
-              <button class="btn btn-small btn-amber" onclick="window._toggleSplitSlider('${s.id}')" data-tooltip="Split scene">Split</button>
-              ${hasClip ? `<button class="btn-icon btn-small" onclick="window._reverseClip('${s.id}', this)" data-tooltip="Reverse clip" ${s.reversed?'style="color:var(--magenta);border-color:var(--magenta);"':''}>&#8634;</button>` : ''}
-              ${hasClip ? `<button class="btn-icon btn-small" onclick="window._boomerangClip('${s.id}', this)" data-tooltip="Boomerang effect">&#8734;</button>` : ''}
-              ${hasClip ? `<button class="btn-icon btn-small" onclick="window._exportGif('${s.id}')" data-tooltip="Export as GIF">GIF</button>` : ''}
-              ${hasClip ? `<button class="btn-icon btn-small" onclick="window._extractFrames('${s.id}')" data-tooltip="Extract frames">&#127902;</button>` : ''}
-              ${hasClip ? `<button class="btn-upscale" onclick="window._upscaleScene('${s.id}', this)" data-tooltip="Upscale 2x">2x</button>` : ''}
-              ${hasClip ? `<button class="btn btn-small" onclick="window._manualPreviewClip('${s.id}')">Preview</button>` : ''}
-              ${hasClip ? `<button class="btn btn-small btn-amber" onclick="window._compareTakes('${s.id}')" data-tooltip="Compare takes">Compare</button>` : ''}
-              <button class="btn btn-small" onclick="window._quickPreview('${s.id}')" data-tooltip="Quick 1-frame preview ($0.02)">Quick</button>
-              ${(window._sceneCosts && window._sceneCosts[s.id]) ? `<span class="msc-cost-badge">$` + window._sceneCosts[s.id].toFixed(2) + `</span>` : ''}
+              <button class="btn btn-small" onclick="window._manualGenerateScene('${s.id}')">Generate Clip</button>
+              ${hasPhoto ? `<button class="btn-gen-photo" onclick="window._generateFromPhoto('${s.id}')" data-tooltip="Photo-to-video">Gen from Photo</button>` : ''}
+              ${hasClip ? `<button class="btn btn-small" onclick="window._manualPreviewClip('${s.id}')">&#9654; Preview</button>` : ''}
               <span class="msc-status" id="msc-status-${s.id}"></span>
             </div>
+
             <div class="split-slider-container" id="split-slider-${s.id}">
               <span style="font-size:10px;color:var(--text-dim);">SPLIT AT:</span>
               <input type="range" class="styled-slider amber-slider" min="5" max="95" value="50" style="flex:1;"
@@ -3922,14 +3978,15 @@
   // ---- Stitch settings ----
   window._updateStitchSettings = async function() {
     const colorGrade = $('globalColorGradeSelect').value;
-    const vizEnabled = $('audioVizCheckbox').checked;
-    const vizStyle = $('audioVizStyleSelect').value;
-    const audioCrossfade = parseFloat($('audioCrossfadeSlider').value) || 0;
+    const vizEnabled = $('audioVizCheckbox') ? $('audioVizCheckbox').checked : false;
+    const vizStyle = $('audioVizStyleSelect') ? $('audioVizStyleSelect').value : 'waveform';
+    const audioCrossfadeEl = $('audioCrossfadeSlider');
+    const audioCrossfade = audioCrossfadeEl ? parseFloat(audioCrossfadeEl.value) || 0 : 0;
     await apiPost('/api/manual/stitch-settings', {
       color_grade: colorGrade,
       audio_viz: vizEnabled ? vizStyle : null,
       audio_crossfade: audioCrossfade,
-      continuity_mode: continuityMode,
+      continuity_mode: true,
       natural_pacing: naturalPacingMode,
     });
   };
@@ -4026,23 +4083,40 @@
     dragSrcId = null;
   };
 
+  // ===================== MORE MENU (Part 5) =====================
+
+  window._toggleMoreMenu = function(sceneId) {
+    const menu = document.getElementById('more-menu-' + sceneId);
+    if (!menu) return;
+    // Close all other menus first
+    document.querySelectorAll('.more-menu.open').forEach(m => { if (m !== menu) m.classList.remove('open'); });
+    menu.classList.toggle('open');
+  };
+
+  // Close more menus on click outside
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('.more-menu-wrap')) {
+      document.querySelectorAll('.more-menu.open').forEach(m => m.classList.remove('open'));
+    }
+  });
+
   // ===================== NEW SCENE BUTTONS =====================
 
   // ---- Reverse clip ----
-  window._reverseClip = async function(sceneId, btn) {
-    btn.disabled = true;
+  window._reverseClip = async function(sceneId, el) {
+    if (el) el.style.pointerEvents = 'none';
     const data = await apiPost(`/api/manual/scene/${sceneId}/reverse`);
-    btn.disabled = false;
-    if (data.ok) { await loadManualScenes(); flashSuccess(btn); }
+    if (el) el.style.pointerEvents = '';
+    if (data.ok) { await loadManualScenes(); }
     else alert('Reverse failed: ' + (data.error || 'unknown'));
   };
 
   // ---- Boomerang clip ----
-  window._boomerangClip = async function(sceneId, btn) {
-    btn.disabled = true;
+  window._boomerangClip = async function(sceneId, el) {
+    if (el) el.style.pointerEvents = 'none';
     const data = await apiPost(`/api/manual/scene/${sceneId}/boomerang`);
-    btn.disabled = false;
-    if (data.ok) { await loadManualScenes(); flashSuccess(btn); }
+    if (el) el.style.pointerEvents = '';
+    if (data.ok) { await loadManualScenes(); }
     else alert('Boomerang failed: ' + (data.error || 'unknown'));
   };
 
@@ -4802,11 +4876,7 @@
     const currentHash = _getSceneStateHash();
     if (currentHash === _lastAutosaveHash) return;
     _lastAutosaveHash = currentHash;
-    const indicator = $('autosaveIndicator');
-    const textEl = $('autosaveText');
     await apiPost('/api/project/autosave', { scenes: manualScenes, song_filename: manualSongFilename });
-    if (indicator) { indicator.classList.remove('unsaved'); }
-    if (textEl) textEl.textContent = 'Saved';
     _hasUnsavedChanges = false;
   }
 
@@ -4819,10 +4889,6 @@
   const _origUpdateScene2 = window._manualUpdateScene;
   window._manualUpdateScene = async function(sceneId, fields) {
     _hasUnsavedChanges = true;
-    const indicator = $('autosaveIndicator');
-    const textEl = $('autosaveText');
-    if (indicator) indicator.classList.add('unsaved');
-    if (textEl) textEl.textContent = 'Unsaved';
     if (_origUpdateScene2) return _origUpdateScene2(sceneId, fields);
   };
 
