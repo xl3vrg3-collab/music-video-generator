@@ -639,6 +639,15 @@
 
   .pos-lock-icon { color: var(--red); font-size: 12px; }
   .pos-empty { text-align: center; padding: 30px; color: var(--text-dim); font-size: 12px; }
+  .pos-photo-dropzone {
+    width: 150px; height: 150px; border: 2px dashed var(--border); border-radius: var(--radius);
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+    background: var(--surface); transition: border-color 0.2s, background 0.2s; position: relative;
+  }
+  .pos-photo-dropzone:hover { border-color: var(--cyan); background: rgba(0,212,255,0.05); }
+  .pos-photo-dropzone.drag-over { border-color: var(--cyan); background: rgba(0,212,255,0.1); }
+  .pos-card-images { display: flex; gap: 6px; margin-bottom: 4px; }
+  .pos-card-images img { width: 60px; height: 60px; object-fit: cover; border-radius: 4px; }
   .pos-raw-prompt {
     font-family: 'JetBrains Mono', monospace; font-size: 12px;
     background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
@@ -2374,9 +2383,23 @@
               <label>Default Expression</label>
               <input type="text" id="posCharExpression" placeholder="e.g. Confident smirk">
             </div>
-            <div class="pos-field-group">
-              <label>Reference Photo (name from References panel)</label>
-              <input type="text" id="posCharRefPhoto" placeholder="e.g. character_ref_01">
+            <input type="hidden" id="posCharRefPhoto" value="">
+            <div style="display:flex;gap:16px;margin-bottom:12px;">
+              <div style="flex:1;">
+                <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-dim);">Reference Photo</label>
+                <div id="posCharPhotoDropzone" class="pos-photo-dropzone" onclick="document.getElementById('posCharPhotoInput').click()">
+                  <img id="posCharPhotoThumb" style="display:none;width:150px;height:150px;object-fit:cover;border-radius:var(--radius);">
+                  <div id="posCharPhotoPlaceholder" style="color:var(--text-dim);font-size:11px;text-align:center;">Click or drag photo here<br>(reference image)</div>
+                  <input type="file" id="posCharPhotoInput" accept="image/*" style="display:none;" onchange="window._posUploadCharPhoto(this)">
+                </div>
+              </div>
+              <div style="flex:1;">
+                <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-dim);">AI Preview</label>
+                <div id="posCharPreviewArea" style="width:150px;height:150px;border:1px dashed var(--border);border-radius:var(--radius);display:flex;align-items:center;justify-content:center;background:var(--surface);">
+                  <img id="posCharPreviewThumb" style="display:none;width:150px;height:150px;object-fit:cover;border-radius:var(--radius);">
+                  <div id="posCharPreviewPlaceholder" style="color:var(--text-dim);font-size:11px;text-align:center;">No preview yet</div>
+                </div>
+              </div>
             </div>
             <div class="pos-field-group">
               <label>Tags (comma-separated)</label>
@@ -2388,6 +2411,7 @@
             </div>
             <div class="btn-row" style="justify-content:flex-start;">
               <button class="btn btn-small btn-purple" onclick="window._posSaveChar()">Save</button>
+              <button class="btn btn-small btn-cyan" id="posCharGenPreviewBtn" onclick="window._posGenCharPreview()" style="display:none;">Generate Preview</button>
               <button class="btn btn-small" onclick="window._posCancelCharForm()">Cancel</button>
             </div>
           </div>
@@ -2452,6 +2476,23 @@
               <label>Color Palette</label>
               <input type="text" id="posCostumeColors" placeholder="e.g. Black, silver, neon blue">
             </div>
+            <div style="display:flex;gap:16px;margin-bottom:12px;">
+              <div style="flex:1;">
+                <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-dim);">Reference Photo</label>
+                <div id="posCostumePhotoDropzone" class="pos-photo-dropzone" onclick="document.getElementById('posCostumePhotoInput').click()">
+                  <img id="posCostumePhotoThumb" style="display:none;width:150px;height:150px;object-fit:cover;border-radius:var(--radius);">
+                  <div id="posCostumePhotoPlaceholder" style="color:var(--text-dim);font-size:11px;text-align:center;">Click or drag photo here<br>(reference image)</div>
+                  <input type="file" id="posCostumePhotoInput" accept="image/*" style="display:none;" onchange="window._posUploadCostumePhoto(this)">
+                </div>
+              </div>
+              <div style="flex:1;">
+                <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-dim);">AI Preview</label>
+                <div id="posCostumePreviewArea" style="width:150px;height:150px;border:1px dashed var(--border);border-radius:var(--radius);display:flex;align-items:center;justify-content:center;background:var(--surface);">
+                  <img id="posCostumePreviewThumb" style="display:none;width:150px;height:150px;object-fit:cover;border-radius:var(--radius);">
+                  <div id="posCostumePreviewPlaceholder" style="color:var(--text-dim);font-size:11px;text-align:center;">No preview yet</div>
+                </div>
+              </div>
+            </div>
             <div class="pos-field-group">
               <label>Tags (comma-separated)</label>
               <input type="text" id="posCostumeTags" placeholder="streetwear, dark">
@@ -2462,6 +2503,7 @@
             </div>
             <div class="btn-row" style="justify-content:flex-start;">
               <button class="btn btn-small btn-purple" onclick="window._posSaveCostume()">Save</button>
+              <button class="btn btn-small btn-cyan" id="posCostumeGenPreviewBtn" onclick="window._posGenCostumePreview()" style="display:none;">Generate Preview</button>
               <button class="btn btn-small" onclick="window._posCancelCostumeForm()">Cancel</button>
             </div>
           </div>
@@ -2524,6 +2566,23 @@
               <label>Atmosphere</label>
               <input type="text" id="posEnvAtmosphere" placeholder="e.g. Moody, cyberpunk, isolated">
             </div>
+            <div style="display:flex;gap:16px;margin-bottom:12px;">
+              <div style="flex:1;">
+                <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-dim);">Reference Photo</label>
+                <div id="posEnvPhotoDropzone" class="pos-photo-dropzone" onclick="document.getElementById('posEnvPhotoInput').click()">
+                  <img id="posEnvPhotoThumb" style="display:none;width:150px;height:150px;object-fit:cover;border-radius:var(--radius);">
+                  <div id="posEnvPhotoPlaceholder" style="color:var(--text-dim);font-size:11px;text-align:center;">Click or drag photo here<br>(reference image)</div>
+                  <input type="file" id="posEnvPhotoInput" accept="image/*" style="display:none;" onchange="window._posUploadEnvPhoto(this)">
+                </div>
+              </div>
+              <div style="flex:1;">
+                <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-dim);">AI Preview</label>
+                <div id="posEnvPreviewArea" style="width:150px;height:150px;border:1px dashed var(--border);border-radius:var(--radius);display:flex;align-items:center;justify-content:center;background:var(--surface);">
+                  <img id="posEnvPreviewThumb" style="display:none;width:150px;height:150px;object-fit:cover;border-radius:var(--radius);">
+                  <div id="posEnvPreviewPlaceholder" style="color:var(--text-dim);font-size:11px;text-align:center;">No preview yet</div>
+                </div>
+              </div>
+            </div>
             <div class="pos-field-group">
               <label>Tags (comma-separated)</label>
               <input type="text" id="posEnvTags" placeholder="urban, night, neon">
@@ -2534,6 +2593,7 @@
             </div>
             <div class="btn-row" style="justify-content:flex-start;">
               <button class="btn btn-small btn-purple" onclick="window._posSaveEnv()">Save</button>
+              <button class="btn btn-small btn-cyan" id="posEnvGenPreviewBtn" onclick="window._posGenEnvPreview()" style="display:none;">Generate Preview</button>
               <button class="btn btn-small" onclick="window._posCancelEnvForm()">Cancel</button>
             </div>
           </div>
@@ -5375,7 +5435,15 @@
     const chars = data.characters || [];
     if (!chars.length) { list.innerHTML = '<div class="pos-empty">No characters yet.</div>'; return; }
     list.innerHTML = chars.map(c => {
+      let images = '';
+      if (c.referencePhoto || c.previewImage) {
+        images = '<div class="pos-card-images">'
+          + (c.referencePhoto ? '<img src="'+c.referencePhoto+'?t='+Date.now()+'" title="Reference photo" onerror="this.style.display=\'none\'">' : '')
+          + (c.previewImage ? '<img src="'+c.previewImage+'?t='+Date.now()+'" title="AI preview" onerror="this.style.display=\'none\'">' : '')
+          + '</div>';
+      }
       return '<div class="pos-entity-card" data-id="'+c.id+'">'
+        + images
         + '<span class="pos-badge pos-badge-char">CHAR</span>'
         + '<span class="entity-name">'+escHtml(c.name)+'</span>'
         + '<span class="entity-meta">'+escHtml(c.ageRange||'')+(c.referencePhoto?' &middot; has ref':'')+'</span>'
@@ -5397,9 +5465,23 @@
     $('posCharAge').value = d?d.ageRange:'';
     $('posCharFeatures').value = d?d.distinguishingFeatures:'';
     $('posCharExpression').value = d?d.defaultExpression:'';
-    $('posCharRefPhoto').value = d?d.referencePhoto:'';
+    $('posCharRefPhoto').value = d?d.referencePhoto||'';
     $('posCharTags').value = d?(d.tags||[]).join(', '):'';
     $('posCharNotes').value = d?d.notes:'';
+    // Show/hide photo thumb
+    const photoThumb = $('posCharPhotoThumb'), photoPlaceholder = $('posCharPhotoPlaceholder');
+    if (d && d.referencePhoto) {
+      photoThumb.src = d.referencePhoto + '?t=' + Date.now();
+      photoThumb.style.display = 'block'; photoPlaceholder.style.display = 'none';
+    } else { photoThumb.style.display = 'none'; photoPlaceholder.style.display = 'block'; }
+    // Show/hide preview thumb
+    const prevThumb = $('posCharPreviewThumb'), prevPlaceholder = $('posCharPreviewPlaceholder');
+    if (d && d.previewImage) {
+      prevThumb.src = d.previewImage + '?t=' + Date.now();
+      prevThumb.style.display = 'block'; prevPlaceholder.style.display = 'none';
+    } else { prevThumb.style.display = 'none'; prevPlaceholder.style.display = 'block'; }
+    // Show generate preview button only when editing
+    $('posCharGenPreviewBtn').style.display = (d && d.id) ? '' : 'none';
   };
   window._posCancelCharForm = function() { $('posCharFormWrap').classList.add('hidden'); };
 
@@ -5433,6 +5515,41 @@
     window._posLoadChars();
   };
 
+  window._posUploadCharPhoto = async function(input) {
+    const editId = $('posCharEditId').value;
+    if (!editId) { alert('Save the character first before uploading a photo.'); input.value=''; return; }
+    const file = input.files[0]; if (!file) return;
+    const fd = new FormData(); fd.append('photo', file);
+    try {
+      const resp = await fetch('/api/pos/characters/'+editId+'/photo', {method:'POST', body:fd});
+      const data = await resp.json();
+      if (data.ok) {
+        $('posCharPhotoThumb').src = data.photo_url + '?t=' + Date.now();
+        $('posCharPhotoThumb').style.display = 'block';
+        $('posCharPhotoPlaceholder').style.display = 'none';
+        $('posCharRefPhoto').value = data.photo_url;
+      } else { alert('Upload error: '+(data.error||'unknown')); }
+    } catch(e) { alert('Upload failed: '+e.message); }
+    input.value = '';
+  };
+
+  window._posGenCharPreview = async function() {
+    const editId = $('posCharEditId').value;
+    if (!editId) { alert('Save the character first.'); return; }
+    const btn = $('posCharGenPreviewBtn');
+    btn.textContent = 'Generating...'; btn.disabled = true;
+    try {
+      const resp = await fetch('/api/pos/characters/'+editId+'/generate-preview', {method:'POST'});
+      const data = await resp.json();
+      if (data.ok) {
+        $('posCharPreviewThumb').src = data.preview_url + '?t=' + Date.now();
+        $('posCharPreviewThumb').style.display = 'block';
+        $('posCharPreviewPlaceholder').style.display = 'none';
+      } else { alert('Preview error: '+(data.error||'unknown')); }
+    } catch(e) { alert('Preview failed: '+e.message); }
+    btn.textContent = 'Generate Preview'; btn.disabled = false;
+  };
+
   // ---- COSTUMES ----
   window._posLoadCostumes = async function() {
     const data = await apiGet('/api/pos/costumes');
@@ -5450,7 +5567,15 @@
     if (!costumes.length) { list.innerHTML = '<div class="pos-empty">No costumes yet.</div>'; return; }
     list.innerHTML = costumes.map(c => {
       const charName = charMap[c.characterId] || '';
+      let images = '';
+      if (c.referenceImagePath || c.previewImage) {
+        images = '<div class="pos-card-images">'
+          + (c.referenceImagePath ? '<img src="'+c.referenceImagePath+'?t='+Date.now()+'" title="Reference photo" onerror="this.style.display=\'none\'">' : '')
+          + (c.previewImage ? '<img src="'+c.previewImage+'?t='+Date.now()+'" title="AI preview" onerror="this.style.display=\'none\'">' : '')
+          + '</div>';
+      }
       return '<div class="pos-entity-card" data-id="'+c.id+'">'
+        + images
         + '<span class="pos-badge pos-badge-costume">COSTUME</span>'
         + '<span class="entity-name">'+escHtml(c.name)+'</span>'
         + '<span class="entity-meta">'+(charName?escHtml(charName):'unlinked')+'</span>'
@@ -5474,6 +5599,17 @@
     $('posCostumeColors').value = d?d.colorPalette:'';
     $('posCostumeTags').value = d?(d.tags||[]).join(', '):'';
     $('posCostumeNotes').value = d?d.notes:'';
+    // Photo thumb
+    const pt = $('posCostumePhotoThumb'), pp = $('posCostumePhotoPlaceholder');
+    if (d && d.referenceImagePath) {
+      pt.src = d.referenceImagePath + '?t=' + Date.now(); pt.style.display='block'; pp.style.display='none';
+    } else { pt.style.display='none'; pp.style.display='block'; }
+    // Preview thumb
+    const pvt = $('posCostumePreviewThumb'), pvp = $('posCostumePreviewPlaceholder');
+    if (d && d.previewImage) {
+      pvt.src = d.previewImage + '?t=' + Date.now(); pvt.style.display='block'; pvp.style.display='none';
+    } else { pvt.style.display='none'; pvp.style.display='block'; }
+    $('posCostumeGenPreviewBtn').style.display = (d && d.id) ? '' : 'none';
   };
   window._posCancelCostumeForm = function() { $('posCostumeFormWrap').classList.add('hidden'); };
 
@@ -5507,6 +5643,40 @@
     window._posLoadCostumes();
   };
 
+  window._posUploadCostumePhoto = async function(input) {
+    const editId = $('posCostumeEditId').value;
+    if (!editId) { alert('Save the costume first before uploading a photo.'); input.value=''; return; }
+    const file = input.files[0]; if (!file) return;
+    const fd = new FormData(); fd.append('photo', file);
+    try {
+      const resp = await fetch('/api/pos/costumes/'+editId+'/photo', {method:'POST', body:fd});
+      const data = await resp.json();
+      if (data.ok) {
+        $('posCostumePhotoThumb').src = data.photo_url + '?t=' + Date.now();
+        $('posCostumePhotoThumb').style.display = 'block';
+        $('posCostumePhotoPlaceholder').style.display = 'none';
+      } else { alert('Upload error: '+(data.error||'unknown')); }
+    } catch(e) { alert('Upload failed: '+e.message); }
+    input.value = '';
+  };
+
+  window._posGenCostumePreview = async function() {
+    const editId = $('posCostumeEditId').value;
+    if (!editId) { alert('Save the costume first.'); return; }
+    const btn = $('posCostumeGenPreviewBtn');
+    btn.textContent = 'Generating...'; btn.disabled = true;
+    try {
+      const resp = await fetch('/api/pos/costumes/'+editId+'/generate-preview', {method:'POST'});
+      const data = await resp.json();
+      if (data.ok) {
+        $('posCostumePreviewThumb').src = data.preview_url + '?t=' + Date.now();
+        $('posCostumePreviewThumb').style.display = 'block';
+        $('posCostumePreviewPlaceholder').style.display = 'none';
+      } else { alert('Preview error: '+(data.error||'unknown')); }
+    } catch(e) { alert('Preview failed: '+e.message); }
+    btn.textContent = 'Generate Preview'; btn.disabled = false;
+  };
+
   // ---- ENVIRONMENTS ----
   window._posLoadEnvs = async function() {
     const data = await apiGet('/api/pos/environments');
@@ -5514,7 +5684,15 @@
     const envs = data.environments || [];
     if (!envs.length) { list.innerHTML = '<div class="pos-empty">No environments yet.</div>'; return; }
     list.innerHTML = envs.map(e => {
+      let images = '';
+      if (e.referenceImagePath || e.previewImage) {
+        images = '<div class="pos-card-images">'
+          + (e.referenceImagePath ? '<img src="'+e.referenceImagePath+'?t='+Date.now()+'" title="Reference photo" onerror="this.style.display=\'none\'">' : '')
+          + (e.previewImage ? '<img src="'+e.previewImage+'?t='+Date.now()+'" title="AI preview" onerror="this.style.display=\'none\'">' : '')
+          + '</div>';
+      }
       return '<div class="pos-entity-card" data-id="'+e.id+'">'
+        + images
         + '<span class="pos-badge pos-badge-env">ENV</span>'
         + '<span class="entity-name">'+escHtml(e.name)+'</span>'
         + '<span class="entity-meta">'+escHtml(e.timeOfDay||'')+(e.location?' &middot; '+escHtml(e.location):'')+'</span>'
@@ -5538,6 +5716,17 @@
     $('posEnvAtmosphere').value = d?d.atmosphere:'';
     $('posEnvTags').value = d?(d.tags||[]).join(', '):'';
     $('posEnvNotes').value = d?d.notes:'';
+    // Photo thumb
+    const pt = $('posEnvPhotoThumb'), pp = $('posEnvPhotoPlaceholder');
+    if (d && d.referenceImagePath) {
+      pt.src = d.referenceImagePath + '?t=' + Date.now(); pt.style.display='block'; pp.style.display='none';
+    } else { pt.style.display='none'; pp.style.display='block'; }
+    // Preview thumb
+    const pvt = $('posEnvPreviewThumb'), pvp = $('posEnvPreviewPlaceholder');
+    if (d && d.previewImage) {
+      pvt.src = d.previewImage + '?t=' + Date.now(); pvt.style.display='block'; pvp.style.display='none';
+    } else { pvt.style.display='none'; pvp.style.display='block'; }
+    $('posEnvGenPreviewBtn').style.display = (d && d.id) ? '' : 'none';
   };
   window._posCancelEnvForm = function() { $('posEnvFormWrap').classList.add('hidden'); };
 
@@ -5569,6 +5758,60 @@
     await posApiDelete('/api/pos/environments/'+id);
     window._posLoadEnvs();
   };
+
+  window._posUploadEnvPhoto = async function(input) {
+    const editId = $('posEnvEditId').value;
+    if (!editId) { alert('Save the environment first before uploading a photo.'); input.value=''; return; }
+    const file = input.files[0]; if (!file) return;
+    const fd = new FormData(); fd.append('photo', file);
+    try {
+      const resp = await fetch('/api/pos/environments/'+editId+'/photo', {method:'POST', body:fd});
+      const data = await resp.json();
+      if (data.ok) {
+        $('posEnvPhotoThumb').src = data.photo_url + '?t=' + Date.now();
+        $('posEnvPhotoThumb').style.display = 'block';
+        $('posEnvPhotoPlaceholder').style.display = 'none';
+      } else { alert('Upload error: '+(data.error||'unknown')); }
+    } catch(e) { alert('Upload failed: '+e.message); }
+    input.value = '';
+  };
+
+  window._posGenEnvPreview = async function() {
+    const editId = $('posEnvEditId').value;
+    if (!editId) { alert('Save the environment first.'); return; }
+    const btn = $('posEnvGenPreviewBtn');
+    btn.textContent = 'Generating...'; btn.disabled = true;
+    try {
+      const resp = await fetch('/api/pos/environments/'+editId+'/generate-preview', {method:'POST'});
+      const data = await resp.json();
+      if (data.ok) {
+        $('posEnvPreviewThumb').src = data.preview_url + '?t=' + Date.now();
+        $('posEnvPreviewThumb').style.display = 'block';
+        $('posEnvPreviewPlaceholder').style.display = 'none';
+      } else { alert('Preview error: '+(data.error||'unknown')); }
+    } catch(e) { alert('Preview failed: '+e.message); }
+    btn.textContent = 'Generate Preview'; btn.disabled = false;
+  };
+
+  // ---- Drag-and-drop for photo dropzones ----
+  (function() {
+    const zones = ['posCharPhotoDropzone', 'posCostumePhotoDropzone', 'posEnvPhotoDropzone'];
+    const inputs = ['posCharPhotoInput', 'posCostumePhotoInput', 'posEnvPhotoInput'];
+    zones.forEach(function(zoneId, i) {
+      const zone = document.getElementById(zoneId);
+      if (!zone) return;
+      zone.addEventListener('dragover', function(e) { e.preventDefault(); zone.classList.add('drag-over'); });
+      zone.addEventListener('dragleave', function() { zone.classList.remove('drag-over'); });
+      zone.addEventListener('drop', function(e) {
+        e.preventDefault(); zone.classList.remove('drag-over');
+        const inp = document.getElementById(inputs[i]);
+        if (e.dataTransfer.files.length && inp) {
+          inp.files = e.dataTransfer.files;
+          inp.dispatchEvent(new Event('change'));
+        }
+      });
+    });
+  })();
 
   // ---- SCENES ----
   window._posLoadScenes = async function() {

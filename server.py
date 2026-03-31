@@ -113,6 +113,14 @@ PROMPT_HISTORY_PATH = os.path.join(OUTPUT_DIR, "prompt_history.json")
 AUTOSAVE_PATH = os.path.join(OUTPUT_DIR, "autosave.json")
 TEMPLATES_DIR = os.path.join(OUTPUT_DIR, "templates")
 GIFS_DIR = os.path.join(OUTPUT_DIR, "gifs")
+POS_PHOTOS_DIR = os.path.join(PROMPT_OS_DATA_DIR, "photos")
+POS_PHOTOS_CHARS_DIR = os.path.join(POS_PHOTOS_DIR, "characters")
+POS_PHOTOS_COSTUMES_DIR = os.path.join(POS_PHOTOS_DIR, "costumes")
+POS_PHOTOS_ENVS_DIR = os.path.join(POS_PHOTOS_DIR, "environments")
+POS_PREVIEWS_DIR = os.path.join(PROMPT_OS_DATA_DIR, "previews")
+POS_PREVIEWS_CHARS_DIR = os.path.join(POS_PREVIEWS_DIR, "characters")
+POS_PREVIEWS_COSTUMES_DIR = os.path.join(POS_PREVIEWS_DIR, "costumes")
+POS_PREVIEWS_ENVS_DIR = os.path.join(POS_PREVIEWS_DIR, "environments")
 
 # Render time estimation constants (seconds per clip by engine)
 RENDER_TIME_ESTIMATES = {
@@ -147,6 +155,12 @@ os.makedirs(FULL_PROJECTS_DIR, exist_ok=True)
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
 os.makedirs(GIFS_DIR, exist_ok=True)
 os.makedirs(TAKES_DIR, exist_ok=True)
+os.makedirs(POS_PHOTOS_CHARS_DIR, exist_ok=True)
+os.makedirs(POS_PHOTOS_COSTUMES_DIR, exist_ok=True)
+os.makedirs(POS_PHOTOS_ENVS_DIR, exist_ok=True)
+os.makedirs(POS_PREVIEWS_CHARS_DIR, exist_ok=True)
+os.makedirs(POS_PREVIEWS_COSTUMES_DIR, exist_ok=True)
+os.makedirs(POS_PREVIEWS_ENVS_DIR, exist_ok=True)
 
 # ---- Project Manager instance ----
 _project_mgr = ProjectManager(FULL_PROJECTS_DIR, OUTPUT_DIR, UPLOADS_DIR, REFERENCES_DIR)
@@ -1867,6 +1881,31 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": "Not found"}, 404)
 
+        # ──── Prompt OS Photo/Preview GET routes ────
+        elif re.match(r'^/api/pos/characters/([^/]+)/photo$', path):
+            m = re.match(r'^/api/pos/characters/([^/]+)/photo$', path)
+            self._send_file(os.path.join(POS_PHOTOS_CHARS_DIR, m.group(1) + ".jpg"))
+
+        elif re.match(r'^/api/pos/costumes/([^/]+)/photo$', path):
+            m = re.match(r'^/api/pos/costumes/([^/]+)/photo$', path)
+            self._send_file(os.path.join(POS_PHOTOS_COSTUMES_DIR, m.group(1) + ".jpg"))
+
+        elif re.match(r'^/api/pos/environments/([^/]+)/photo$', path):
+            m = re.match(r'^/api/pos/environments/([^/]+)/photo$', path)
+            self._send_file(os.path.join(POS_PHOTOS_ENVS_DIR, m.group(1) + ".jpg"))
+
+        elif re.match(r'^/api/pos/characters/([^/]+)/preview$', path):
+            m = re.match(r'^/api/pos/characters/([^/]+)/preview$', path)
+            self._send_file(os.path.join(POS_PREVIEWS_CHARS_DIR, m.group(1) + ".jpg"))
+
+        elif re.match(r'^/api/pos/costumes/([^/]+)/preview$', path):
+            m = re.match(r'^/api/pos/costumes/([^/]+)/preview$', path)
+            self._send_file(os.path.join(POS_PREVIEWS_COSTUMES_DIR, m.group(1) + ".jpg"))
+
+        elif re.match(r'^/api/pos/environments/([^/]+)/preview$', path):
+            m = re.match(r'^/api/pos/environments/([^/]+)/preview$', path)
+            self._send_file(os.path.join(POS_PREVIEWS_ENVS_DIR, m.group(1) + ".jpg"))
+
         elif path == "/api/pos/scenes":
             self._send_json({"scenes": _prompt_os.get_scenes()})
 
@@ -2291,6 +2330,32 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self._read_body())
             rules = _prompt_os.set_world_rules(body.get("worldRules", []))
             self._send_json({"ok": True, "worldRules": rules})
+
+        # ──── Prompt OS Photo Upload routes ────
+        elif re.match(r'^/api/pos/characters/([^/]+)/photo$', path):
+            m = re.match(r'^/api/pos/characters/([^/]+)/photo$', path)
+            self._handle_pos_photo_upload(m.group(1), "characters")
+
+        elif re.match(r'^/api/pos/costumes/([^/]+)/photo$', path):
+            m = re.match(r'^/api/pos/costumes/([^/]+)/photo$', path)
+            self._handle_pos_photo_upload(m.group(1), "costumes")
+
+        elif re.match(r'^/api/pos/environments/([^/]+)/photo$', path):
+            m = re.match(r'^/api/pos/environments/([^/]+)/photo$', path)
+            self._handle_pos_photo_upload(m.group(1), "environments")
+
+        # ──── Prompt OS Preview Generation routes ────
+        elif re.match(r'^/api/pos/characters/([^/]+)/generate-preview$', path):
+            m = re.match(r'^/api/pos/characters/([^/]+)/generate-preview$', path)
+            self._handle_pos_generate_preview(m.group(1), "characters")
+
+        elif re.match(r'^/api/pos/costumes/([^/]+)/generate-preview$', path):
+            m = re.match(r'^/api/pos/costumes/([^/]+)/generate-preview$', path)
+            self._handle_pos_generate_preview(m.group(1), "costumes")
+
+        elif re.match(r'^/api/pos/environments/([^/]+)/generate-preview$', path):
+            m = re.match(r'^/api/pos/environments/([^/]+)/generate-preview$', path)
+            self._handle_pos_generate_preview(m.group(1), "environments")
 
         # ──── Feature 1: Project Browser ────
         elif path == "/api/projects":
@@ -3780,6 +3845,181 @@ class Handler(BaseHTTPRequestHandler):
                         return
             # Fallback: just save a placeholder
             self._send_json({"error": "Could not generate preview"}, 500)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    # ---- Prompt OS: Photo Upload & Preview Generation ----
+
+    def _handle_pos_photo_upload(self, entity_id, entity_type):
+        """Handle photo upload for characters/costumes/environments."""
+        try:
+            ct = self.headers.get("Content-Type", "")
+            if "multipart" not in ct:
+                self._send_json({"error": "Expected multipart upload"}, 400)
+                return
+            boundary = ct.split("boundary=")[-1].encode()
+            body = self._read_body()
+            parts = self._parse_multipart(body, boundary)
+            file_part = None
+            for p in parts:
+                if p.get("filename"):
+                    file_part = p
+                    break
+            if not file_part or not file_part["data"]:
+                self._send_json({"error": "No file uploaded"}, 400)
+                return
+
+            # Determine output directory and entity getter/updater
+            dirs_map = {
+                "characters": POS_PHOTOS_CHARS_DIR,
+                "costumes": POS_PHOTOS_COSTUMES_DIR,
+                "environments": POS_PHOTOS_ENVS_DIR,
+            }
+            out_dir = dirs_map[entity_type]
+            out_path = os.path.join(out_dir, entity_id + ".jpg")
+
+            # Save and resize with PIL
+            from PIL import Image
+            import io
+            img = Image.open(io.BytesIO(file_part["data"]))
+            img = img.convert("RGB")
+            # Resize to max 1280x720
+            max_w, max_h = 1280, 720
+            if img.width > max_w or img.height > max_h:
+                img.thumbnail((max_w, max_h), Image.LANCZOS)
+            img.save(out_path, "JPEG", quality=90)
+
+            # Update entity record
+            photo_url = f"/api/pos/{entity_type}/{entity_id}/photo"
+            if entity_type == "characters":
+                _prompt_os.update_character(entity_id, {"referencePhoto": photo_url})
+            elif entity_type == "costumes":
+                _prompt_os.update_costume(entity_id, {"referenceImagePath": photo_url})
+            elif entity_type == "environments":
+                _prompt_os.update_environment(entity_id, {"referenceImagePath": photo_url})
+
+            self._send_json({"ok": True, "photo_url": photo_url})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_pos_generate_preview(self, entity_id, entity_type):
+        """Generate an AI preview image for a character/costume/environment."""
+        try:
+            # Get entity data
+            entity = None
+            if entity_type == "characters":
+                entity = _prompt_os.get_character(entity_id)
+            elif entity_type == "costumes":
+                entity = _prompt_os.get_costume(entity_id)
+            elif entity_type == "environments":
+                entity = _prompt_os.get_environment(entity_id)
+
+            if not entity:
+                self._send_json({"error": "Entity not found"}, 404)
+                return
+
+            # Build prompt based on entity type
+            if entity_type == "characters":
+                parts = []
+                if entity.get("physicalDescription"):
+                    parts.append(entity["physicalDescription"])
+                if entity.get("hair"):
+                    parts.append(entity["hair"])
+                if entity.get("skinTone"):
+                    parts.append(entity["skinTone"])
+                if entity.get("bodyType"):
+                    parts.append(entity["bodyType"])
+                if entity.get("outfitDescription"):
+                    parts.append(entity["outfitDescription"])
+                if entity.get("accessories"):
+                    acc = entity["accessories"]
+                    if isinstance(acc, list):
+                        acc = ", ".join(acc)
+                    parts.append(acc)
+                desc = ", ".join(p for p in parts if p)
+                prompt = f"Full body portrait of {desc}. Studio lighting, character reference sheet style, neutral background, high detail"
+
+            elif entity_type == "costumes":
+                parts = []
+                if entity.get("description"):
+                    parts.append(entity["description"])
+                else:
+                    for field in ("upperBody", "lowerBody", "footwear", "accessories"):
+                        if entity.get(field):
+                            parts.append(entity[field])
+                if entity.get("colorPalette"):
+                    parts.append(f"color palette: {entity['colorPalette']}")
+                desc = ", ".join(p for p in parts if p)
+                prompt = f"Fashion photography of {desc}. Clean background, detailed fabric texture, professional lighting"
+
+            elif entity_type == "environments":
+                parts = []
+                if entity.get("description"):
+                    parts.append(entity["description"])
+                if entity.get("location"):
+                    parts.append(entity["location"])
+                if entity.get("architecture"):
+                    parts.append(entity["architecture"])
+                if entity.get("lighting"):
+                    parts.append(f"lighting: {entity['lighting']}")
+                if entity.get("atmosphere"):
+                    parts.append(f"atmosphere: {entity['atmosphere']}")
+                if entity.get("weather"):
+                    parts.append(entity["weather"])
+                if entity.get("timeOfDay"):
+                    parts.append(entity["timeOfDay"])
+                desc = ", ".join(p for p in parts if p)
+                prompt = f"Wide establishing shot of {desc}. Cinematic, high detail, no people"
+
+            # Call Grok image API
+            from lib.video_generator import _get_api_key
+            import requests as _requests
+            api_key = _get_api_key()
+            resp = _requests.post(
+                "https://api.x.ai/v1/images/generations",
+                headers={"Authorization": f"Bearer {api_key}",
+                         "Content-Type": "application/json"},
+                json={"model": "grok-2-image", "prompt": prompt,
+                      "n": 1, "size": "512x512"},
+                timeout=30,
+            )
+            if resp.status_code != 200:
+                self._send_json({"error": f"Grok API error: {resp.status_code}"}, 500)
+                return
+
+            data = resp.json()
+            img_url = data.get("data", [{}])[0].get("url", "")
+            if not img_url:
+                self._send_json({"error": "No image URL in API response"}, 500)
+                return
+
+            # Download and save
+            img_resp = _requests.get(img_url, timeout=30)
+            if img_resp.status_code != 200:
+                self._send_json({"error": "Failed to download generated image"}, 500)
+                return
+
+            preview_dirs = {
+                "characters": POS_PREVIEWS_CHARS_DIR,
+                "costumes": POS_PREVIEWS_COSTUMES_DIR,
+                "environments": POS_PREVIEWS_ENVS_DIR,
+            }
+            preview_path = os.path.join(preview_dirs[entity_type], entity_id + ".jpg")
+            with open(preview_path, "wb") as f:
+                f.write(img_resp.content)
+
+            _record_cost(f"pos_{entity_type}_{entity_id}", "image")
+
+            # Update entity record
+            preview_url = f"/api/pos/{entity_type}/{entity_id}/preview"
+            if entity_type == "characters":
+                _prompt_os.update_character(entity_id, {"previewImage": preview_url})
+            elif entity_type == "costumes":
+                _prompt_os.update_costume(entity_id, {"previewImage": preview_url})
+            elif entity_type == "environments":
+                _prompt_os.update_environment(entity_id, {"previewImage": preview_url})
+
+            self._send_json({"ok": True, "preview_url": preview_url})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 

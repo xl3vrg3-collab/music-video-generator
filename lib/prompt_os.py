@@ -201,6 +201,7 @@ class PromptOS:
             "defaultExpression": data.get("defaultExpression", ""),
             "ageRange": data.get("ageRange", ""),
             "referencePhoto": data.get("referencePhoto", ""),
+            "previewImage": data.get("previewImage", ""),
             "costumes": data.get("costumes", []),
             "styleOverrides": data.get("styleOverrides", []),
             "tags": data.get("tags", []),
@@ -228,7 +229,7 @@ class PromptOS:
             if c["id"] == cid:
                 for key in ("name", "physicalDescription", "hair", "skinTone", "bodyType",
                              "distinguishingFeatures", "defaultExpression", "ageRange",
-                             "referencePhoto", "costumes", "tags", "notes"):
+                             "referencePhoto", "previewImage", "costumes", "tags", "notes"):
                     if key in data:
                         c[key] = data[key]
                 c["updatedAt"] = _now()
@@ -259,6 +260,8 @@ class PromptOS:
             "footwear": data.get("footwear", ""),
             "accessories": data.get("accessories", ""),
             "colorPalette": data.get("colorPalette", ""),
+            "referenceImagePath": data.get("referenceImagePath", ""),
+            "previewImage": data.get("previewImage", ""),
             "tags": data.get("tags", []),
             "createdAt": _now(),
             "updatedAt": _now(),
@@ -285,7 +288,8 @@ class PromptOS:
         for i, c in enumerate(costumes):
             if c["id"] == cid:
                 for key in ("name", "characterId", "description", "upperBody", "lowerBody",
-                             "footwear", "accessories", "colorPalette", "tags", "notes"):
+                             "footwear", "accessories", "colorPalette",
+                             "referenceImagePath", "previewImage", "tags", "notes"):
                     if key in data:
                         c[key] = data[key]
                 c["updatedAt"] = _now()
@@ -321,6 +325,7 @@ class PromptOS:
             "keyProps": data.get("keyProps", ""),
             "continuityNotes": data.get("continuityNotes", ""),
             "referenceImagePath": data.get("referenceImagePath", ""),
+            "previewImage": data.get("previewImage", ""),
             "linkedPromptIds": data.get("linkedPromptIds", []),
             "tags": data.get("tags", []),
             "createdAt": _now(),
@@ -345,7 +350,8 @@ class PromptOS:
         for i, e in enumerate(envs):
             if e["id"] == eid:
                 for key in ("name", "description", "location", "timeOfDay", "weather",
-                             "lighting", "keyProps", "atmosphere", "tags", "notes"):
+                             "lighting", "keyProps", "atmosphere",
+                             "referenceImagePath", "previewImage", "tags", "notes"):
                     if key in data:
                         e[key] = data[key]
                 e["updatedAt"] = _now()
