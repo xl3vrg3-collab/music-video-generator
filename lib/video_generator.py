@@ -45,8 +45,8 @@ SUPPORTED_ENGINES = [ENGINE_GROK, ENGINE_LUMA, ENGINE_OPENAI, ENGINE_RUNWAY]
 # Each model supports specific clip durations (seconds).
 # Values determined from API testing.
 MODEL_DURATION_OPTIONS = {
-    "gen4_5": [5, 10],
-    "gen3a_turbo": [5, 10],
+    "gen4_5": [4, 6, 8],           # Confirmed from API error: expects 4, 6, or 8
+    "gen3a_turbo": [5, 10],        # Gen3 uses different durations
     "kling_pro": [5, 10],
     "kling_standard": [5, 10],
     "veo3": [5, 8],
@@ -54,12 +54,12 @@ MODEL_DURATION_OPTIONS = {
     "veo3_1_fast": [5, 8],
     "grok": [8],
     "luma": [5, 9],
-    "openai": [3, 4, 5, 6, 7, 8, 9, 10, 12, 15],  # Ken Burns, we control
+    "openai": [3, 4, 5, 6, 7, 8, 9, 10, 12, 15],
 }
 
 # Smart defaults: best duration per model + section type
 MODEL_SECTION_DEFAULTS = {
-    "gen4_5":         {"intro": 10, "verse": 10, "chorus": 5, "bridge": 10, "outro": 10},
+    "gen4_5":         {"intro": 8, "verse": 6, "chorus": 4, "bridge": 8, "outro": 8},
     "gen3a_turbo":    {"intro": 10, "verse": 5, "chorus": 5, "bridge": 10, "outro": 10},
     "kling_pro":      {"intro": 10, "verse": 10, "chorus": 5, "bridge": 10, "outro": 10},
     "kling_standard": {"intro": 10, "verse": 5, "chorus": 5, "bridge": 10, "outro": 10},
@@ -489,7 +489,7 @@ def _runway_submit_image_to_video(prompt: str, image_path: str,
     Returns:
         task ID string
     """
-    duration = 10 if duration > 7 else 5  # Runway supports 5 or 10
+    # Duration already snapped to valid values by caller
 
     prompt_image = _photo_to_data_uri(image_path)
 
@@ -536,7 +536,7 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
     duration = 10 if duration > 7 else 5
 
     # Snap duration to valid values for the model
-    valid_durations = MODEL_DURATION_OPTIONS.get(model, MODEL_DURATION_OPTIONS.get("gen4_5", [5, 10]))
+    valid_durations = MODEL_DURATION_OPTIONS.get(model, [4, 6, 8])
     if duration not in valid_durations:
         duration = min(valid_durations, key=lambda d: abs(d - duration))
 
@@ -739,7 +739,7 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
         _download(video_info["url"], clip_path)
 
         # Cost tracking: ~$0.05 per second for gen3a_turbo (5 credits/sec)
-        effective_dur = 10 if duration > 7 else 5
+        effective_dur = duration
         est_cost = effective_dur * RUNWAY_COST_PER_SEC
         print(f"[RUNWAY][{index}] Estimated cost: ~${est_cost:.2f} "
               f"({effective_dur}s x ${RUNWAY_COST_PER_SEC}/s)")
