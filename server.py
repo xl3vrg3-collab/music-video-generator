@@ -3973,20 +3973,46 @@ class Handler(BaseHTTPRequestHandler):
                 desc = ", ".join(p for p in parts if p)
                 prompt = f"Wide establishing shot of {desc}. Cinematic, high detail, no people"
 
+            # If entity has a reference photo but no text description, use the photo
+            ref_photo = entity.get("referencePhoto", entity.get("referenceImagePath", ""))
+            if ref_photo and os.path.isfile(ref_photo) and not desc.strip():
+                # Use the uploaded photo AS the preview (no need to generate)
+                import shutil as _sh
+                preview_dirs = {
+                    "characters": POS_PREVIEWS_CHARS_DIR,
+                    "costumes": POS_PREVIEWS_COSTUMES_DIR,
+                    "environments": POS_PREVIEWS_ENVS_DIR,
+                }
+                preview_dir = preview_dirs.get(entity_type, POS_PREVIEWS_CHARS_DIR)
+                preview_path = os.path.join(preview_dir, f"{entity_id}.jpg")
+                _sh.copy2(ref_photo, preview_path)
+                entity["previewImage"] = preview_path
+                if entity_type == "characters": _prompt_os.update_character(entity_id, {"previewImage": preview_path})
+                elif entity_type == "costumes": _prompt_os.update_costume(entity_id, {"previewImage": preview_path})
+                elif entity_type == "environments": _prompt_os.update_environment(entity_id, {"previewImage": preview_path})
+                self._send_json({"ok": True, "preview_url": f"/api/pos/{entity_type}/{entity_id}/preview", "source": "uploaded_photo"})
+                return
+
+            # If no description at all, use entity name as prompt
+            if not desc.strip():
+                desc = entity.get("name", "unnamed")
+                prompt = f"Artistic portrait of {desc}, studio lighting, high detail"
+
             # Call Grok image API
             from lib.video_generator import _get_api_key
             import requests as _requests
             api_key = _get_api_key()
+            print(f"[PREVIEW] Generating preview for {entity_type}/{entity_id}: {prompt[:80]}...")
             resp = _requests.post(
                 "https://api.x.ai/v1/images/generations",
                 headers={"Authorization": f"Bearer {api_key}",
                          "Content-Type": "application/json"},
-                json={"model": "grok-2-image", "prompt": prompt,
-                      "n": 1, "size": "512x512"},
-                timeout=30,
+                json={"model": "grok-imagine-image", "prompt": prompt, "n": 1},
+                timeout=60,
             )
             if resp.status_code != 200:
-                self._send_json({"error": f"Grok API error: {resp.status_code}"}, 500)
+                print(f"[PREVIEW] Grok error {resp.status_code}: {resp.text[:200]}")
+                self._send_json({"error": f"Grok API error: {resp.status_code} - {resp.text[:100]}"}, 500)
                 return
 
             data = resp.json()
