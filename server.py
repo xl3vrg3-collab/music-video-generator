@@ -6662,71 +6662,109 @@ class Handler(BaseHTTPRequestHandler):
                 f"Professional illustration style, high detail, full body visible in each view."
             )
 
-            # Generate using Grok image API (with photo reference if available)
-            from lib.video_generator import _get_api_key
+            from lib.video_generator import _get_api_key, _describe_entity_photo
             import requests as _requests
+            import base64 as _b64
 
             api_key = _get_api_key()
             preview_path = os.path.join(POS_PREVIEWS_CHARS_DIR, f"{char_id}_sheet.jpg")
+            os.makedirs(os.path.dirname(preview_path), exist_ok=True)
 
+            # Step 1: If photo exists, use Vision API to get a hyper-detailed description
+            # This is the key — we describe every visual detail so the image gen can recreate it
+            vision_desc = ""
             if ref_photo_path and os.path.isfile(ref_photo_path):
-                # Use image-edit style generation with photo reference
-                import base64 as _b64
-                with open(ref_photo_path, "rb") as pf:
-                    photo_bytes = pf.read()
-                ext = os.path.splitext(ref_photo_path)[1].lower()
-                mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-                            ".png": "image/png", ".webp": "image/webp"}
-                mime = mime_map.get(ext, "image/jpeg")
-                b64_data = _b64.b64encode(photo_bytes).decode("ascii")
-                data_uri = f"data:{mime};base64,{b64_data}"
+                try:
+                    with open(ref_photo_path, "rb") as pf:
+                        photo_bytes = pf.read()
+                    ext = os.path.splitext(ref_photo_path)[1].lower()
+                    mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                                ".png": "image/png", ".webp": "image/webp"}
+                    mime = mime_map.get(ext, "image/jpeg")
+                    b64_data = _b64.b64encode(photo_bytes).decode("ascii")
+                    data_uri = f"data:{mime};base64,{b64_data}"
 
-                edit_prompt = (
-                    f"Create a character design reference sheet based on this person. "
-                    f"Show three views: front view, three-quarter view, and side profile. "
-                    f"Maintain the exact likeness, facial features, and proportions of the person in the photo. "
-                    f"Clean white background, professional illustration, high detail. "
-                    f"Additional details: {desc}"
-                )
+                    # Get extremely detailed physical description via Vision
+                    vision_resp = _requests.post(
+                        "https://api.x.ai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                        json={
+                            "model": "grok-4-1-fast-non-reasoning",
+                            "messages": [{
+                                "role": "user",
+                                "content": [
+                                    {"type": "image_url", "image_url": {"url": data_uri}},
+                                    {"type": "text", "text": (
+                                        "Describe this person in extreme visual detail for an artist to recreate them. "
+                                        "Include: exact face shape, eye shape and color, eyebrow style, nose shape and size, "
+                                        "lip shape, skin tone and complexion, exact hair style and color and texture, "
+                                        "facial hair if any, head shape, ear visibility, neck, jawline, "
+                                        "body build and proportions, posture, clothing details and colors, "
+                                        "any accessories, tattoos, or distinguishing features. "
+                                        "Be extremely specific — describe shapes, proportions, and relative sizes. "
+                                        "Do NOT name or identify the person. Only describe physical appearance."
+                                    )}
+                                ]
+                            }],
+                            "max_tokens": 500,
+                        },
+                        timeout=60,
+                    )
+                    if vision_resp.status_code == 200:
+                        vision_desc = vision_resp.json()["choices"][0]["message"]["content"].strip()
+                        print(f"[CHAR_SHEET] Vision description ({len(vision_desc)} chars): {vision_desc[:100]}...")
+                except Exception as ve:
+                    print(f"[CHAR_SHEET] Vision describe failed: {ve}")
 
-                resp = _requests.post(
-                    "https://api.x.ai/v1/images/generations",
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                    json={
-                        "model": "grok-imagine-image",
-                        "prompt": edit_prompt,
-                        "n": 1,
-                        "image_url": data_uri,
-                    },
-                    timeout=90,
-                )
-            else:
-                # Text-only generation
-                resp = _requests.post(
-                    "https://api.x.ai/v1/images/generations",
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                    json={"model": "grok-imagine-image", "prompt": sheet_prompt, "n": 1},
-                    timeout=90,
-                )
+            # Step 2: Build the sheet prompt from the detailed vision description
+            char_desc = vision_desc or desc
+            sheet_gen_prompt = (
+                f"Professional character design reference sheet. "
+                f"Three views of the SAME person side by side: front view, three-quarter view, side profile. "
+                f"Character appearance: {char_desc}. "
+                f"CRITICAL: All three views must show the EXACT SAME person with identical features. "
+                f"Clean white background, full body visible, consistent proportions, high detail illustration."
+            )
+
+            # Truncate if needed
+            if len(sheet_gen_prompt) > 900:
+                sheet_gen_prompt = sheet_gen_prompt[:897] + "..."
+
+            # Step 3: Generate the sheet image
+            resp = _requests.post(
+                "https://api.x.ai/v1/images/generations",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={"model": "grok-imagine-image", "prompt": sheet_gen_prompt, "n": 1},
+                timeout=90,
+            )
 
             if resp.status_code != 200:
                 print(f"[CHAR_SHEET] API error {resp.status_code}: {resp.text[:200]}")
-                self._send_json({"error": f"API error: {resp.status_code}"}, 500)
+                self._send_json({"error": f"Image generation failed: {resp.status_code}"}, 500)
                 return
 
             data = resp.json()
             img_url = data.get("data", [{}])[0].get("url", "")
-            if not img_url:
-                self._send_json({"error": "No image URL in API response"}, 500)
+            b64_img = data.get("data", [{}])[0].get("b64_json", "")
+
+            if b64_img:
+                img_bytes = _b64.b64decode(b64_img)
+                with open(preview_path, "wb") as f:
+                    f.write(img_bytes)
+            elif img_url:
+                img_resp = _requests.get(img_url, timeout=30)
+                if img_resp.status_code != 200:
+                    self._send_json({"error": "Failed to download sheet image"}, 500)
+                    return
+                with open(preview_path, "wb") as f:
+                    f.write(img_resp.content)
+            else:
+                self._send_json({"error": "No image in API response"}, 500)
                 return
 
-            img_resp = _requests.get(img_url, timeout=30)
-            if img_resp.status_code != 200:
-                self._send_json({"error": "Failed to download sheet image"}, 500)
-                return
-
-            with open(preview_path, "wb") as f:
-                f.write(img_resp.content)
+            # Also save the vision description back to the character for future use
+            if vision_desc:
+                _prompt_os.update_character(char_id, {"physicalDescription": vision_desc})
 
             _record_cost(f"char_sheet_{char_id}", "image")
 
