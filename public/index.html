@@ -9478,14 +9478,54 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!items || items.length === 0) return;
     items.forEach(function(item, idx) {
       var card = document.createElement('div');
-      card.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);';
-      var html = '';
+      card.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);transition:border-color 0.2s;';
+      card.onmouseenter = function(){this.style.borderColor='var(--amber)'};
+      card.onmouseleave = function(){this.style.borderColor='var(--border)'};
+
       if (item.photoUrl) {
-        html += '<img src="' + item.photoUrl + '" style="width:32px;height:32px;object-fit:cover;border-radius:3px;">';
+        var img = document.createElement('img');
+        img.src = item.photoUrl;
+        img.style.cssText = 'width:48px;height:48px;object-fit:cover;border-radius:4px;border:1px solid var(--border);cursor:pointer;transition:transform 0.2s;';
+        img.title = 'Click to view full size';
+        img.onmouseenter = function(){this.style.transform='scale(1.05)'};
+        img.onmouseleave = function(){this.style.transform=''};
+        img.onclick = function(e) {
+          e.stopPropagation();
+          window.open(item.photoUrl, '_blank');
+        };
+        card.appendChild(img);
+      } else {
+        var placeholder = document.createElement('div');
+        placeholder.style.cssText = 'width:48px;height:48px;background:var(--bg);border:1px dashed var(--border);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--text-dim);';
+        placeholder.textContent = '?';
+        card.appendChild(placeholder);
       }
-      html += '<span style="font-size:11px;color:var(--text);">' + (item.name || 'Unnamed') + '</span>';
-      html += '<button onclick="window._dirRemoveQuickEntity(\'' + type + '\',' + idx + ')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;padding:0 2px;">&times;</button>';
-      card.innerHTML = html;
+
+      var info = document.createElement('div');
+      info.style.cssText = 'flex:1;min-width:0;';
+      var nameSpan = document.createElement('div');
+      nameSpan.style.cssText = 'font-size:12px;color:var(--text);font-weight:600;';
+      nameSpan.textContent = item.name || 'Unnamed';
+      info.appendChild(nameSpan);
+      if (item.description) {
+        var descSpan = document.createElement('div');
+        descSpan.style.cssText = 'font-size:9px;color:var(--text-dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        descSpan.textContent = item.description;
+        info.appendChild(descSpan);
+      }
+      card.appendChild(info);
+
+      var removeBtn = document.createElement('button');
+      removeBtn.style.cssText = 'background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 4px;flex-shrink:0;opacity:0.5;transition:opacity 0.2s;';
+      removeBtn.textContent = '\u00D7';
+      removeBtn.onmouseenter = function(){this.style.opacity='1'};
+      removeBtn.onmouseleave = function(){this.style.opacity='0.5'};
+      removeBtn.onclick = function(e) {
+        e.stopPropagation();
+        window._dirRemoveQuickEntity(type, idx);
+      };
+      card.appendChild(removeBtn);
+
       container.appendChild(card);
     });
   }

@@ -643,6 +643,9 @@ def _enrich_scene_with_assets(scene):
                         if pos_char.get("physical"): parts.append(pos_char["physical"])
                         if pos_char.get("name"): parts.insert(0, pos_char["name"])
                         char_description = ", ".join(parts)
+                    # Set character sheet flag from POS record
+                    if pos_char.get("isCharacterSheet"):
+                        scene["is_character_sheet"] = True
                     # Resolve photo — characters use "referencePhoto", not "referenceImagePath"
                     ref_img = pos_char.get("referencePhoto", "") or pos_char.get("referenceImagePath", "")
                     if ref_img and not char_photo_path:
@@ -1193,13 +1196,14 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
             engine_map = {"runway": "gen4.5", "grok": "gen4.5"}
             preview_engine = engine_map.get(preview_engine, preview_engine)
 
-            is_sheet = bool(enriched.get("is_character_sheet", False))
+            # For PREVIEWS: always use referenceImages (not promptImage)
+            # so the scene renders naturally without starting from the character photo
             task_id = _runway_submit_text_to_video(
                 preview_prompt,
                 duration=5,
                 model=preview_engine,
                 character_photo_path=char_photo,
-                is_character_sheet=is_sheet,
+                is_character_sheet=True,  # Force referenceImages mode for previews
             )
 
             print(f"[PREVIEW][{index}] Runway task submitted: {task_id[:16]}...")
