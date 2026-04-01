@@ -3117,6 +3117,9 @@
             <input type="text" class="styled-input" id="dirQuickCharName" placeholder="Or create new — Name" style="width:120px;">
             <input type="text" class="styled-input" id="dirQuickCharDesc" placeholder="Description..." style="flex:1;">
             <label class="btn btn-small" style="cursor:pointer;">Photo<input type="file" accept="image/*" id="dirQuickCharPhoto" style="display:none;" onchange="window._dirAddQuickChar()"></label>
+            <label style="display:flex;align-items:center;gap:3px;font-size:9px;color:var(--text-dim);cursor:pointer;white-space:nowrap;" title="Check if uploading a multi-angle character sheet">
+              <input type="checkbox" id="dirQuickCharIsSheet" style="accent-color:var(--amber);"> Sheet
+            </label>
             <button class="btn btn-small btn-green" onclick="window._dirAddQuickChar()">+</button>
           </div>
         </div>
@@ -3185,14 +3188,13 @@
             </div>
           </div>
         </div>
-        <!-- Face swap + post-processing -->
-        <div style="display:flex;gap:16px;margin-top:12px;align-items:center;">
+        <!-- Face swap + post-processing (SHELVED) -->
+        <!-- <div style="display:flex;gap:16px;margin-top:12px;align-items:center;">
           <label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;cursor:pointer;">
             <input type="checkbox" id="adFaceSwapToggle" style="accent-color:var(--amber);" onchange="window._updateFaceSwapSetting(this.checked)">
             Face Swap
           </label>
-          <span style="font-size:9px;color:var(--text-dim);">Swap AI face with your character photo after each clip</span>
-        </div>
+        </div> -->
         <!-- Creative controls (collapsed by default) -->
         <div style="margin-top:12px;">
           <label class="section-label section-label-dim" style="cursor:pointer;" onclick="document.getElementById('autoCreativeControls').style.display=document.getElementById('autoCreativeControls').style.display==='none'?'flex':'none'">Creative Controls &#9662;</label>
@@ -9562,10 +9564,16 @@ document.addEventListener('DOMContentLoaded', function() {
         descSpan.textContent = item.description;
         info.appendChild(descSpan);
       }
+      if (item.isCharacterSheet) {
+        var sheetBadge = document.createElement('div');
+        sheetBadge.style.cssText = 'font-size:8px;color:var(--amber);letter-spacing:1px;margin-top:2px;';
+        sheetBadge.textContent = 'CHARACTER SHEET';
+        info.appendChild(sheetBadge);
+      }
       card.appendChild(info);
 
-      // "Generate Sheet" button for any entity with photos
-      if (item.photoUrl && item.serverId) {
+      // "Generate Sheet" button — SHELVED for now
+      if (false && item.photoUrl && item.serverId) {
         var sheetBtn = document.createElement('button');
         sheetBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);cursor:pointer;font-size:9px;padding:2px 6px;border-radius:3px;flex-shrink:0;opacity:0.7;transition:opacity 0.2s;';
         sheetBtn.textContent = 'Sheet';
@@ -9627,10 +9635,12 @@ document.addEventListener('DOMContentLoaded', function() {
     var nameEl = document.getElementById('dirQuickCharName');
     var descEl = document.getElementById('dirQuickCharDesc');
     var photoEl = document.getElementById('dirQuickCharPhoto');
+    var sheetEl = document.getElementById('dirQuickCharIsSheet');
     var name = nameEl ? nameEl.value.trim() : '';
     var desc = descEl ? descEl.value.trim() : '';
+    var isSheet = sheetEl ? sheetEl.checked : false;
     if (!name) { alert('Character name is required.'); return; }
-    // Read photo file BEFORE clearing input — create a Blob copy to survive input.value=''
+    // Read photo file BEFORE clearing input
     var photoFile = null;
     var localPhotoUrl = null;
     if (photoEl && photoEl.files && photoEl.files[0]) {
@@ -9639,16 +9649,17 @@ document.addEventListener('DOMContentLoaded', function() {
       photoFile.name = origFile.name;
       localPhotoUrl = URL.createObjectURL(origFile);
     }
-    var entry = { name: name, description: desc, photoUrl: localPhotoUrl, serverId: null };
+    var entry = { name: name, description: desc, photoUrl: localPhotoUrl, serverId: null, isCharacterSheet: isSheet };
     window._dirQuickChars.push(entry);
     _dirRenderCards('char', window._dirQuickChars, 'directorCharsInline');
-    // Clear inputs immediately
+    // Clear inputs
     if (nameEl) nameEl.value = '';
     if (descEl) descEl.value = '';
     if (photoEl) photoEl.value = '';
+    if (sheetEl) sheetEl.checked = false;
     // Create entity then upload photo
     fetch('/api/pos/characters', { method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ name: name, physical: desc })
+      body: JSON.stringify({ name: name, physical: desc, isCharacterSheet: isSheet })
     }).then(function(r){ return r.json(); }).then(function(data){
       var id = data.id || (data.character && data.character.id);
       if (id) {
@@ -9777,7 +9788,7 @@ document.addEventListener('DOMContentLoaded', function() {
     fetch('/api/pos/characters').then(function(r){ return r.json(); }).then(function(data){
       var items = Array.isArray(data) ? data : (data.characters || data.items || []);
       window._dirQuickChars = items.map(function(c){
-        return { name: c.name || '', description: c.description || c.physical || '', photoUrl: _entityPhotoUrl(c, 'characters'), serverId: c.id || null };
+        return { name: c.name || '', description: c.description || c.physical || '', photoUrl: _entityPhotoUrl(c, 'characters'), serverId: c.id || null, isCharacterSheet: !!c.isCharacterSheet };
       });
       _dirRenderCards('char', window._dirQuickChars, 'directorCharsInline');
     }).catch(function(){});

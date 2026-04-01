@@ -821,16 +821,17 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
             if char_desc:
                 if is_sheet:
                     gen_prompt = (
-                        f"Character reference: {char_desc}. "
-                        f"This character must match the reference exactly — same face shape, same eyes, same skin tone, same hair, same body proportions. "
-                        f"Do not change or reinterpret the character's appearance. "
+                        f"The reference image is a CHARACTER DESIGN SHEET showing the same person from multiple angles. "
+                        f"This is ONE single character: {char_desc}. "
+                        f"You MUST use this exact character in the video — same face, same proportions, same features, same hair, same skin tone. "
+                        f"Do NOT create a different person. The character sheet IS the character. "
                         f"{gen_prompt}"
                     )
                 else:
                     gen_prompt = (
-                        f"Character reference: {char_desc}. "
-                        f"This character must match the reference exactly — same face, same eyes, same skin tone, same hair, same build. "
-                        f"Maintain consistent identity throughout. "
+                        f"The person in the reference image: {char_desc}. "
+                        f"Match this person exactly — same face, same eyes, same skin tone, same hair, same build. "
+                        f"Maintain consistent identity throughout the video. "
                         f"{gen_prompt}"
                     )
                 print(f"[RUNWAY/{model}][{index}] Using character description ({len(char_desc)} chars, sheet={is_sheet})")

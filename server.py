@@ -926,7 +926,7 @@ def _run_regen(scene_index: int, new_prompt: str):
         char_photo = scene.get("character_photo_path", "") or None
         clip_path = generate_scene(scene, scene_index, CLIPS_DIR, progress_cb=on_progress, cost_cb=_record_cost, photo_path=char_photo)
         # Face swap post-processing if enabled
-        clip_path = _maybe_face_swap(clip_path, char_photo)
+        # clip_path = _maybe_face_swap(clip_path, char_photo)  # SHELVED
         scene["clip_path"] = clip_path
         plan["scenes"][scene_index] = scene
 
@@ -1044,7 +1044,7 @@ def _run_generation_approved():
                                            progress_cb=_prog, cost_cb=_record_cost,
                                            photo_path=char_photo)
                 # Face swap post-processing if enabled
-                clip_path = _maybe_face_swap(clip_path, char_photo)
+                # clip_path = _maybe_face_swap(clip_path, char_photo)  # SHELVED
                 clip_paths[orig_i] = clip_path
                 on_progress(local_idx, "done")
                 _record_prompt_history(scene_copy.get("prompt", ""), scene_index=orig_i)
@@ -1158,14 +1158,23 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
                 except Exception:
                     pass
 
+            is_sheet = enriched.get("is_character_sheet", False)
             if char_desc:
-                preview_prompt = (
-                    f"Character reference: {char_desc}. "
-                    f"Match the character reference exactly — same face, same features, same build. "
-                    f"{full_prompt}"
-                )
+                if is_sheet:
+                    preview_prompt = (
+                        f"The reference is a CHARACTER DESIGN SHEET showing one person from multiple angles. "
+                        f"Use this exact character: {char_desc}. "
+                        f"Same face, same proportions, same features. Do NOT create a different person. "
+                        f"{full_prompt}"
+                    )
+                else:
+                    preview_prompt = (
+                        f"The person in the reference: {char_desc}. "
+                        f"Match exactly — same face, same features, same build. "
+                        f"{full_prompt}"
+                    )
             else:
-                preview_prompt = f"Match the character reference image exactly. {full_prompt}"
+                preview_prompt = f"Use the character from the reference image exactly. {full_prompt}"
 
             # Add costume description if available (since costume photo can't be a second image input)
             costume_photo = enriched.get("costume_photo_path", "") if scene_data else ""
@@ -1847,7 +1856,7 @@ def _run_manual_generate_scene(scene_id: str):
 
         # Face swap post-processing if enabled
         char_photo = scene.get("character_photo_path", "") or scene.get("photo_path", "") or None
-        clip_path = _maybe_face_swap(clip_path, char_photo)
+        # clip_path = _maybe_face_swap(clip_path, char_photo)  # SHELVED
 
         scene["clip_path"] = clip_path
         scene["has_clip"] = True
