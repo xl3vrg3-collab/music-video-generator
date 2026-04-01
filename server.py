@@ -1215,47 +1215,88 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
             # Return the error instead of silently falling back
             return {"error": f"Runway preview failed: {str(e)[:200]}"}
 
-    # --- Strategy B: Grok image generation (text-only fallback) ---
+    # --- Strategy B: Runway text-to-video (no character photo) ---
     try:
-        from lib.video_generator import _get_api_key
-        import requests as _req
-
-        print(f"[PREVIEW][{index}] Using Grok image generation (no character photo)")
-
-        api_key = _get_api_key()
-        resp = _req.post(
-            "https://api.x.ai/v1/images/generations",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": "grok-imagine-image", "prompt": full_prompt, "n": 1},
-            timeout=60,
+        from lib.video_generator import (
+            _runway_submit_text_to_video, _runway_poll, _download
         )
-        if resp.status_code != 200:
-            return {"error": f"API {resp.status_code}: {resp.text[:200]}"}
+        import sys as _sys3
 
-        data = resp.json()
-        img_url = (data.get("data") or [{}])[0].get("url", "")
-        if not img_url:
-            b64 = (data.get("data") or [{}])[0].get("b64_json", "")
-            if b64:
-                import base64
-                img_bytes = base64.b64decode(b64)
-                with open(out_path, "wb") as f:
-                    f.write(img_bytes)
-                _record_cost(f"thumb_{index}", "image")
-                return {"preview_url": f"/api/scene-thumbnails/scene_{index}.jpg"}
-            return {"error": "No image data in API response"}
+        _sys3.stderr.write(f"[PREVIEW][{index}] Using Runway text-to-video (no character photo)\n")
+        _sys3.stderr.flush()
 
-        img_resp = _req.get(img_url, timeout=30)
-        if img_resp.status_code != 200:
-            return {"error": "Failed to download image from URL"}
+        preview_engine = "gen4.5"
+        if scene_data:
+            eng = scene_data.get("engine", "")
+            if eng and eng not in ("grok", "openai"):
+                preview_engine = eng
 
-        with open(out_path, "wb") as f:
-            f.write(img_resp.content)
-        _record_cost(f"thumb_{index}", "image")
-        return {"preview_url": f"/api/scene-thumbnails/scene_{index}.jpg"}
+        # Add costume/environment descriptions if available
+        enriched_prompt = full_prompt
+        if scene_data:
+            enriched_b = dict(scene_data)
+            _enrich_scene_with_assets(enriched_b)
+            cos_p = enriched_b.get("costume_photo_path", "")
+            env_p = enriched_b.get("environment_photo_path", "")
+            if cos_p and os.path.isfile(cos_p):
+                try:
+                    from lib.video_generator import _describe_entity_photo
+                    cd = _describe_entity_photo(cos_p, "costume")
+                    if cd: enriched_prompt = f"{enriched_prompt}. Wearing: {cd}"
+                except Exception: pass
+            if env_p and os.path.isfile(env_p):
+                try:
+                    from lib.video_generator import _describe_entity_photo
+                    ed = _describe_entity_photo(env_p, "environment")
+                    if ed: enriched_prompt = f"{enriched_prompt}. Setting: {ed}"
+                except Exception: pass
+
+        if len(enriched_prompt) > 500:
+            enriched_prompt = enriched_prompt[:497] + "..."
+
+        # Use environment photo as promptImage if available (visual scene reference)
+        env_photo_for_input = None
+        if scene_data:
+            ep = enriched_b.get("environment_photo_path", "") if 'enriched_b' in dir() else ""
+            if ep and os.path.isfile(ep):
+                env_photo_for_input = ep
+
+        task_id = _runway_submit_text_to_video(
+            enriched_prompt,
+            duration=5,
+            model=preview_engine,
+            first_frame_path=env_photo_for_input,  # Use env photo as starting frame if available
+        )
+
+        _sys3.stderr.write(f"[PREVIEW][{index}] Runway text-to-video task: {task_id[:16]}...\n")
+        _sys3.stderr.flush()
+        video_info = _runway_poll(task_id)
+
+        clip_path = os.path.join(SCENE_THUMBNAILS_DIR, f"scene_{index}_preview.mp4")
+        _download(video_info["url"], clip_path)
+
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", clip_path, "-vframes", "1", "-q:v", "2", out_path],
+            capture_output=True, timeout=30,
+            creationflags=0x08000000 if os.name == "nt" else 0,
+        )
+
+        if os.path.isfile(clip_path):
+            _record_cost(f"thumb_{index}", "video_preview")
+            return {
+                "preview_url": f"/api/scene-thumbnails/scene_{index}.jpg",
+                "video_url": f"/api/scene-thumbnails/scene_{index}_preview.mp4",
+            }
+
+        # If clip download failed somehow, just return what we have
+        if os.path.isfile(out_path):
+            _record_cost(f"thumb_{index}", "video_preview")
+            return {"preview_url": f"/api/scene-thumbnails/scene_{index}.jpg"}
+
+        return {"error": "Preview generation produced no output"}
 
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"Preview failed: {str(e)[:200]}"}
 
 
 def _run_preview_batch(scenes_data: list):
@@ -1378,7 +1419,7 @@ def _load_settings() -> dict:
                 return json.load(f)
         except (json.JSONDecodeError, IOError):
             pass
-    return {"default_engine": "grok", "character_references": {}}
+    return {"default_engine": "gen4_5", "character_references": {}}
 
 
 def _save_settings(settings: dict):
@@ -6346,7 +6387,7 @@ class Handler(BaseHTTPRequestHandler):
 
             # Determine which engine to use for preview
             settings = _load_settings()
-            preview_engine = settings.get("default_engine", "grok")
+            preview_engine = settings.get("default_engine", "gen4_5")
             # Read body for engine override if provided
             try:
                 body_data = json.loads(self._read_body()) if self.headers.get("Content-Length") else {}
@@ -8058,7 +8099,7 @@ class Handler(BaseHTTPRequestHandler):
         STITCH_PER_CLIP = 5  # ~5 seconds per clip for stitching
 
         settings = _load_settings()
-        default_engine = settings.get("default_engine", "grok")
+        default_engine = settings.get("default_engine", "gen4_5")
 
         total = 0
         for s in scenes:

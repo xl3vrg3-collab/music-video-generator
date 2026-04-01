@@ -1562,11 +1562,11 @@ def generate_scene(scene: dict, index: int, output_dir: str,
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    # Determine engine: scene-level > global settings > default "grok"
+    # Determine engine: scene-level > global settings > default "gen4_5" (Runway)
     engine = scene.get("engine", None)
     if not engine:
         settings = _load_settings()
-        engine = settings.get("default_engine", ENGINE_GROK)
+        engine = settings.get("default_engine", "gen4_5")
     engine = engine.lower()
 
     # Auto-resolve character references if no explicit photo provided
