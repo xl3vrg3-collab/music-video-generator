@@ -601,30 +601,22 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
     if costume_photo_paths:
         all_costume_photos = [p for p in costume_photo_paths if p and os.path.isfile(p)]
 
-    # Priority: CHARACTER is king. Character photo → promptImage for maximum likeness.
-    # Everything else (costume, environment) → referenceImages as supplementary.
+    # Character IN the scene (not starting from the photo):
+    # ALL photos go to referenceImages. No promptImage from character.
+    # The text prompt drives the scene composition while photos provide identity.
     #
-    # 1. First character photo → promptImage (strongest likeness)
-    # 2. Additional characters → referenceImages type "character"
-    # 3. Costume photos → referenceImages type "style"
-    # 4. Environment photo → referenceImages type "style" (NOT promptImage)
-    # 5. First frame → overrides promptImage if set
+    # 1. Character photos → referenceImages type "character" (identity reference)
+    # 2. Costume photos → referenceImages type "style"
+    # 3. Environment photo → referenceImages type "style"
 
-    if all_char_photos:
-        payload["promptImage"] = _photo_to_data_uri(all_char_photos[0])
-        _use_i2v = True
-        _sys_r.stderr.write(f"[RUNWAY] Character photo → promptImage (maximum likeness)\n")
-        # Additional characters as referenceImages
-        for cp in all_char_photos[1:]:
-            reference_images.append({"uri": _photo_to_data_uri(cp), "type": "character"})
-            _sys_r.stderr.write(f"[RUNWAY] Additional character → referenceImages\n")
+    for cp in all_char_photos:
+        reference_images.append({"uri": _photo_to_data_uri(cp), "type": "character"})
+        _sys_r.stderr.write(f"[RUNWAY] Character photo → referenceImages (character)\n")
 
-    # Costume photos → referenceImages
     for cp in all_costume_photos:
         reference_images.append({"uri": _photo_to_data_uri(cp), "type": "style"})
         _sys_r.stderr.write(f"[RUNWAY] Costume photo → referenceImages (style)\n")
 
-    # Environment photo → referenceImages (NOT promptImage — character is more important)
     if environment_photo_path and os.path.isfile(environment_photo_path):
         reference_images.append({"uri": _photo_to_data_uri(environment_photo_path), "type": "style"})
         _sys_r.stderr.write(f"[RUNWAY] Environment photo → referenceImages (style)\n")
