@@ -1250,11 +1250,12 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
             if len(preview_prompt) > 800:
                 preview_prompt = preview_prompt[:797] + "..."
 
-            # Get engine
+            # Get engine — check scene, then director state, then default
             preview_engine = (scene_data or {}).get("engine", "")
             if not preview_engine:
                 settings = _load_settings()
-                preview_engine = settings.get("default_engine", "gen4.5")
+                ds = settings.get("director_state", {})
+                preview_engine = ds.get("engine", "") or settings.get("default_engine", "gen4.5")
             engine_map = {"runway": "gen4.5", "grok": "gen4.5"}
             preview_engine = engine_map.get(preview_engine, preview_engine)
 
@@ -1324,6 +1325,12 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
             eng = scene_data.get("engine", "")
             if eng and eng not in ("grok", "openai"):
                 preview_engine = eng
+        if preview_engine in ("gen4.5", "runway"):
+            settings_b = _load_settings()
+            ds_b = settings_b.get("director_state", {})
+            eng_b = ds_b.get("engine", "")
+            if eng_b and eng_b not in ("grok", "openai"):
+                preview_engine = eng_b
 
         # Add costume/environment descriptions if available
         enriched_prompt = full_prompt
