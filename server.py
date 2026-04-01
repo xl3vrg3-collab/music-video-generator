@@ -1220,8 +1220,34 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
             print(f"[PREVIEW][{index}] Using Runway preview with character photo: {char_photo}")
 
             preview_prompt = full_prompt
-            if len(preview_prompt) > 500:
-                preview_prompt = preview_prompt[:497] + "..."
+
+            # Inject environment and costume descriptions into prompt
+            env_desc = enriched.get("environment_description", "")
+            if env_desc and env_desc.lower() not in preview_prompt.lower():
+                preview_prompt = f"{preview_prompt}. Setting: {env_desc}"
+            env_p = enriched.get("environment_photo_path", "")
+            if env_p and os.path.isfile(env_p):
+                try:
+                    ed = _describe_entity_photo(env_p, "environment")
+                    if ed and ed.lower() not in preview_prompt.lower():
+                        preview_prompt = f"{preview_prompt}. Environment (from photo): {ed}"
+                except Exception:
+                    pass
+
+            cos_desc = enriched.get("costume_description", "")
+            if cos_desc and cos_desc.lower() not in preview_prompt.lower():
+                preview_prompt = f"{preview_prompt}. Wearing: {cos_desc}"
+            cos_p = enriched.get("costume_photo_path", "")
+            if cos_p and os.path.isfile(cos_p):
+                try:
+                    cd = _describe_entity_photo(cos_p, "costume")
+                    if cd and cd.lower() not in preview_prompt.lower():
+                        preview_prompt = f"{preview_prompt}. Costume (from photo): {cd}"
+                except Exception:
+                    pass
+
+            if len(preview_prompt) > 800:
+                preview_prompt = preview_prompt[:797] + "..."
 
             # Get engine
             preview_engine = (scene_data or {}).get("engine", "")
@@ -1240,9 +1266,10 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
             _prev_sys.stderr.write(f"[PREVIEW][{index}] Sending {len(all_char_photos)} char photos, {len(all_costume_photos)} costume photos, env={'YES' if env_photo else 'NO'}\n")
             _prev_sys.stderr.flush()
 
+            scene_duration = int(scene_data.get("duration", 5)) if scene_data else 5
             task_id = _runway_submit_text_to_video(
                 preview_prompt,
-                duration=5,
+                duration=scene_duration,
                 model=preview_engine,
                 character_photo_paths=all_char_photos,
                 costume_photo_paths=all_costume_photos,
@@ -1327,11 +1354,12 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
             if ep and os.path.isfile(ep):
                 env_photo_for_input = ep
 
+        scene_dur = int(scene_data.get("duration", 5)) if scene_data else 5
         task_id = _runway_submit_text_to_video(
             enriched_prompt,
-            duration=5,
+            duration=scene_dur,
             model=preview_engine,
-            first_frame_path=env_photo_for_input,  # Use env photo as starting frame if available
+            first_frame_path=env_photo_for_input,
         )
 
         _sys3.stderr.write(f"[PREVIEW][{index}] Runway text-to-video task: {task_id[:16]}...\n")
