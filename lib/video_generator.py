@@ -601,28 +601,21 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
     if costume_photo_paths:
         all_costume_photos = [p for p in costume_photo_paths if p and os.path.isfile(p)]
 
-    # Strategy: environment as promptImage (scene starts here) +
-    # character as referenceImages (identity appears in the scene).
-    # This gives: correct setting + character appearing naturally.
-    #
-    # If no environment photo: text-to-video with character as referenceImages.
-    # The strong character description in the prompt text does the heavy lifting.
+    # All photos go to referenceImages — the text prompt drives the scene.
+    # The AI composes the scene from the prompt while using photos as references.
+    # No promptImage unless explicitly set via first_frame.
 
-    # Environment → promptImage (scene starts from this setting)
-    if environment_photo_path and os.path.isfile(environment_photo_path):
-        payload["promptImage"] = _photo_to_data_uri(environment_photo_path)
-        _use_i2v = True
-        _sys_r.stderr.write(f"[RUNWAY] Environment → promptImage (scene setting)\n")
-
-    # Characters → referenceImages (identity)
     for cp in all_char_photos:
         reference_images.append({"uri": _photo_to_data_uri(cp), "type": "character"})
-        _sys_r.stderr.write(f"[RUNWAY] Character → referenceImages (identity)\n")
+        _sys_r.stderr.write(f"[RUNWAY] Character → referenceImages (character)\n")
 
-    # Costumes → referenceImages (style)
     for cp in all_costume_photos:
         reference_images.append({"uri": _photo_to_data_uri(cp), "type": "style"})
         _sys_r.stderr.write(f"[RUNWAY] Costume → referenceImages (style)\n")
+
+    if environment_photo_path and os.path.isfile(environment_photo_path):
+        reference_images.append({"uri": _photo_to_data_uri(environment_photo_path), "type": "style"})
+        _sys_r.stderr.write(f"[RUNWAY] Environment → referenceImages (style)\n")
 
     # First frame overrides promptImage
     if first_frame_path and os.path.isfile(first_frame_path):
