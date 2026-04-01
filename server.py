@@ -3172,7 +3172,11 @@ class Handler(BaseHTTPRequestHandler):
 
         elif re.match(r'^/api/pos/characters/([^/]+)/preview$', path):
             m = re.match(r'^/api/pos/characters/([^/]+)/preview$', path)
-            self._send_file(os.path.join(POS_PREVIEWS_CHARS_DIR, m.group(1) + ".jpg"))
+            cid = m.group(1)
+            # Try sheet first, then regular preview
+            sheet_path = os.path.join(POS_PREVIEWS_CHARS_DIR, f"{cid}_sheet.jpg")
+            reg_path = os.path.join(POS_PREVIEWS_CHARS_DIR, f"{cid}.jpg")
+            self._send_file(sheet_path if os.path.isfile(sheet_path) else reg_path)
 
         elif re.match(r'^/api/pos/costumes/([^/]+)/preview$', path):
             m = re.match(r'^/api/pos/costumes/([^/]+)/preview$', path)

@@ -3185,6 +3185,14 @@
             </div>
           </div>
         </div>
+        <!-- Face swap + post-processing -->
+        <div style="display:flex;gap:16px;margin-top:12px;align-items:center;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;cursor:pointer;">
+            <input type="checkbox" id="adFaceSwapToggle" style="accent-color:var(--amber);" onchange="window._updateFaceSwapSetting(this.checked)">
+            Face Swap
+          </label>
+          <span style="font-size:9px;color:var(--text-dim);">Swap AI face with your character photo after each clip</span>
+        </div>
         <!-- Creative controls (collapsed by default) -->
         <div style="margin-top:12px;">
           <label class="section-label section-label-dim" style="cursor:pointer;" onclick="document.getElementById('autoCreativeControls').style.display=document.getElementById('autoCreativeControls').style.display==='none'?'flex':'none'">Creative Controls &#9662;</label>
@@ -6161,9 +6169,11 @@ document.addEventListener('DOMContentLoaded', function() {
       globalSettings = { default_engine: 'grok', character_references: {}, ...setData };
       const geSel = $('globalEngineSelect');
       if (geSel) geSel.value = globalSettings.default_engine;
-      // Sync face swap checkbox
+      // Sync face swap checkboxes (both Manual and Auto)
       var fsCb = $('faceSwapCheckbox');
       if (fsCb) fsCb.checked = !!globalSettings.face_swap_enabled;
+      var fsCbAuto = $('adFaceSwapToggle');
+      if (fsCbAuto) fsCbAuto.checked = !!globalSettings.face_swap_enabled;
       renderCharacterReferences();
     } catch (e) { console.warn('Failed to load engines/settings:', e); }
   }
@@ -6607,7 +6617,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
   window._updateFaceSwapSetting = async function(enabled) {
     const data = await apiPost('/api/settings', { face_swap_enabled: enabled });
-    if (data.ok) { globalSettings.face_swap_enabled = enabled; }
+    if (data.ok) {
+      globalSettings.face_swap_enabled = enabled;
+      // Sync both checkboxes
+      var cb1 = $('faceSwapCheckbox');
+      var cb2 = $('adFaceSwapToggle');
+      if (cb1) cb1.checked = enabled;
+      if (cb2) cb2.checked = enabled;
+    }
   };
 
   // ---- Character references ----
@@ -9547,8 +9564,8 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       card.appendChild(info);
 
-      // "Generate Sheet" button for characters with photos
-      if (type === 'char' && item.photoUrl && item.serverId) {
+      // "Generate Sheet" button for any entity with photos
+      if (item.photoUrl && item.serverId) {
         var sheetBtn = document.createElement('button');
         sheetBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);cursor:pointer;font-size:9px;padding:2px 6px;border-radius:3px;flex-shrink:0;opacity:0.7;transition:opacity 0.2s;';
         sheetBtn.textContent = 'Sheet';
@@ -9558,16 +9575,22 @@ document.addEventListener('DOMContentLoaded', function() {
         sheetBtn.onclick = function(e) {
           e.stopPropagation();
           var sid = item.serverId;
+          var entityType = type === 'char' ? 'characters' : type === 'costume' ? 'costumes' : 'environments';
           sheetBtn.textContent = '...';
           sheetBtn.disabled = true;
-          fetch('/api/pos/characters/'+sid+'/generate-sheet', {method:'POST'})
+          fetch('/api/pos/'+entityType+'/'+sid+'/generate-sheet', {method:'POST'})
             .then(function(r){return r.json()})
             .then(function(d){
-              if (d.ok && d.preview_url) { sheetBtn.textContent = 'Done'; }
-              else { sheetBtn.textContent = 'Err'; }
+              if (d.ok && d.preview_url) {
+                sheetBtn.textContent = 'Done';
+                // Update the card photo to show the generated sheet
+                var cardImg = card.querySelector('img');
+                if (cardImg) cardImg.src = d.preview_url + '?t=' + Date.now();
+              }
+              else { sheetBtn.textContent = d.error ? 'Err' : 'Err'; alert(d.error || 'Sheet generation failed'); }
             })
-            .catch(function(){ sheetBtn.textContent = 'Err'; })
-            .finally(function(){ setTimeout(function(){ sheetBtn.textContent = 'Sheet'; sheetBtn.disabled = false; }, 2000); });
+            .catch(function(err){ sheetBtn.textContent = 'Err'; alert('Failed: ' + err.message); })
+            .finally(function(){ setTimeout(function(){ sheetBtn.textContent = 'Sheet'; sheetBtn.disabled = false; }, 3000); });
         };
         card.appendChild(sheetBtn);
       }
