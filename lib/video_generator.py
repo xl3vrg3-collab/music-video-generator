@@ -493,6 +493,24 @@ RUNWAY_RATIO_MAP = {
     "720:1280": "720:1280",
 }
 
+# Kling and Veo require different resolutions
+KLING_RATIO_MAP = {
+    "16:9": "1920:1080",
+    "9:16": "1080:1920",
+    "1:1": "1440:1440",
+    "1920:1080": "1920:1080",
+    "1080:1920": "1080:1920",
+    "1440:1440": "1440:1440",
+}
+
+def _get_ratio_for_model(model, ratio="16:9"):
+    """Return the correct ratio string for the given model."""
+    kling_veo_models = {"kling3.0_pro", "kling3.0_standard", "kling_pro", "kling_standard",
+                        "veo3", "veo3.1", "veo3.1_fast", "veo3_1", "veo3_1_fast"}
+    if model in kling_veo_models:
+        return KLING_RATIO_MAP.get(ratio, "1920:1080")
+    return RUNWAY_RATIO_MAP.get(ratio, "1280:720")
+
 
 def _runway_submit_image_to_video(prompt: str, image_path: str,
                                    duration: int = 5,
@@ -521,7 +539,7 @@ def _runway_submit_image_to_video(prompt: str, image_path: str,
         "promptImage": prompt_image,
         "promptText": prompt,
         "duration": duration,
-        "ratio": RUNWAY_RATIO_MAP.get(ratio, "1280:720"),
+        "ratio": _get_ratio_for_model(model, ratio),
     }
 
     # Add last frame (end keyframe) if provided
@@ -530,7 +548,7 @@ def _runway_submit_image_to_video(prompt: str, image_path: str,
         print(f"[RUNWAY] Including lastFrame keyframe from {last_frame_path}")
 
     print(f"[RUNWAY] Submitting image-to-video: model={model}, prompt={prompt[:80]}..., "
-          f"duration={duration}s, ratio={RUNWAY_RATIO_MAP.get(ratio, '1280:720')}")
+          f"duration={duration}s, ratio={_get_ratio_for_model(model, ratio)}")
 
     resp = requests.post(
         f"{RUNWAY_API_BASE}/image_to_video",
@@ -590,7 +608,7 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
         "model": model,
         "promptText": prompt,
         "duration": duration,
-        "ratio": RUNWAY_RATIO_MAP.get(ratio, "1280:720"),
+        "ratio": _get_ratio_for_model(model, ratio),
     }
 
     import sys as _sys_r
