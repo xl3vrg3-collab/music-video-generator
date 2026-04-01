@@ -1139,16 +1139,33 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
 
             print(f"[PREVIEW][{index}] Using Runway preview with character photo: {char_photo}")
 
-            # Build clean, concise preview prompt
-            # Runway has strict moderation — keep prompt short and visual
+            # Build clean preview prompt — the character photo IS the image input,
+            # so the prompt should focus on action/scene, not character description
             preview_prompt = full_prompt
+
+            # Add costume description if available (since costume photo can't be a second image input)
+            costume_photo = enriched.get("costume_photo_path", "") if scene_data else ""
+            if costume_photo and os.path.isfile(costume_photo):
+                try:
+                    cos_desc = _describe_entity_photo(costume_photo, "costume")
+                    if cos_desc:
+                        preview_prompt = f"{preview_prompt}. Wearing: {cos_desc}"
+                except Exception:
+                    pass
+
+            # Add environment description if available
+            env_photo = enriched.get("environment_photo_path", "") if scene_data else ""
+            if env_photo and os.path.isfile(env_photo):
+                try:
+                    env_desc = _describe_entity_photo(env_photo, "environment")
+                    if env_desc:
+                        preview_prompt = f"{preview_prompt}. Setting: {env_desc}"
+                except Exception:
+                    pass
 
             # Truncate if too long (Runway moderation flags long prompts)
             if len(preview_prompt) > 500:
                 preview_prompt = preview_prompt[:497] + "..."
-
-            # Prepend simple character reference instruction
-            preview_prompt = f"The person shown in the reference image. Maintain exact likeness throughout. {preview_prompt}"
 
             # Generate a short clip via Runway — use the user's selected engine
             preview_engine = (scene_data or {}).get("engine", "")

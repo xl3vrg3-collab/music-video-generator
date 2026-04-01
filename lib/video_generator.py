@@ -579,26 +579,26 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
         "ratio": RUNWAY_RATIO_MAP.get(ratio, "1280:720"),
     }
 
-    # Keyframe support: if first_frame is set, switch to image-to-video endpoint
+    # Determine image-to-video mode priority:
+    # 1. Character photo → use as promptImage (best for character likeness)
+    # 2. First frame → use as promptImage (for scene continuity)
+    # 3. Neither → text-to-video
     _use_i2v = False
-    if first_frame_path and os.path.isfile(first_frame_path):
+
+    if character_photo_path and os.path.isfile(character_photo_path):
+        # Character photo becomes the promptImage — Runway generates video
+        # that starts from this image and keeps the character consistent
+        payload["promptImage"] = _photo_to_data_uri(character_photo_path)
+        _use_i2v = True
+        print(f"[RUNWAY] Character photo → promptImage (image-to-video for likeness)")
+    elif first_frame_path and os.path.isfile(first_frame_path):
         payload["promptImage"] = _photo_to_data_uri(first_frame_path)
         _use_i2v = True
         print(f"[RUNWAY] Using first_frame as promptImage (image-to-video mode)")
+
     if last_frame_path and os.path.isfile(last_frame_path):
         payload["lastFrame"] = _photo_to_data_uri(last_frame_path)
         print(f"[RUNWAY] Including lastFrame keyframe")
-
-    print(f"[RUNWAY] Submitting {'image' if _use_i2v else 'text'}-to-video: model={model}, duration={duration}s, "
-          f"ratio={RUNWAY_RATIO_MAP.get(ratio, '1280:720')}, prompt={prompt[:80]}...")
-
-    # Add character reference if photo provided
-    if character_photo_path and os.path.isfile(character_photo_path):
-        photo_uri = _photo_to_data_uri(character_photo_path)
-        payload["referenceImages"] = [
-            {"uri": photo_uri, "type": "character"}
-        ]
-        print(f"[RUNWAY] Using photo as CHARACTER REFERENCE (not first frame)")
 
     print(f"[RUNWAY] Submitting {'image' if _use_i2v else 'text'}-to-video: model={model}, "
           f"char_ref={'YES' if character_photo_path else 'NO'}, "
