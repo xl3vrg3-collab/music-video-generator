@@ -13081,6 +13081,39 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       previewSection.appendChild(previewBody);
 
+      // Reference indicators — show which assets will be used for preview
+      var refIndicator = document.createElement('div');
+      refIndicator.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;justify-content:center;';
+      var charCount = (scene.characters || []).length;
+      var cosCount = (scene.costumes || []).length;
+      var envCount = (scene.environments || []).length;
+      var hasCharPhotos = (scene.characters || []).some(function(c){ return c.id && !c.id.startsWith('draft_'); });
+      if (charCount > 0) {
+        var charChip = document.createElement('span');
+        charChip.style.cssText = 'font-size:8px;padding:2px 6px;border-radius:3px;letter-spacing:1px;border:1px solid ' + (hasCharPhotos ? 'var(--green)' : 'var(--amber)') + ';color:' + (hasCharPhotos ? 'var(--green)' : 'var(--amber)') + ';';
+        charChip.textContent = hasCharPhotos ? charCount + ' char ref' + (charCount > 1 ? 's' : '') : charCount + ' char (no photo)';
+        refIndicator.appendChild(charChip);
+      }
+      if (cosCount > 0) {
+        var cosChip = document.createElement('span');
+        cosChip.style.cssText = 'font-size:8px;padding:2px 6px;border-radius:3px;letter-spacing:1px;border:1px solid var(--amber);color:var(--amber);';
+        cosChip.textContent = cosCount + ' costume ref' + (cosCount > 1 ? 's' : '');
+        refIndicator.appendChild(cosChip);
+      }
+      if (envCount > 0) {
+        var envChip = document.createElement('span');
+        envChip.style.cssText = 'font-size:8px;padding:2px 6px;border-radius:3px;letter-spacing:1px;border:1px solid var(--green);color:var(--green);';
+        envChip.textContent = envCount + ' env ref' + (envCount > 1 ? 's' : '');
+        refIndicator.appendChild(envChip);
+      }
+      if (charCount === 0 && cosCount === 0 && envCount === 0) {
+        var noRef = document.createElement('span');
+        noRef.style.cssText = 'font-size:8px;color:var(--text-dim);';
+        noRef.textContent = 'No asset references — preview may drift';
+        refIndicator.appendChild(noRef);
+      }
+      previewSection.appendChild(refIndicator);
+
       var previewActions = document.createElement('div');
       previewActions.style.cssText = 'display:flex;gap:6px;margin-top:8px;justify-content:center;';
 

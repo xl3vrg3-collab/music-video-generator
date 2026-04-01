@@ -1116,6 +1116,14 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
         enriched = dict(scene_data)
         _enrich_scene_with_assets(enriched)
         char_photo = enriched.get("character_photo_path", "") or None
+        # Diagnostic logging
+        chars_in_scene = scene_data.get("characters", [])
+        print(f"[PREVIEW][{index}] Scene characters: {chars_in_scene}")
+        print(f"[PREVIEW][{index}] Resolved char_photo: {char_photo}")
+        print(f"[PREVIEW][{index}] costume_photo: {enriched.get('costume_photo_path', 'NONE')}")
+        print(f"[PREVIEW][{index}] env_photo: {enriched.get('environment_photo_path', 'NONE')}")
+    else:
+        print(f"[PREVIEW][{index}] No scene_data provided")
 
     # --- Strategy A: Runway 5s clip + frame extraction (accurate) ---
     if char_photo and os.path.isfile(char_photo):
@@ -6042,6 +6050,7 @@ class Handler(BaseHTTPRequestHandler):
                 "environments": POS_PHOTOS_ENVS_DIR,
             }
             out_dir = dirs_map[entity_type]
+            os.makedirs(out_dir, exist_ok=True)  # Ensure dir exists after resets
             out_path = os.path.join(out_dir, entity_id + ".jpg")
 
             # Save and resize with PIL
@@ -8375,6 +8384,9 @@ class Handler(BaseHTTPRequestHandler):
                     import shutil
                     shutil.rmtree(photos_dir, ignore_errors=True)
                     os.makedirs(photos_dir, exist_ok=True)
+                    os.makedirs(os.path.join(photos_dir, "characters"), exist_ok=True)
+                    os.makedirs(os.path.join(photos_dir, "costumes"), exist_ok=True)
+                    os.makedirs(os.path.join(photos_dir, "environments"), exist_ok=True)
                     cleared.append("prompt_os/photos")
         except Exception as e:
             print(f"[RESET] Warning clearing POS data: {e}")
