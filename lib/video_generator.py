@@ -579,19 +579,22 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
         "ratio": RUNWAY_RATIO_MAP.get(ratio, "1280:720"),
     }
 
-    # Determine image-to-video mode priority:
-    # 1. Character photo → use as promptImage (best for character likeness)
-    # 2. First frame → use as promptImage (for scene continuity)
-    # 3. Neither → text-to-video
+    # Image input strategy:
+    # - Character photo → referenceImages with type "character"
+    #   This tells Runway "this is what the character looks like" without
+    #   starting the video from the photo itself (avoids showing character sheet)
+    # - First frame → promptImage (image-to-video, starts from that frame)
+    # - Both → character as reference, first frame as promptImage
     _use_i2v = False
 
     if character_photo_path and os.path.isfile(character_photo_path):
-        # Character photo becomes the promptImage — Runway generates video
-        # that starts from this image and keeps the character consistent
-        payload["promptImage"] = _photo_to_data_uri(character_photo_path)
-        _use_i2v = True
-        print(f"[RUNWAY] Character photo → promptImage (image-to-video for likeness)")
-    elif first_frame_path and os.path.isfile(first_frame_path):
+        photo_uri = _photo_to_data_uri(character_photo_path)
+        payload["referenceImages"] = [
+            {"uri": photo_uri, "type": "character"}
+        ]
+        print(f"[RUNWAY] Character photo → referenceImages (character identity reference)")
+
+    if first_frame_path and os.path.isfile(first_frame_path):
         payload["promptImage"] = _photo_to_data_uri(first_frame_path)
         _use_i2v = True
         print(f"[RUNWAY] Using first_frame as promptImage (image-to-video mode)")
@@ -794,15 +797,16 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
             if char_desc:
                 if is_sheet:
                     gen_prompt = (
-                        f"The reference image is a character sheet showing the same person from multiple angles. "
-                        f"This is ONE person: {char_desc}. "
-                        f"Maintain exact likeness from the reference, same face, same features throughout. "
+                        f"Character reference: {char_desc}. "
+                        f"This character must match the reference exactly — same face shape, same eyes, same skin tone, same hair, same body proportions. "
+                        f"Do not change or reinterpret the character's appearance. "
                         f"{gen_prompt}"
                     )
                 else:
                     gen_prompt = (
-                        f"The exact person shown in the reference image: {char_desc}. "
-                        f"Maintain exact likeness, same face, same features throughout. "
+                        f"Character reference: {char_desc}. "
+                        f"This character must match the reference exactly — same face, same eyes, same skin tone, same hair, same build. "
+                        f"Maintain consistent identity throughout. "
                         f"{gen_prompt}"
                     )
                 print(f"[RUNWAY/{model}][{index}] Using character description ({len(char_desc)} chars, sheet={is_sheet})")

@@ -1139,9 +1139,26 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
 
             print(f"[PREVIEW][{index}] Using Runway preview with character photo: {char_photo}")
 
-            # Build clean preview prompt — the character photo IS the image input,
-            # so the prompt should focus on action/scene, not character description
-            preview_prompt = full_prompt
+            # Build preview prompt with strong character identity instruction
+            # Character photo is sent as referenceImages, not promptImage
+            # So the prompt needs to reinforce "use the reference for identity"
+            char_desc = ""
+            if scene_data:
+                char_desc = enriched.get("character_description", "")
+            if not char_desc:
+                try:
+                    char_desc = describe_photo(char_photo)
+                except Exception:
+                    pass
+
+            if char_desc:
+                preview_prompt = (
+                    f"Character reference: {char_desc}. "
+                    f"Match the character reference exactly — same face, same features, same build. "
+                    f"{full_prompt}"
+                )
+            else:
+                preview_prompt = f"Match the character reference image exactly. {full_prompt}"
 
             # Add costume description if available (since costume photo can't be a second image input)
             costume_photo = enriched.get("costume_photo_path", "") if scene_data else ""

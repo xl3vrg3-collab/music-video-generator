@@ -1982,6 +1982,10 @@
   .scene-card-structured.expanded .scene-card-preview {
     display: none;
   }
+  @keyframes previewPulse {
+    0%, 100% { opacity: 0.3; transform: scaleX(0.4); transform-origin: left; }
+    50% { opacity: 1; transform: scaleX(1); transform-origin: left; }
+  }
   /* Scene plan panel must not clip expanded cards */
   #autoScenePlan { overflow: visible; }
   #autoScenePlan > .panel-body { overflow: visible; }
@@ -12003,8 +12007,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
       case 'generating':
         dotColor = 'var(--amber)';
-        labelText = 'Rendering...';
-        metaHtml = '<span id="autoBarRenderProgress"></span>';
+        labelText = 'Rendering';
+        metaHtml = '<div style="display:flex;align-items:center;gap:8px;flex:1;max-width:300px;">' +
+          '<div style="flex:1;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">' +
+            '<div id="autoBarProgressFill" style="height:100%;width:0%;background:linear-gradient(90deg,var(--amber),var(--green));border-radius:2px;transition:width 0.5s;"></div>' +
+          '</div>' +
+          '<span id="autoBarRenderProgress" style="font-size:11px;color:var(--amber);font-weight:700;min-width:36px;text-align:right;">0%</span>' +
+        '</div>';
         primaryHtml = '<button class="btn btn-tier-primary" disabled style="padding:8px 28px;font-size:11px;letter-spacing:2px;opacity:0.5;">Rendering...</button>';
         break;
 
@@ -13095,7 +13104,13 @@ document.addEventListener('DOMContentLoaded', function() {
           previewBody.appendChild(staleBadge);
         }
       } else if (scene.preview && scene.preview.status === 'generating') {
-        previewBody.innerHTML = '<div style="color:var(--cyan);font-size:11px;letter-spacing:1px;">Generating preview...</div>';
+        previewBody.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:8px;">' +
+          '<div style="width:60%;height:3px;background:var(--border);border-radius:2px;overflow:hidden;">' +
+            '<div style="height:100%;width:100%;background:var(--cyan);border-radius:2px;animation:previewPulse 1.5s ease-in-out infinite;"></div>' +
+          '</div>' +
+          '<div style="color:var(--cyan);font-size:11px;letter-spacing:1px;">Generating preview...</div>' +
+          '<div style="color:var(--text-dim);font-size:9px;">This typically takes 30-90 seconds</div>' +
+        '</div>';
       } else if (scene.preview && scene.preview.status === 'failed') {
         previewBody.innerHTML = '<div style="color:var(--red);font-size:11px;">' + ((scene.preview.error || 'Preview generation failed').replace(/</g, '&lt;')) + '</div>';
       } else {
@@ -13450,23 +13465,39 @@ document.addEventListener('DOMContentLoaded', function() {
   window._updatePreviewSummary = function() {
     var scenes = window._autoScenes || [];
     var total = scenes.length;
-    var ready = 0, stale = 0, failed = 0, none = 0;
+    var ready = 0, stale = 0, failed = 0, none = 0, generating = 0, queued = 0;
     scenes.forEach(function(s) {
       var st = s.preview && s.preview.status || 'none';
       if (st === 'ready') ready++;
       else if (st === 'stale') stale++;
       else if (st === 'failed') failed++;
+      else if (st === 'generating') generating++;
+      else if (st === 'queued') queued++;
       else none++;
     });
 
     var summaryEl = document.getElementById('autoPreviewSummary');
     if (summaryEl) {
-      var parts = [];
-      if (ready > 0) parts.push('<span style="color:var(--green);">' + ready + ' ready</span>');
-      if (stale > 0) parts.push('<span style="color:var(--amber);">' + stale + ' stale</span>');
-      if (failed > 0) parts.push('<span style="color:var(--red);">' + failed + ' failed</span>');
-      if (none > 0) parts.push('<span style="color:var(--text-dim);">' + none + ' pending</span>');
-      summaryEl.innerHTML = 'Previews: ' + parts.join(' \u00B7 ');
+      var isActive = generating > 0 || queued > 0;
+      if (isActive) {
+        var done = ready;
+        var inProgress = total - none - failed;
+        var pct = total > 0 ? Math.round((done / total) * 100) : 0;
+        summaryEl.innerHTML = '<div style="display:flex;align-items:center;gap:8px;">' +
+          '<div style="width:80px;height:3px;background:var(--border);border-radius:2px;overflow:hidden;">' +
+            '<div style="height:100%;width:' + pct + '%;background:var(--cyan);border-radius:2px;transition:width 0.5s;"></div>' +
+          '</div>' +
+          '<span style="color:var(--cyan);">' + done + '/' + total + '</span>' +
+          (generating > 0 ? ' <span style="color:var(--amber);">generating...</span>' : '') +
+        '</div>';
+      } else {
+        var parts = [];
+        if (ready > 0) parts.push('<span style="color:var(--green);">' + ready + ' ready</span>');
+        if (stale > 0) parts.push('<span style="color:var(--amber);">' + stale + ' stale</span>');
+        if (failed > 0) parts.push('<span style="color:var(--red);">' + failed + ' failed</span>');
+        if (none > 0) parts.push('<span style="color:var(--text-dim);">' + none + ' pending</span>');
+        summaryEl.innerHTML = parts.length > 0 ? 'Previews: ' + parts.join(' \u00B7 ') : '';
+      }
     }
   };
 
@@ -13838,9 +13869,11 @@ document.addEventListener('DOMContentLoaded', function() {
           var pct = prog.progress || 0;
           var phase = prog.phase || '';
 
-          // Update action bar progress
+          // Update action bar progress bar + percentage
           var barProg = document.getElementById('autoBarRenderProgress');
           if (barProg) barProg.textContent = Math.round(pct) + '%';
+          var barFill = document.getElementById('autoBarProgressFill');
+          if (barFill) barFill.style.width = Math.round(pct) + '%';
 
           // Update individual scene card states from progress array
           var progressArr = prog.progress_list || prog.scenes || [];
