@@ -13227,10 +13227,22 @@ document.addEventListener('DOMContentLoaded', function() {
       var previewBody = document.createElement('div');
       previewBody.style.cssText = 'text-align:center;min-height:80px;display:flex;align-items:center;justify-content:center;';
 
-      if (scene.preview && (scene.preview.video_url || scene.preview.image_url)) {
+      // Check generating FIRST — show progress bar, not old video
+      if (scene.preview && scene.preview.status === 'generating') {
+        var scIdx = scene.order != null ? scene.order : i;
+        previewBody.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 0;">' +
+          '<div style="width:70%;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">' +
+            '<div id="previewFill_' + scIdx + '" style="height:100%;width:0%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:2px;transition:width 1s;"></div>' +
+          '</div>' +
+          '<div style="color:var(--cyan);font-size:12px;letter-spacing:1px;font-weight:700;">Generating preview...</div>' +
+          '<div id="previewTimer_' + scIdx + '" style="color:var(--text-dim);font-size:10px;font-variant-numeric:tabular-nums;">0s elapsed · ~0%</div>' +
+        '</div>';
+      } else if (scene.preview && scene.preview.status === 'failed') {
+        previewBody.innerHTML = '<div style="color:var(--red);font-size:11px;">' + ((scene.preview.error || 'Preview generation failed').replace(/</g, '&lt;')) + '</div>';
+      } else if (scene.preview && (scene.preview.video_url || scene.preview.image_url)) {
+        // Show video/image when ready or stale
         var hasVideo = !!scene.preview.video_url;
         if (hasVideo) {
-          // Playable video clip
           var previewVid = document.createElement('video');
           previewVid.src = scene.preview.video_url + '?t=' + Date.now();
           previewVid.style.cssText = 'max-width:100%;max-height:240px;border-radius:var(--radius);border:1px solid var(--border);cursor:pointer;';
@@ -13242,12 +13254,10 @@ document.addEventListener('DOMContentLoaded', function() {
             previewVid.style.opacity = '0.6';
             previewVid.style.borderColor = 'var(--amber)';
           }
-          // Auto-play on hover
           previewVid.onmouseenter = function() { this.play().catch(function(){}); };
           previewVid.onmouseleave = function() { this.pause(); };
           previewBody.appendChild(previewVid);
         } else {
-          // Fallback to still image
           var previewImg = document.createElement('img');
           previewImg.src = scene.preview.image_url + '?t=' + Date.now();
           previewImg.style.cssText = 'max-width:100%;max-height:200px;border-radius:var(--radius);border:1px solid var(--border);cursor:pointer;';
@@ -13258,7 +13268,6 @@ document.addEventListener('DOMContentLoaded', function() {
           previewImg.onclick = function() { window.open(scene.preview.image_url, '_blank'); };
           previewBody.appendChild(previewImg);
         }
-
         if (scene.preview.status === 'stale') {
           var staleBadge = document.createElement('div');
           staleBadge.style.cssText = 'position:absolute;top:8px;right:8px;font-size:8px;padding:2px 8px;background:var(--amber);color:#000;border-radius:3px;letter-spacing:1px;text-transform:uppercase;font-weight:700;';
@@ -13266,17 +13275,6 @@ document.addEventListener('DOMContentLoaded', function() {
           previewBody.style.position = 'relative';
           previewBody.appendChild(staleBadge);
         }
-      } else if (scene.preview && scene.preview.status === 'generating') {
-        var scIdx = scene.order != null ? scene.order : i;
-        previewBody.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 0;">' +
-          '<div style="width:70%;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">' +
-            '<div id="previewFill_' + scIdx + '" style="height:100%;width:0%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:2px;transition:width 1s;"></div>' +
-          '</div>' +
-          '<div style="color:var(--cyan);font-size:12px;letter-spacing:1px;font-weight:700;">Generating preview...</div>' +
-          '<div id="previewTimer_' + scIdx + '" style="color:var(--text-dim);font-size:10px;font-variant-numeric:tabular-nums;">0s elapsed · ~0%</div>' +
-        '</div>';
-      } else if (scene.preview && scene.preview.status === 'failed') {
-        previewBody.innerHTML = '<div style="color:var(--red);font-size:11px;">' + ((scene.preview.error || 'Preview generation failed').replace(/</g, '&lt;')) + '</div>';
       } else {
         previewBody.innerHTML = '<div style="color:var(--text-dim);font-size:11px;letter-spacing:1px;">No preview generated yet</div>';
       }
