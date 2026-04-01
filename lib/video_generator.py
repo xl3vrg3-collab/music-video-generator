@@ -601,37 +601,38 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
     if costume_photo_paths:
         all_costume_photos = [p for p in costume_photo_paths if p and os.path.isfile(p)]
 
-    # Determine promptImage priority:
-    # 1. Environment photo → promptImage (best: scene starts in the right setting)
-    # 2. First frame → promptImage
-    # 3. First character photo → promptImage (fallback: strong likeness)
-    if environment_photo_path and os.path.isfile(environment_photo_path):
-        payload["promptImage"] = _photo_to_data_uri(environment_photo_path)
-        _use_i2v = True
-        _sys_r.stderr.write(f"[RUNWAY] Environment photo → promptImage\n")
-        # ALL character photos go to referenceImages
-        for cp in all_char_photos:
-            reference_images.append({"uri": _photo_to_data_uri(cp), "type": "character"})
-            _sys_r.stderr.write(f"[RUNWAY] Character photo → referenceImages\n")
-    elif all_char_photos:
-        # No environment photo — use first character as promptImage for strongest likeness
+    # Priority: CHARACTER is king. Character photo → promptImage for maximum likeness.
+    # Everything else (costume, environment) → referenceImages as supplementary.
+    #
+    # 1. First character photo → promptImage (strongest likeness)
+    # 2. Additional characters → referenceImages type "character"
+    # 3. Costume photos → referenceImages type "style"
+    # 4. Environment photo → referenceImages type "style" (NOT promptImage)
+    # 5. First frame → overrides promptImage if set
+
+    if all_char_photos:
         payload["promptImage"] = _photo_to_data_uri(all_char_photos[0])
         _use_i2v = True
-        _sys_r.stderr.write(f"[RUNWAY] Character photo → promptImage (no env photo)\n")
-        # Additional characters go to referenceImages
+        _sys_r.stderr.write(f"[RUNWAY] Character photo → promptImage (maximum likeness)\n")
+        # Additional characters as referenceImages
         for cp in all_char_photos[1:]:
             reference_images.append({"uri": _photo_to_data_uri(cp), "type": "character"})
             _sys_r.stderr.write(f"[RUNWAY] Additional character → referenceImages\n")
 
-    # Costume photos → referenceImages with type "style"
+    # Costume photos → referenceImages
     for cp in all_costume_photos:
         reference_images.append({"uri": _photo_to_data_uri(cp), "type": "style"})
         _sys_r.stderr.write(f"[RUNWAY] Costume photo → referenceImages (style)\n")
 
+    # Environment photo → referenceImages (NOT promptImage — character is more important)
+    if environment_photo_path and os.path.isfile(environment_photo_path):
+        reference_images.append({"uri": _photo_to_data_uri(environment_photo_path), "type": "style"})
+        _sys_r.stderr.write(f"[RUNWAY] Environment photo → referenceImages (style)\n")
+
     # First frame overrides promptImage
     if first_frame_path and os.path.isfile(first_frame_path):
-        # If we had a character as promptImage, move it to referenceImages
-        if "promptImage" in payload and all_char_photos and not environment_photo_path:
+        if "promptImage" in payload and all_char_photos:
+            # Move character from promptImage to referenceImages
             reference_images.insert(0, {"uri": payload["promptImage"], "type": "character"})
         payload["promptImage"] = _photo_to_data_uri(first_frame_path)
         _use_i2v = True
