@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LUMN</title>
+<link rel="preload" href="/landing-light.png" as="image">
+<link rel="preload" href="/landing-dark.png" as="image">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@300;400;700;900&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden}
+body{-webkit-font-smoothing:antialiased;font-family:'Inter Tight',Helvetica,Arial,sans-serif}
+
+.phase {
+  position:fixed;inset:0;
+  overflow:hidden;
+}
+.phase-img {
+  position:absolute;
+  top:50%;left:50%;
+  transform:translate(-50%,-50%);
+  min-width:100%;min-height:100%;
+  width:auto;height:auto;
+  object-fit:cover;
+  object-position:center center;
+}
+
+/* Light on top by default */
+#lightPhase { z-index:10; }
+#darkPhase { z-index:5; }
+
+/* ENTER button */
+.enter-wrap {
+  position:fixed;
+  bottom:clamp(40px,8vh,100px);
+  left:50%;transform:translateX(-50%);
+  z-index:30;
+  opacity:0;
+  animation:fadeIn 1s ease 1s forwards;
+}
+@keyframes fadeIn { to { opacity:1; } }
+
+.enter-btn {
+  font-family:'Inter Tight',sans-serif;
+  font-size:11px;font-weight:300;
+  letter-spacing:8px;text-transform:uppercase;
+  color:rgba(0,0,0,0.2);
+  background:none;border:none;
+  cursor:pointer;padding:16px 24px;
+  transition:color 0.5s ease,letter-spacing 0.5s ease;
+  user-select:none;
+}
+.enter-btn:hover {
+  color:rgba(0,0,0,0.5);
+  letter-spacing:12px;
+}
+
+.blink{display:inline;animation:bl 1s step-end infinite}
+@keyframes bl{0%,100%{opacity:1}50%{opacity:0}}
+
+/* Footer */
+.footer-mark {
+  position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
+  font-size:9px;font-weight:300;letter-spacing:6px;text-transform:uppercase;
+  user-select:none;pointer-events:none;z-index:30;
+  transition:color 0s;
+  opacity:0;
+  animation:fadeIn 1s ease 1.5s forwards;
+}
+.footer-mark.light { color:rgba(0,0,0,0.08); }
+.footer-mark.dark { color:rgba(255,255,255,0.06); }
+
+/* Fade overlay for exit */
+#fadeOverlay {
+  position:fixed;inset:0;
+  background:#000;z-index:100;
+  opacity:0;pointer-events:none;
+  transition:opacity 1s ease;
+}
+#fadeOverlay.active { opacity:1; }
+</style>
+</head>
+<body>
+
+<!-- Both phases loaded and stacked — dark underneath, light on top -->
+<div id="darkPhase" class="phase">
+  <img src="/landing-dark.png" class="phase-img" alt="">
+</div>
+
+<div id="lightPhase" class="phase">
+  <img src="/landing-light.png" class="phase-img" alt="">
+</div>
+
+<!-- ENTER button -->
+<div class="enter-wrap" id="enterWrap">
+  <button class="enter-btn" onclick="enterDark()">ENTER<span class="blink">_</span></button>
+</div>
+
+<!-- FOOTER -->
+<div class="footer-mark light" id="footerMark">LUMN STUDIO</div>
+
+<!-- FADE OVERLAY -->
+<div id="fadeOverlay"></div>
+
+<script>
+function enterDark() {
+  var light = document.getElementById('lightPhase');
+  var enter = document.getElementById('enterWrap');
+  var mark = document.getElementById('footerMark');
+  var fade = document.getElementById('fadeOverlay');
+
+  // INSTANT switch — no transition, like a light switch
+  enter.style.display = 'none';
+  light.style.display = 'none';
+  mark.classList.remove('light');
+  mark.classList.add('dark');
+
+  // 3 second hold on dark, then fade to black and load UI
+  setTimeout(function() {
+    fade.classList.add('active');
+    setTimeout(function() {
+      localStorage.setItem('lumn-theme', 'dark');
+      window.location.href = '/';
+    }, 1000);
+  }, 3000);
+}
+</script>
+
+</body>
+</html>

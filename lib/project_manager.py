@@ -1,5 +1,5 @@
 """
-Project Manager - Multi-project support for Music Video Generator.
+Project Manager - Multi-project support for LUMN Studio.
 
 Manages projects stored in output/projects/ as directories.
 Each project has its own scene plan, clips, settings, and metadata.

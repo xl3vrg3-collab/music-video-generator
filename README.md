@@ -1,4 +1,4 @@
-# Music Video Generator
+# LUMN
 
 AI-powered music video generator using Grok (xAI) for video synthesis, Python for audio analysis, and ffmpeg for stitching.
 

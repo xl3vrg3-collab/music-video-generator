@@ -235,14 +235,18 @@ def _luma_headers() -> dict:
 
 
 def _luma_submit_video(prompt: str, image_url: str = None,
-                       duration: int = 5) -> str:
+                       duration: int = 5,
+                       first_frame_url: str = None,
+                       last_frame_url: str = None) -> str:
     """
     Submit a video generation request to Luma Dream Machine (Ray2).
 
     Args:
         prompt: text description of the video
-        image_url: optional URL to an image for image-to-video
+        image_url: optional URL to an image for image-to-video (legacy, sets frame0)
         duration: video duration -- "5s" or "9s" (Luma supports 5s and 9s)
+        first_frame_url: optional data URI or URL for first frame keyframe
+        last_frame_url: optional data URI or URL for last frame keyframe
 
     Returns:
         generation ID string
@@ -257,13 +261,16 @@ def _luma_submit_video(prompt: str, image_url: str = None,
         "duration": dur_str,
     }
 
-    if image_url:
-        payload["keyframes"] = {
-            "frame0": {
-                "type": "image",
-                "url": image_url,
-            }
-        }
+    # Build keyframes dict: first_frame/last_frame take priority over legacy image_url
+    keyframes = {}
+    if first_frame_url:
+        keyframes["frame0"] = {"type": "image", "url": first_frame_url}
+    elif image_url:
+        keyframes["frame0"] = {"type": "image", "url": image_url}
+    if last_frame_url:
+        keyframes["frame1"] = {"type": "image", "url": last_frame_url}
+    if keyframes:
+        payload["keyframes"] = keyframes
 
     print(f"[LUMA] Submitting generation: prompt={prompt[:80]}..., "
           f"image={'yes' if image_url else 'no'}, duration={dur_str}")
@@ -394,10 +401,24 @@ def _luma_generate_scene(scene: dict, output_dir: str, index: int,
         _report("encoding photo for Luma image-to-video...")
         image_url = _photo_to_data_uri(photo_path)
 
+    # Keyframe support: first_frame_path / last_frame_path
+    first_frame_url = None
+    last_frame_url = None
+    ff_path = scene.get("first_frame_path")
+    lf_path = scene.get("last_frame_path")
+    if ff_path and os.path.isfile(ff_path):
+        _report("encoding first_frame keyframe for Luma...")
+        first_frame_url = _photo_to_data_uri(ff_path)
+    if lf_path and os.path.isfile(lf_path):
+        _report("encoding last_frame keyframe for Luma...")
+        last_frame_url = _photo_to_data_uri(lf_path)
+
     try:
         _report("submitting to Luma Dream Machine (Ray2)...")
         gen_id = _luma_submit_video(gen_prompt, image_url=image_url,
-                                    duration=duration)
+                                    duration=duration,
+                                    first_frame_url=first_frame_url,
+                                    last_frame_url=last_frame_url)
         _report(f"polling Luma (id={gen_id[:12]}...)")
         video_info = _luma_poll(gen_id)
         _report("downloading Luma video...")
@@ -476,7 +497,8 @@ RUNWAY_RATIO_MAP = {
 def _runway_submit_image_to_video(prompt: str, image_path: str,
                                    duration: int = 5,
                                    ratio: str = "16:9",
-                                   model: str = "gen4.5") -> str:
+                                   model: str = "gen4.5",
+                                   last_frame_path: str = None) -> str:
     """
     Submit an image-to-video request to Runway Gen-3 Alpha Turbo.
 
@@ -485,6 +507,7 @@ def _runway_submit_image_to_video(prompt: str, image_path: str,
         image_path: local path to image file (will be base64-encoded)
         duration: 5 or 10 seconds
         ratio: "16:9" or "9:16"
+        last_frame_path: optional path to last frame image (end keyframe)
 
     Returns:
         task ID string
@@ -500,6 +523,11 @@ def _runway_submit_image_to_video(prompt: str, image_path: str,
         "duration": duration,
         "ratio": RUNWAY_RATIO_MAP.get(ratio, "1280:720"),
     }
+
+    # Add last frame (end keyframe) if provided
+    if last_frame_path and os.path.isfile(last_frame_path):
+        payload["lastFrame"] = _photo_to_data_uri(last_frame_path)
+        print(f"[RUNWAY] Including lastFrame keyframe from {last_frame_path}")
 
     print(f"[RUNWAY] Submitting image-to-video: model={model}, prompt={prompt[:80]}..., "
           f"duration={duration}s, ratio={RUNWAY_RATIO_MAP.get(ratio, '1280:720')}")
@@ -526,12 +554,16 @@ def _runway_submit_image_to_video(prompt: str, image_path: str,
 def _runway_submit_text_to_video(prompt: str, duration: int = 5,
                                   ratio: str = "16:9",
                                   model: str = "gen4.5",
-                                  character_photo_path: str = None) -> str:
+                                  character_photo_path: str = None,
+                                  first_frame_path: str = None,
+                                  last_frame_path: str = None) -> str:
     """
     Submit a text-to-video request to Runway.
     If character_photo_path is provided, the photo is used as a CHARACTER REFERENCE
     (not as the first frame). The AI generates a new video but keeps the character
     looking like the person in the photo.
+    If first_frame_path is provided, switches to image-to-video mode with that as promptImage.
+    If last_frame_path is provided, sets the end keyframe.
     """
     duration = 10 if duration > 7 else 5
 
@@ -547,7 +579,17 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
         "ratio": RUNWAY_RATIO_MAP.get(ratio, "1280:720"),
     }
 
-    print(f"[RUNWAY] Submitting text-to-video: model={model}, duration={duration}s, "
+    # Keyframe support: if first_frame is set, switch to image-to-video endpoint
+    _use_i2v = False
+    if first_frame_path and os.path.isfile(first_frame_path):
+        payload["promptImage"] = _photo_to_data_uri(first_frame_path)
+        _use_i2v = True
+        print(f"[RUNWAY] Using first_frame as promptImage (image-to-video mode)")
+    if last_frame_path and os.path.isfile(last_frame_path):
+        payload["lastFrame"] = _photo_to_data_uri(last_frame_path)
+        print(f"[RUNWAY] Including lastFrame keyframe")
+
+    print(f"[RUNWAY] Submitting {'image' if _use_i2v else 'text'}-to-video: model={model}, duration={duration}s, "
           f"ratio={RUNWAY_RATIO_MAP.get(ratio, '1280:720')}, prompt={prompt[:80]}...")
 
     # Add character reference if photo provided
@@ -558,12 +600,13 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
         ]
         print(f"[RUNWAY] Using photo as CHARACTER REFERENCE (not first frame)")
 
-    print(f"[RUNWAY] Submitting text-to-video: model={model}, "
+    print(f"[RUNWAY] Submitting {'image' if _use_i2v else 'text'}-to-video: model={model}, "
           f"char_ref={'YES' if character_photo_path else 'NO'}, "
           f"prompt={prompt[:80]}...")
 
+    _endpoint = "image_to_video" if _use_i2v else "text_to_video"
     resp = requests.post(
-        f"{RUNWAY_API_BASE}/text_to_video",
+        f"{RUNWAY_API_BASE}/{_endpoint}",
         headers=_runway_headers(),
         json=payload,
         timeout=60,
@@ -702,6 +745,32 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
         if cost_cb:
             cost_cb(str(scene.get("id", index)), gen_type)
 
+    # Inject environment and costume descriptions (prefer vision-descriptions from photos when available)
+    # Note: character_description is handled below in the has_photo / no-photo branches
+    env_photo = scene.get("environment_photo_path", "")
+    if env_photo:
+        vision_desc = _describe_entity_photo(env_photo, "environment")
+        if vision_desc and vision_desc.lower() not in gen_prompt.lower():
+            gen_prompt = f"{gen_prompt} Setting (from reference photo): {vision_desc}."
+            print(f"[RUNWAY/{model}][{index}] Injected environment vision description from photo")
+    else:
+        env_desc = scene.get("environment_description", "")
+        if env_desc and env_desc.lower() not in gen_prompt.lower():
+            gen_prompt = f"{gen_prompt} Setting: {env_desc}."
+            print(f"[RUNWAY/{model}][{index}] Injected environment text description ({len(env_desc)} chars)")
+
+    costume_photo = scene.get("costume_photo_path", "")
+    if costume_photo:
+        vision_desc = _describe_entity_photo(costume_photo, "costume")
+        if vision_desc and vision_desc.lower() not in gen_prompt.lower():
+            gen_prompt = f"{gen_prompt} Costume (from reference photo): {vision_desc}."
+            print(f"[RUNWAY/{model}][{index}] Injected costume vision description from photo")
+    else:
+        costume_desc = scene.get("costume_description", "")
+        if costume_desc and costume_desc.lower() not in gen_prompt.lower():
+            gen_prompt = f"{gen_prompt} Wearing: {costume_desc}."
+            print(f"[RUNWAY/{model}][{index}] Injected costume text description ({len(costume_desc)} chars)")
+
     try:
         if has_photo:
             # USE CHARACTER REFERENCE — photo is NOT the first frame
@@ -709,28 +778,48 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
             # and generates a brand new video keeping that character consistent
             _report(f"using photo as CHARACTER REFERENCE (not first frame)...")
 
-            # Describe the photo to enhance the prompt
-            try:
-                photo_desc = describe_photo(photo_path)
-                import re as _re
-                photo_desc = _re.sub(r'(?i)(looks like|resembles|appears to be)\s+\w+(\s+\w+)?', 'a person', photo_desc)
-                gen_prompt = (
-                    f"The character from the reference image ({photo_desc}). "
-                    f"{gen_prompt}"
-                )
-                print(f"[RUNWAY/{model}][{index}] Enhanced prompt with character description")
-            except Exception as desc_err:
-                print(f"[RUNWAY/{model}][{index}] Photo describe skipped: {desc_err}")
+            # Use pre-stored character description if available (consistent across all clips)
+            # Otherwise fall back to describing the photo (less consistent but better than nothing)
+            char_desc = scene.get("character_description", "")
+            if not char_desc:
+                try:
+                    char_desc = describe_photo(photo_path)
+                    import re as _re
+                    char_desc = _re.sub(r'(?i)(looks like|resembles|appears to be)\s+\w+(\s+\w+)?', 'a person', char_desc)
+                    print(f"[RUNWAY/{model}][{index}] Described photo (no cached desc available)")
+                except Exception as desc_err:
+                    print(f"[RUNWAY/{model}][{index}] Photo describe skipped: {desc_err}")
+
+            is_sheet = scene.get("is_character_sheet", False)
+            if char_desc:
+                if is_sheet:
+                    gen_prompt = (
+                        f"The reference image is a character sheet showing the same person from multiple angles. "
+                        f"This is ONE person: {char_desc}. "
+                        f"Maintain exact likeness from the reference, same face, same features throughout. "
+                        f"{gen_prompt}"
+                    )
+                else:
+                    gen_prompt = (
+                        f"The exact person shown in the reference image: {char_desc}. "
+                        f"Maintain exact likeness, same face, same features throughout. "
+                        f"{gen_prompt}"
+                    )
+                print(f"[RUNWAY/{model}][{index}] Using character description ({len(char_desc)} chars, sheet={is_sheet})")
 
             _report(f"submitting text-to-video ({model}) with character reference...")
             task_id = _runway_submit_text_to_video(
                 gen_prompt, duration=duration, model=model,
-                character_photo_path=photo_path
+                character_photo_path=photo_path,
+                first_frame_path=scene.get("first_frame_path"),
+                last_frame_path=scene.get("last_frame_path"),
             )
         else:
             _report(f"submitting text-to-video ({model})...")
             task_id = _runway_submit_text_to_video(
-                gen_prompt, duration=duration, model=model
+                gen_prompt, duration=duration, model=model,
+                first_frame_path=scene.get("first_frame_path"),
+                last_frame_path=scene.get("last_frame_path"),
             )
 
         _report(f"polling Runway (task={task_id[:12]}...)")
@@ -831,6 +920,9 @@ def _openai_generate_scene(scene: dict, output_dir: str, index: int,
         continuity = _build_continuity_prompt(scene, index)
         if continuity:
             gen_prompt = f"{gen_prompt}. {continuity}"
+
+    # Inject character/costume/environment descriptions (or vision-descriptions from photos)
+    gen_prompt = _enrich_prompt_from_entity_photos(gen_prompt, scene, index, "OPENAI")
 
     def _report(msg):
         print(f"[OPENAI][{index}] {msg}")
@@ -934,6 +1026,166 @@ def _resolve_character_references(prompt: str, char_refs: dict = None) -> tuple:
 # Cache for character descriptions so we don't re-describe every generation
 _char_description_cache = {}
 
+# ---- Photo path resolver and vision-description helpers ----
+
+def _resolve_pos_photo_path(ref_url: str, entity_type: str) -> str | None:
+    """
+    Resolve a Prompt OS photo API URL to the actual filesystem path.
+
+    ref_url  : e.g. "/api/pos/characters/{id}/photo"
+    entity_type: "characters" | "costumes" | "environments"
+
+    Returns the absolute path if the file exists, else None.
+    """
+    if not ref_url:
+        return None
+
+    # Direct filesystem path (already resolved)
+    if os.path.isfile(ref_url):
+        return ref_url
+
+    import re
+    m = re.search(r"/api/pos/(?:characters|costumes|environments)/([^/]+)/photo", ref_url)
+    if not m:
+        return None
+
+    entity_id = m.group(1)
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    subdirs = {
+        "characters": os.path.join(base_dir, "output", "prompt_os", "photos", "characters"),
+        "costumes":   os.path.join(base_dir, "output", "prompt_os", "photos", "costumes"),
+        "environments": os.path.join(base_dir, "output", "prompt_os", "photos", "environments"),
+    }
+    photo_dir = subdirs.get(entity_type)
+    if not photo_dir:
+        return None
+
+    for ext in (".jpg", ".jpeg", ".png", ".webp"):
+        candidate = os.path.join(photo_dir, f"{entity_id}{ext}")
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+# Cache for costume/environment vision descriptions (keyed by photo path)
+_entity_description_cache = {}
+
+
+def _describe_entity_photo(photo_path: str, entity_type: str) -> str:
+    """
+    Get a vision description of a costume or environment photo.
+
+    Returns a concise prompt-ready description string, or "" on failure.
+    entity_type: "costume" | "environment" — changes the vision prompt wording.
+    """
+    if not photo_path or not os.path.isfile(photo_path):
+        return ""
+
+    if photo_path in _entity_description_cache:
+        return _entity_description_cache[photo_path]
+
+    try:
+        with open(photo_path, "rb") as f:
+            photo_bytes = f.read()
+
+        ext = os.path.splitext(photo_path)[1].lower()
+        mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                    ".png": "image/png", ".webp": "image/webp"}
+        mime = mime_map.get(ext, "image/jpeg")
+        b64_data = base64.b64encode(photo_bytes).decode("ascii")
+        data_uri = f"data:{mime};base64,{b64_data}"
+
+        if entity_type == "costume":
+            vision_text = (
+                "Describe the clothing and costume in this image for use as an AI video generation prompt. "
+                "Focus on: garment types (top, bottom, outerwear, footwear), colors, fabrics, patterns, accessories, overall style. "
+                "Write as comma-separated visual descriptors. Be specific about colors and materials. Under 100 words."
+            )
+        else:  # environment
+            vision_text = (
+                "Describe the environment/location in this image for use as an AI video generation prompt. "
+                "Focus on: setting type, architecture, lighting, atmosphere, time of day, color palette, notable features. "
+                "Write as comma-separated visual descriptors. Do NOT mention any people. Under 100 words."
+            )
+
+        resp = requests.post(
+            f"{API_BASE}/chat/completions",
+            headers=_headers(),
+            json={
+                "model": "grok-4-1-fast-non-reasoning",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url", "image_url": {"url": data_uri}},
+                            {"type": "text", "text": vision_text},
+                        ],
+                    }
+                ],
+                "max_tokens": 200,
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        choices = data.get("choices", [])
+        if choices:
+            desc = choices[0]["message"]["content"].strip()
+            _entity_description_cache[photo_path] = desc
+            print(f"[VISION] {entity_type} photo described ({len(desc)} chars): {desc[:80]}...")
+            return desc
+    except Exception as e:
+        print(f"[VISION] Failed to describe {entity_type} photo {photo_path}: {e}")
+
+    return ""
+
+
+def _enrich_prompt_from_entity_photos(gen_prompt: str, scene: dict, index: int,
+                                       engine_tag: str = "GEN") -> str:
+    """
+    Enrich a generation prompt with vision-descriptions of costume and environment
+    reference photos stored in scene["costume_photo_path"] and
+    scene["environment_photo_path"].
+
+    Also injects pre-built text descriptions from scene["costume_description"] and
+    scene["environment_description"] if no photo path is available.
+
+    Returns the enriched prompt string.
+    """
+    # --- Character description (always inject first for prominence) ---
+    char_desc = scene.get("character_description", "")
+    if char_desc and char_desc.lower() not in gen_prompt.lower():
+        gen_prompt = f"{char_desc}. {gen_prompt}"
+        print(f"[{engine_tag}][{index}] Injected character description ({len(char_desc)} chars)")
+
+    # --- Costume: prefer vision description of photo, fall back to text ---
+    costume_photo = scene.get("costume_photo_path", "")
+    if costume_photo:
+        vision_desc = _describe_entity_photo(costume_photo, "costume")
+        if vision_desc and vision_desc.lower() not in gen_prompt.lower():
+            gen_prompt = f"{gen_prompt} Costume (from reference photo): {vision_desc}."
+            print(f"[{engine_tag}][{index}] Injected costume vision description from photo")
+    else:
+        costume_desc = scene.get("costume_description", "")
+        if costume_desc and costume_desc.lower() not in gen_prompt.lower():
+            gen_prompt = f"{gen_prompt} Wearing: {costume_desc}."
+            print(f"[{engine_tag}][{index}] Injected costume text description ({len(costume_desc)} chars)")
+
+    # --- Environment: prefer vision description of photo, fall back to text ---
+    env_photo = scene.get("environment_photo_path", "")
+    if env_photo:
+        vision_desc = _describe_entity_photo(env_photo, "environment")
+        if vision_desc and vision_desc.lower() not in gen_prompt.lower():
+            gen_prompt = f"{gen_prompt} Setting (from reference photo): {vision_desc}."
+            print(f"[{engine_tag}][{index}] Injected environment vision description from photo")
+    else:
+        env_desc = scene.get("environment_description", "")
+        if env_desc and env_desc.lower() not in gen_prompt.lower():
+            gen_prompt = f"{gen_prompt} Setting: {env_desc}."
+            print(f"[{engine_tag}][{index}] Injected environment text description ({len(env_desc)} chars)")
+
+    return gen_prompt
+
 def enhance_prompt_with_references(prompt: str, char_refs: dict = None) -> str:
     """
     If prompt mentions a character reference name, describe the character
@@ -983,6 +1235,89 @@ def _subprocess_kwargs() -> dict:
         si.wShowWindow = 0  # SW_HIDE
         kw["startupinfo"] = si
     return kw
+
+
+def extract_last_frame(clip_path: str, output_path: str) -> str:
+    """
+    Extract the last frame from a video clip using ffmpeg.
+
+    Args:
+        clip_path: path to the source video clip
+        output_path: path to save the extracted frame image
+
+    Returns:
+        output_path on success
+
+    Raises:
+        RuntimeError if extraction fails
+    """
+    if not os.path.isfile(clip_path):
+        raise RuntimeError(f"Clip not found: {clip_path}")
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    # Use ffmpeg to seek to near the end and grab the last frame
+    cmd = [
+        "ffmpeg", "-y",
+        "-sseof", "-0.1",      # seek to 0.1s before end
+        "-i", clip_path,
+        "-frames:v", "1",
+        "-q:v", "2",
+        output_path,
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, timeout=30,
+            **_subprocess_kwargs(),
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.decode(errors="replace")[:500]
+            raise RuntimeError(f"ffmpeg last-frame extraction failed: {stderr}")
+        if not os.path.isfile(output_path):
+            raise RuntimeError("ffmpeg produced no output file")
+        print(f"[KEYFRAME] Extracted last frame from {clip_path} -> {output_path}")
+        return output_path
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("ffmpeg last-frame extraction timed out")
+
+
+def extract_first_frame(clip_path: str, output_path: str) -> str:
+    """
+    Extract the first frame from a video clip using ffmpeg.
+
+    Args:
+        clip_path: path to the source video clip
+        output_path: path to save the extracted frame image
+
+    Returns:
+        output_path on success
+    """
+    if not os.path.isfile(clip_path):
+        raise RuntimeError(f"Clip not found: {clip_path}")
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", clip_path,
+        "-frames:v", "1",
+        "-q:v", "2",
+        output_path,
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, timeout=30,
+            **_subprocess_kwargs(),
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.decode(errors="replace")[:500]
+            raise RuntimeError(f"ffmpeg first-frame extraction failed: {stderr}")
+        if not os.path.isfile(output_path):
+            raise RuntimeError("ffmpeg produced no output file")
+        print(f"[KEYFRAME] Extracted first frame from {clip_path} -> {output_path}")
+        return output_path
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("ffmpeg first-frame extraction timed out")
 
 
 # ---- Video generation via Grok API ----
@@ -1142,7 +1477,7 @@ def describe_photo(photo_path: str) -> str:
         f"{API_BASE}/chat/completions",
         headers=_headers(),
         json={
-            "model": "grok-2-vision-latest",
+            "model": "grok-4-1-fast-non-reasoning",
             "messages": [
                 {
                     "role": "user",
@@ -1154,16 +1489,17 @@ def describe_photo(photo_path: str) -> str:
                         {
                             "type": "text",
                             "text": (
-                                "Describe this image in vivid detail for use as a video generation prompt. "
-                                "Focus on: visual style, color palette, lighting, mood, subjects, environment, "
-                                "and atmosphere. Keep the description under 100 words, as a comma-separated list "
-                                "of visual descriptors. Do not use complete sentences."
+                                "Describe the person in this image in vivid physical detail for use as an AI video generation prompt. "
+                                "If this is a character sheet showing the SAME person from multiple angles, combine ALL angles into ONE description. "
+                                "Focus on: face shape, skin tone, eye color, hair, build, distinguishing features, outfit. "
+                                "Write as comma-separated visual descriptors. Do NOT mention 'multiple views' or 'character sheet' — "
+                                "just describe the ONE person. Be specific about facial features. Under 150 words."
                             ),
                         },
                     ],
                 }
             ],
-            "max_tokens": 200,
+            "max_tokens": 350,
         },
         timeout=60,
     )
@@ -1319,8 +1655,28 @@ def _grok_generate_scene(scene: dict, output_dir: str, index: int,
     # Enhance prompt with character reference descriptions if any match
     gen_prompt = enhance_prompt_with_references(gen_prompt)
 
+    # For Grok, text is ALL we have — no reference image input support.
+    # Inject character/costume/environment descriptions (or vision-descriptions from photos).
+    gen_prompt = _enrich_prompt_from_entity_photos(gen_prompt, scene, index, "GROK")
+
     if has_photo:
-        print(f"[GROK][{index}] Photo exists — using VIDEO gen (not Ken Burns). Photo ignored for Grok video.")
+        # Grok video API has no image input — but we can still vision-describe
+        # the character photo and prepend it if not already described
+        char_photo_desc = scene.get("character_description", "")
+        if not char_photo_desc:
+            try:
+                char_photo_desc = describe_photo(photo_path)
+                import re as _re_grok
+                char_photo_desc = _re_grok.sub(
+                    r'(?i)(looks like|resembles|appears to be)\s+\w+(\s+\w+)?',
+                    'a person', char_photo_desc
+                )
+                if char_photo_desc and char_photo_desc.lower() not in gen_prompt.lower():
+                    gen_prompt = f"{char_photo_desc}. {gen_prompt}"
+                    print(f"[GROK][{index}] Vision-described character photo and prepended to prompt")
+            except Exception as _e:
+                print(f"[GROK][{index}] Could not vision-describe character photo: {_e}")
+        print(f"[GROK][{index}] Character photo present — used via text description (Grok video has no image input)")
 
     # Add uniqueness to prevent identical videos from identical prompts
     import random

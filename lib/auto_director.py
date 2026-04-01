@@ -7,11 +7,13 @@ and environments to sections, building prompts, and executing batch generation.
 
 import json
 import os
+import re
 import random
 import time
 import threading
 
 from lib.audio_analyzer import analyze
+from lib.video_generator import describe_photo as _describe_photo
 from lib.scene_planner import (
     plan_scenes, auto_assign_transition, coherence_pass,
     SECTION_MOODS, ENERGY_DESCRIPTORS, QUALITY_SUFFIX,
@@ -179,7 +181,92 @@ class AutoDirector:
         with self._lock:
             self._progress.update(kwargs)
 
+    # ---- Photo Resolution ----
+
+    @staticmethod
+    def _resolve_reference_photo(ref_photo: str, kind: str = "characters") -> str | None:
+        """Resolve a referencePhoto value to an actual file path.
+
+        Handles two cases:
+        1. ref_photo is already a valid file path on disk.
+        2. ref_photo is an API URL like ``/api/pos/characters/{id}/photo``
+           or ``/api/pos/environments/{id}/photo`` — extract the id and
+           build the real path under ``output/prompt_os/photos/{kind}/{id}.jpg``.
+
+        Args:
+            ref_photo: The referencePhoto value from the entity dict.
+            kind: "characters" or "environments".
+
+        Returns:
+            Absolute path to the photo file if it exists, else None.
+        """
+        if not ref_photo:
+            return None
+
+        # Case 1: already a real file path
+        if os.path.isfile(ref_photo):
+            return ref_photo
+
+        # Case 2: API URL — extract the entity id
+        m = re.search(r"/api/pos/(?:characters|environments)/([^/]+)/photo", ref_photo)
+        if m:
+            entity_id = m.group(1)
+            photos_base = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "output", "prompt_os", "photos",
+            )
+            candidate = os.path.join(photos_base, kind, f"{entity_id}.jpg")
+            if os.path.isfile(candidate):
+                return candidate
+
+        return None
+
     # ---- Character Assignment ----
+
+    def enrich_characters(self, characters: list) -> list:
+        """Auto-describe characters from their reference photos when descriptions are empty.
+
+        Uses Grok vision to describe the photo and fills in the description field.
+        This ensures prompts contain detailed character appearance info even when
+        the user only uploaded a photo without typing a description.
+        """
+        for char in characters:
+            has_desc = (char.get("description") or char.get("physicalDescription") or "").strip()
+            if has_desc:
+                continue
+            # Try to get photo path
+            photo_path = self._resolve_reference_photo(
+                char.get("referencePhoto", ""), "characters"
+            )
+            if not photo_path:
+                continue
+            try:
+                desc = _describe_photo(photo_path)
+                # Store it back so prompt builder can use it
+                char["description"] = desc
+                print(f"[AUTO DIRECTOR] Auto-described character '{char.get('name')}': {desc[:80]}...")
+            except Exception as e:
+                print(f"[AUTO DIRECTOR] Could not auto-describe '{char.get('name')}': {e}")
+        return characters
+
+    def enrich_environments(self, environments: list) -> list:
+        """Auto-describe environments from their reference photos when descriptions are empty."""
+        for env in environments:
+            has_desc = (env.get("description") or "").strip()
+            if has_desc:
+                continue
+            photo_path = self._resolve_reference_photo(
+                env.get("referencePhoto", ""), "environments"
+            )
+            if not photo_path:
+                continue
+            try:
+                desc = _describe_photo(photo_path)
+                env["description"] = desc
+                print(f"[AUTO DIRECTOR] Auto-described environment '{env.get('name')}': {desc[:80]}...")
+            except Exception as e:
+                print(f"[AUTO DIRECTOR] Could not auto-describe '{env.get('name')}': {e}")
+        return environments
 
     def assign_characters_to_sections(self, characters: list, sections: list) -> list:
         """
@@ -320,29 +407,38 @@ class AutoDirector:
 
     def build_section_prompt(self, character=None, costume=None, environment=None,
                               style="", energy=0.5, section_type="verse",
-                              preset_settings=None) -> str:
+                              preset_settings=None, story_beat="") -> str:
         """
-        Build a cohesive prompt combining all entity descriptions.
+        Build a cohesive prompt combining story beat + entity descriptions.
 
-        Varies camera movement and energy words by section type.
+        Story beat leads the prompt (what's happening narratively),
+        then character/costume/environment details, then style/energy.
         """
         parts = []
+
+        # STORY BEAT first — this drives the narrative
+        if story_beat:
+            parts.append(story_beat)
 
         # Section-specific camera/mood from scene planner
         moods = SECTION_MOODS.get(section_type, SECTION_MOODS["verse"])
         parts.append(random.choice(moods))
 
-        # Character description (check both field names)
+        # Character description — rely on reference photo for likeness, text for details
         if character:
             char_desc = character.get("description", character.get("physicalDescription", ""))
             if not char_desc:
                 char_desc = character.get("outfitDescription", "")
             if char_desc:
-                parts.append(char_desc)
-            char_name = character.get("name", "")
+                parts.append(f"the person from the reference image, {char_desc}")
+            else:
+                parts.append("the person from the reference image")
             hair = character.get("hair", "")
             if hair:
                 parts.append(f"with {hair}")
+            skin = character.get("skinTone", "")
+            if skin:
+                parts.append(f"{skin} skin")
             features = character.get("distinguishingFeatures", "")
             if features:
                 parts.append(features)
@@ -440,6 +536,10 @@ class AutoDirector:
         """
         characters = characters or []
         environments = environments or []
+
+        # Auto-describe characters/environments from photos if descriptions empty
+        characters = self.enrich_characters(characters)
+        environments = self.enrich_environments(environments)
 
         # Load preset settings
         preset_settings = None
@@ -613,9 +713,12 @@ class AutoDirector:
             # Character reference photo
             char_photo = None
             if char and char.get("referencePhoto"):
-                ref_photo = char["referencePhoto"]
-                if os.path.isfile(ref_photo):
-                    char_photo = ref_photo
+                char_photo = self._resolve_reference_photo(char["referencePhoto"], "characters")
+
+            # Environment reference photo
+            env_photo = None
+            if env and env.get("referencePhoto"):
+                env_photo = self._resolve_reference_photo(env["referencePhoto"], "environments")
 
             scene = {
                 "id": f"ai_{i:03d}",
@@ -636,6 +739,7 @@ class AutoDirector:
                 "costumeId": costume["id"] if costume else None,
                 "costumeName": costume["name"] if costume else None,
                 "character_photo_path": char_photo,
+                "environment_photo_path": env_photo,
                 "clip_path": None,
                 "has_clip": False,
                 "status": "planned",
@@ -700,6 +804,10 @@ class AutoDirector:
         """
         characters = characters or []
         environments = environments or []
+
+        # Auto-describe characters/environments from photos if descriptions empty
+        characters = self.enrich_characters(characters)
+        environments = self.enrich_environments(environments)
 
         # Load preset settings
         preset_settings = None
@@ -777,30 +885,26 @@ class AutoDirector:
                 # Split storyline into beats distributed across scenes
                 story_sentences = [s.strip() for s in storyline.replace(". ", ".\n").split("\n") if s.strip()]
                 if story_sentences:
-                    beat_idx = min(i, len(story_sentences) - 1)
-                    # Distribute: map scene index to story sentence
-                    if len(sections) <= len(story_sentences):
-                        story_beat = story_sentences[beat_idx]
-                    else:
-                        # More scenes than sentences: repeat/distribute
-                        ratio = len(story_sentences) / len(sections)
-                        story_beat = story_sentences[int(i * ratio)]
+                    # Distribute evenly: map scene index to story sentence
+                    ratio = len(story_sentences) / len(sections)
+                    story_beat = story_sentences[min(int(i * ratio), len(story_sentences) - 1)]
 
             prompt = self.build_section_prompt(
                 character=char, costume=costume, environment=env,
                 style=style, energy=energy, section_type=stype,
                 preset_settings=preset_settings,
+                story_beat=story_beat,
             )
-            # Append story beat to prompt
-            if story_beat:
-                prompt = f"{story_beat}. {prompt}"
 
             # Character reference photo
             char_photo = None
             if char and char.get("referencePhoto"):
-                ref_photo = char["referencePhoto"]
-                if os.path.isfile(ref_photo):
-                    char_photo = ref_photo
+                char_photo = self._resolve_reference_photo(char["referencePhoto"], "characters")
+
+            # Environment reference photo
+            env_photo = None
+            if env and env.get("referencePhoto"):
+                env_photo = self._resolve_reference_photo(env["referencePhoto"], "environments")
 
             scene = {
                 "id": f"ad_{i:03d}",
@@ -821,6 +925,7 @@ class AutoDirector:
                 "costumeId": costume["id"] if costume else None,
                 "costumeName": costume["name"] if costume else None,
                 "character_photo_path": char_photo,
+                "environment_photo_path": env_photo,
                 "clip_path": None,
                 "has_clip": False,
                 "status": "planned",
@@ -906,12 +1011,77 @@ class AutoDirector:
                         sq["status"] = "rendering"
                         break
 
+            # Build consistent character description from stored fields
+            char_description = ""
+            char_id = scene.get("characterId")
+            if char_id:
+                char_data = self.pos.get_character(char_id)
+                if char_data:
+                    desc_parts = []
+                    phys = char_data.get("physicalDescription", char_data.get("description", ""))
+                    if phys:
+                        desc_parts.append(phys)
+                    if char_data.get("hair"):
+                        desc_parts.append(char_data["hair"])
+                    if char_data.get("skinTone"):
+                        desc_parts.append(f"{char_data['skinTone']} skin")
+                    if char_data.get("distinguishingFeatures"):
+                        desc_parts.append(char_data["distinguishingFeatures"])
+                    if char_data.get("outfitDescription"):
+                        desc_parts.append(f"wearing {char_data['outfitDescription']}")
+                    char_description = ", ".join(desc_parts)
+
+            # Build environment description from stored fields
+            env_description = ""
+            env_id = scene.get("environmentId")
+            if env_id:
+                env_data = self.pos.get_environment(env_id)
+                if env_data:
+                    env_parts = []
+                    if env_data.get("description"):
+                        env_parts.append(env_data["description"])
+                    if env_data.get("lighting"):
+                        env_parts.append(env_data["lighting"])
+                    if env_data.get("atmosphere"):
+                        env_parts.append(env_data["atmosphere"])
+                    if env_data.get("location"):
+                        env_parts.append(env_data["location"])
+                    if env_data.get("weather"):
+                        env_parts.append(env_data["weather"])
+                    if env_data.get("timeOfDay"):
+                        env_parts.append(env_data["timeOfDay"])
+                    env_description = ", ".join(env_parts)
+
+            # Build costume description from stored fields
+            costume_description = ""
+            costume_id = scene.get("costumeId")
+            if costume_id:
+                costume_data = self.pos.get_costume(costume_id)
+                if costume_data:
+                    if costume_data.get("description"):
+                        costume_description = costume_data["description"]
+                    else:
+                        c_parts = []
+                        if costume_data.get("upperBody"):
+                            c_parts.append(costume_data["upperBody"])
+                        if costume_data.get("lowerBody"):
+                            c_parts.append(costume_data["lowerBody"])
+                        if costume_data.get("footwear"):
+                            c_parts.append(costume_data["footwear"])
+                        if costume_data.get("accessories"):
+                            c_parts.append(costume_data["accessories"])
+                        costume_description = ", ".join(c_parts)
+
             gen_scene = {
                 "prompt": scene["prompt"],
                 "duration": scene.get("duration", 8),
                 "camera_movement": scene.get("camera_movement", "zoom_in"),
                 "engine": scene.get("engine", "grok"),
                 "id": scene_id,
+                "character_description": char_description,
+                "is_character_sheet": bool(char_data and char_data.get("isCharacterSheet")),
+                "environment_description": env_description,
+                "costume_description": costume_description,
             }
 
             photo_path = scene.get("character_photo_path")
@@ -983,6 +1153,15 @@ class AutoDirector:
                 except Exception:
                     pass
 
+        # Save updated plan back to disk (with clip_paths and statuses)
+        plan["scenes"] = scenes
+        plan_path = os.path.join(self.output_dir, "auto_director_plan.json")
+        try:
+            with open(plan_path, "w", encoding="utf-8") as f:
+                json.dump(plan, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[AUTO DIRECTOR] Warning: could not save plan: {e}")
+
         # Stitch
         self._update_progress(phase="stitching")
 
@@ -993,7 +1172,9 @@ class AutoDirector:
             self._update_progress(phase="error", error="No clips were generated successfully")
             return None
 
-        transitions = [s.get("transition", "crossfade") for s in scenes]
+        # Only include transitions for scenes that have valid clips
+        transitions = [s.get("transition", "crossfade") for s in scenes
+                       if s.get("clip_path") and os.path.isfile(s.get("clip_path", ""))]
         output_path = os.path.join(self.output_dir, "auto_director_final.mp4")
         audio = song_path if song_path and os.path.isfile(song_path) else None
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Music Video Generator - Web UI Server
+LUMN Studio - Web UI Server
 Runs on port 3849. No Flask dependency -- uses http.server.
 
 Endpoints:
@@ -21,6 +21,7 @@ Endpoints:
     GET  /api/references/<name>         Serve a reference image
 """
 
+import hashlib
 import json
 import os
 import re
@@ -28,6 +29,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 
 # Ensure ffmpeg is on PATH (winget installs to a long path)
 _FFMPEG_DIR = os.path.expanduser(
@@ -56,6 +58,7 @@ from lib.video_generator import (
     _load_settings as _load_gen_settings,
     _get_character_references, _resolve_character_references,
     MODEL_DURATION_OPTIONS, get_valid_duration, get_smart_duration,
+    extract_last_frame, extract_first_frame,
 )
 from lib.video_stitcher import (
     stitch, apply_lyrics_overlay, apply_aspect_ratio, split_clip,
@@ -86,6 +89,27 @@ PROMPT_OS_DATA_DIR = os.path.join(OUTPUT_DIR, "prompt_os")
 os.makedirs(PROMPT_OS_DATA_DIR, exist_ok=True)
 
 from lib.auto_director import AutoDirector, get_workflow_presets, save_custom_preset
+from lib.movie_planner import (
+    create_movie_plan, load_movie_plan, save_movie_plan, rebuild_bible_from_plan,
+    MovieBible, BeatPlanner, SceneBuilder, AssetCoverage, PlanValidator,
+    SceneRegenerator, PromptBuilder, _safe_id, _safe_name,
+)
+MOVIE_PLAN_PATH = os.path.join(OUTPUT_DIR, "movie_plan.json")
+
+from lib.draft_assets import (
+    init as _init_draft_assets,
+    get_all_drafts as _get_all_drafts,
+    get_draft as _get_draft,
+    create_draft as _create_draft,
+    promote_to_library as _promote_draft,
+    remove_draft as _remove_draft,
+    replace_draft_id_in_scenes as _replace_draft_in_scenes,
+    creation_readiness as _creation_readiness,
+    extract_drafts_from_plan as _extract_drafts,
+    clear_all as _clear_all_drafts,
+)
+_init_draft_assets(OUTPUT_DIR)
+
 AUTO_DIRECTOR_CLIPS_DIR = os.path.join(OUTPUT_DIR, "auto_director_clips")
 os.makedirs(AUTO_DIRECTOR_CLIPS_DIR, exist_ok=True)
 _auto_director = AutoDirector(OUTPUT_DIR, AUTO_DIRECTOR_CLIPS_DIR, _prompt_os)
@@ -105,6 +129,7 @@ WATERMARK_PATH = os.path.join(OUTPUT_DIR, "watermark.png")
 THUMBNAIL_PATH = os.path.join(OUTPUT_DIR, "thumbnail.jpg")
 AUDIO_TRACKS_DIR = os.path.join(UPLOADS_DIR, "audio_tracks")
 SOCIAL_EXPORTS_DIR = os.path.join(OUTPUT_DIR, "social_exports")
+KEYFRAMES_DIR = os.path.join(OUTPUT_DIR, "keyframes")
 SCENE_VIDEOS_DIR = os.path.join(UPLOADS_DIR, "scene_videos")
 SCENE_VOCALS_DIR = os.path.join(UPLOADS_DIR, "scene_vocals")
 FULL_PROJECTS_DIR = os.path.join(OUTPUT_DIR, "full_projects")
@@ -122,12 +147,24 @@ POS_PREVIEWS_CHARS_DIR = os.path.join(POS_PREVIEWS_DIR, "characters")
 POS_PREVIEWS_COSTUMES_DIR = os.path.join(POS_PREVIEWS_DIR, "costumes")
 POS_PREVIEWS_ENVS_DIR = os.path.join(POS_PREVIEWS_DIR, "environments")
 
-# Render time estimation constants (seconds per clip by engine)
+# Render time estimation constants (seconds per clip by engine/model)
 RENDER_TIME_ESTIMATES = {
+    # Runway models
+    "gen4_5": 90, "gen4.5": 90,
+    "gen3a_turbo": 45,
+    # Kling models
+    "kling_pro": 120, "kling3.0_pro": 120,
+    "kling_standard": 60, "kling3.0_standard": 60,
+    # Google Veo models
+    "veo3": 120,
+    "veo3_1": 120, "veo3.1": 120,
+    "veo3_1_fast": 45, "veo3.1_fast": 45,
+    # Other engines
     "grok": 30,
-    "runway": 60,
     "luma": 45,
     "openai": 50,
+    # Generic fallbacks
+    "runway": 90,
 }
 STITCH_TIME_PER_CLIP = 5
 WAVEFORM_CACHE_PATH = os.path.join(OUTPUT_DIR, "waveform_cache.json")
@@ -149,6 +186,7 @@ os.makedirs(STORYBOARD_DIR, exist_ok=True)
 os.makedirs(PREVIEWS_DIR, exist_ok=True)
 os.makedirs(AUDIO_TRACKS_DIR, exist_ok=True)
 os.makedirs(SOCIAL_EXPORTS_DIR, exist_ok=True)
+os.makedirs(KEYFRAMES_DIR, exist_ok=True)
 os.makedirs(SCENE_VIDEOS_DIR, exist_ok=True)
 os.makedirs(SCENE_VOCALS_DIR, exist_ok=True)
 os.makedirs(FULL_PROJECTS_DIR, exist_ok=True)
@@ -190,6 +228,277 @@ batch_queue_state = {
     "start_time": 0,
 }
 batch_lock = threading.Lock()
+
+# ---- Generation Queue (Real-Time) ----
+gen_queue = {
+    "items": [],        # [{id, shot_id, scene_id, shot_data, status, progress, result_url, error, started_at, completed_at}]
+    "max_parallel": 2,
+    "active_count": 0,
+}
+gen_queue_lock = threading.Lock()
+
+# ---- Preview-first pipeline state ----
+preview_state = {
+    "running": False,
+    "total": 0,
+    "completed": 0,
+    "failed": 0,
+    "results": {},   # index -> {status, preview_url, error}
+}
+preview_lock = threading.Lock()
+
+SCENE_THUMBNAILS_DIR = os.path.join(OUTPUT_DIR, "scene_thumbnails")
+os.makedirs(SCENE_THUMBNAILS_DIR, exist_ok=True)
+
+# ──── Scene Preview State (for batch preview generation) ────
+scene_preview_state = {
+    "running": False,
+    "total": 0,
+    "completed": 0,
+    "failed": 0,
+    "scenes": [],  # list of {index, preview}
+}
+scene_preview_lock = threading.Lock()
+
+
+def _compute_scene_fingerprint(scene):
+    """Compute hash of fields that affect visual generation."""
+    visual_fields = [
+        scene.get("summary", ""),
+        scene.get("action", ""),
+        scene.get("shot_prompt", ""),
+        scene.get("prompt", ""),
+        scene.get("camera_direction", ""),
+        scene.get("lighting_direction", ""),
+        scene.get("color_direction", ""),
+        scene.get("motion_direction", ""),
+        str(scene.get("characters", [])),
+        str(scene.get("costumes", [])),
+        str(scene.get("environments", [])),
+        str(scene.get("emotional_shift", {})),
+        str(scene.get("visual_shift", {})),
+        str(scene.get("duration", "")),
+        scene.get("transition_in", ""),
+        scene.get("transition_out", ""),
+    ]
+    combined = "|".join(visual_fields)
+    return hashlib.md5(combined.encode()).hexdigest()[:12]
+
+
+def _queue_add(shot_id: str, scene_id: str, shot_data: dict) -> dict:
+    """Add a shot to the generation queue."""
+    import uuid as _u
+    item = {
+        "id": _u.uuid4().hex[:8],
+        "shot_id": shot_id,
+        "scene_id": scene_id,
+        "shot_data": shot_data,
+        "status": "pending",
+        "progress": "",
+        "result_url": None,
+        "error": None,
+        "started_at": None,
+        "completed_at": None,
+    }
+    with gen_queue_lock:
+        gen_queue["items"].append(item)
+    _queue_process()
+    return item
+
+
+def _queue_process():
+    """Start processing pending items up to max_parallel."""
+    with gen_queue_lock:
+        active = sum(1 for i in gen_queue["items"] if i["status"] == "generating")
+        pending = [i for i in gen_queue["items"] if i["status"] == "pending"]
+        slots = gen_queue["max_parallel"] - active
+
+    for item in pending[:slots]:
+        t = threading.Thread(target=_queue_generate_item, args=(item,), daemon=True)
+        t.start()
+
+
+def _queue_generate_item(item: dict):
+    """Generate a single queue item in a background thread."""
+    item["status"] = "generating"
+    item["started_at"] = time.time()
+    item["progress"] = "starting..."
+
+    try:
+        shot = item["shot_data"]
+        scene_id = item["scene_id"]
+
+        # Build prompt using the shot prompt engine
+        from lib.prompt_assembler import compile_shot_prompt
+
+        # Load scene entities
+        scene_data = _prompt_os.get_scene(scene_id) if scene_id else None
+        char = None
+        costume = None
+        env = None
+        if scene_data:
+            if scene_data.get("characterId"):
+                char = _prompt_os.get_character(scene_data["characterId"])
+            if scene_data.get("costumeId"):
+                costume = _prompt_os.get_costume(scene_data["costumeId"])
+            if scene_data.get("environmentId"):
+                env = _prompt_os.get_environment(scene_data["environmentId"])
+
+        settings = _load_settings()
+        ds = settings.get("director_state", {})
+
+        compiled = compile_shot_prompt(
+            shot=shot,
+            character=char, costume=costume, environment=env,
+            global_style=ds.get("universalPrompt", ""),
+            world_setting=ds.get("worldSetting", ""),
+            tier="cinematic",
+        )
+
+        # Build character description for the generator
+        char_description = ""
+        if char:
+            desc_parts = []
+            phys = char.get("physicalDescription", char.get("description", ""))
+            if phys:
+                desc_parts.append(phys)
+            if char.get("hair"):
+                desc_parts.append(char["hair"])
+            if char.get("skinTone"):
+                desc_parts.append(f"{char['skinTone']} skin")
+            char_description = ", ".join(desc_parts)
+
+        # Resolve character photo
+        photo_path = None
+        if char and char.get("referencePhoto"):
+            ref = char["referencePhoto"]
+            import re as _re_q
+            if os.path.isfile(ref):
+                photo_path = ref
+            else:
+                m = _re_q.search(r"/api/pos/characters/([^/]+)/photo", ref)
+                if m:
+                    cid = m.group(1)
+                    for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                        candidate = os.path.join(POS_PHOTOS_CHARS_DIR, f"{cid}{ext}")
+                        if os.path.isfile(candidate):
+                            photo_path = candidate
+                            break
+
+        # Resolve costume photo and description
+        q_cos_desc = ""
+        q_cos_photo = ""
+        if costume:
+            q_cos_desc = costume.get("description", "")
+            if not q_cos_desc:
+                _cp = [costume.get("upperBody", ""), costume.get("lowerBody", "")]
+                q_cos_desc = ", ".join(p for p in _cp if p)
+            import re as _re_qco
+            _cref = costume.get("referenceImagePath", "")
+            if _cref:
+                if os.path.isfile(_cref):
+                    q_cos_photo = _cref
+                else:
+                    _mqco = _re_qco.search(r"/api/pos/costumes/([^/]+)/photo", _cref)
+                    if _mqco:
+                        for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                            candidate = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{_mqco.group(1)}{ext}")
+                            if os.path.isfile(candidate):
+                                q_cos_photo = candidate
+                                break
+
+        # Resolve environment photo and description
+        q_env_desc = ""
+        q_env_photo = ""
+        if env:
+            _ep = []
+            if env.get("description"): _ep.append(env["description"])
+            if env.get("lighting"): _ep.append(env["lighting"])
+            if env.get("atmosphere"): _ep.append(env["atmosphere"])
+            q_env_desc = ", ".join(_ep)
+            import re as _re_qen
+            _eref = env.get("referenceImagePath", "")
+            if _eref:
+                if os.path.isfile(_eref):
+                    q_env_photo = _eref
+                else:
+                    _mqen = _re_qen.search(r"/api/pos/environments/([^/]+)/photo", _eref)
+                    if _mqen:
+                        for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                            candidate = os.path.join(POS_PHOTOS_ENVS_DIR, f"{_mqen.group(1)}{ext}")
+                            if os.path.isfile(candidate):
+                                q_env_photo = candidate
+                                break
+
+        # Determine engine
+        engine = ds.get("engine", settings.get("default_engine", "gen4_5"))
+
+        gen_scene = {
+            "prompt": compiled["prompt"],
+            "duration": shot.get("duration", 4),
+            "camera_movement": (shot.get("camera", {}).get("movement") or "static"),
+            "engine": engine,
+            "id": item["shot_id"],
+            "character_description": char_description,
+            "costume_description": q_cos_desc,
+            "costume_photo_path": q_cos_photo,
+            "environment_description": q_env_desc,
+            "environment_photo_path": q_env_photo,
+        }
+        # Keyframe passthrough
+        if shot.get("first_frame_path"):
+            gen_scene["first_frame_path"] = shot["first_frame_path"]
+        if shot.get("last_frame_path"):
+            gen_scene["last_frame_path"] = shot["last_frame_path"]
+
+        def on_progress(idx, status):
+            item["progress"] = status
+
+        shot_idx = shot.get("shot_number", 1) - 1
+        clip_path = generate_scene(gen_scene, shot_idx, MANUAL_CLIPS_DIR,
+                                    progress_cb=on_progress, cost_cb=_record_cost,
+                                    photo_path=photo_path)
+
+        # Extract last frame for continuity
+        try:
+            from lib.cinematic_engine import extract_last_frame
+            last_frame = extract_last_frame(clip_path)
+            if last_frame:
+                shot["reference_frame"] = last_frame
+        except Exception:
+            pass
+
+        mtime = int(os.path.getmtime(clip_path))
+        item["status"] = "completed"
+        item["result_url"] = f"/api/clips/{os.path.basename(clip_path)}?v={mtime}"
+        item["completed_at"] = time.time()
+        item["progress"] = "done"
+
+        # Update shot data in settings
+        _queue_save_shot_clip(scene_id, item["shot_id"], clip_path)
+
+    except Exception as e:
+        item["status"] = "failed"
+        item["error"] = str(e)
+        item["completed_at"] = time.time()
+        item["progress"] = f"failed: {str(e)[:60]}"
+        print(f"[QUEUE] Shot {item['shot_id']} failed: {e}")
+
+    # Process next pending items
+    _queue_process()
+
+
+def _queue_save_shot_clip(scene_id: str, shot_id: str, clip_path: str):
+    """Save generated clip path back to shot data."""
+    settings = _load_settings()
+    shots = settings.get("shots_data", {}).get(scene_id, [])
+    for shot in shots:
+        if shot.get("id") == shot_id:
+            shot["clip_path"] = clip_path
+            shot["status"] = "generated"
+            break
+    settings.setdefault("shots_data", {})[scene_id] = shots
+    _save_settings(settings)
 
 
 def _reset_state():
@@ -269,11 +578,224 @@ def _save_scene_plan(scenes, clip_paths, song_path, output_path):
 
 
 def _load_scene_plan():
-    """Load scene plan from JSON."""
-    if not os.path.isfile(SCENE_PLAN_PATH):
-        return None
-    with open(SCENE_PLAN_PATH, "r") as f:
-        return json.load(f)
+    """Load scene plan from JSON. Falls back to auto_director_plan if scene_plan missing."""
+    if os.path.isfile(SCENE_PLAN_PATH):
+        with open(SCENE_PLAN_PATH, "r") as f:
+            return json.load(f)
+    # Fallback: try auto director plan and convert
+    if os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
+        with open(AUTO_DIRECTOR_PLAN_PATH, "r") as f:
+            ad_plan = json.load(f)
+        if ad_plan and ad_plan.get("scenes"):
+            _sync_auto_plan_to_scene_plan(ad_plan)
+            return _load_scene_plan()
+    return None
+
+
+def _sync_auto_plan_to_scene_plan(ad_plan=None):
+    """Copy auto_director_plan.json into scene_plan.json format for generation pipeline compatibility."""
+    try:
+        if ad_plan is None:
+            if not os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
+                return
+            with open(AUTO_DIRECTOR_PLAN_PATH, "r") as f:
+                ad_plan = json.load(f)
+        scenes = ad_plan.get("scenes", [])
+        plan = {
+            "song_path": ad_plan.get("song_path", ""),
+            "style": ad_plan.get("style", ""),
+            "scenes": []
+        }
+        for i, scene in enumerate(scenes):
+            entry = dict(scene)
+            entry["index"] = i
+            if "clip_path" not in entry:
+                entry["clip_path"] = None
+            plan["scenes"].append(entry)
+        with open(SCENE_PLAN_PATH, "w") as f:
+            json.dump(plan, f, indent=2)
+    except Exception as e:
+        print(f"[SYNC] Error syncing auto plan to scene plan: {e}")
+
+
+def _enrich_scene_with_assets(scene):
+    """Resolve asset IDs in a scene to photo paths and descriptions for generation.
+
+    Works with both new movie planner scenes (structured characters/costumes/environments arrays)
+    and legacy scenes (characterId/costumeId/environmentId fields).
+    """
+    import re
+
+    # --- Resolve character ---
+    char_description = scene.get("character_description", "")
+    char_photo_path = scene.get("character_photo_path", "")
+
+    # Try structured characters array first (new movie planner)
+    chars = scene.get("characters", [])
+    if chars and isinstance(chars, list):
+        for char_ref in chars:
+            char_id = char_ref.get("id", "") if isinstance(char_ref, dict) else ""
+            if char_id:
+                pos_char = _prompt_os.get_character(char_id)
+                if pos_char:
+                    if not char_description:
+                        parts = []
+                        if pos_char.get("physical"): parts.append(pos_char["physical"])
+                        if pos_char.get("name"): parts.insert(0, pos_char["name"])
+                        char_description = ", ".join(parts)
+                    # Resolve photo
+                    ref_img = pos_char.get("referenceImagePath", "")
+                    if ref_img and not char_photo_path:
+                        if os.path.isfile(ref_img):
+                            char_photo_path = ref_img
+                        else:
+                            m = re.search(r"/api/pos/characters/([^/]+)/photo", ref_img)
+                            if m:
+                                for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                                    candidate = os.path.join(POS_PHOTOS_CHARS_DIR, f"{m.group(1)}{ext}")
+                                    if os.path.isfile(candidate):
+                                        char_photo_path = candidate
+                                        break
+                    break  # Use first character as primary
+
+    # Fallback: legacy characterId field
+    if not char_description and not char_photo_path:
+        char_id = scene.get("characterId", "")
+        if char_id:
+            pos_char = _prompt_os.get_character(char_id)
+            if pos_char:
+                parts = []
+                if pos_char.get("physical"): parts.append(pos_char["physical"])
+                if pos_char.get("name"): parts.insert(0, pos_char["name"])
+                char_description = ", ".join(parts)
+                ref_img = pos_char.get("referenceImagePath", "")
+                if ref_img:
+                    if os.path.isfile(ref_img):
+                        char_photo_path = ref_img
+                    else:
+                        m = re.search(r"/api/pos/characters/([^/]+)/photo", ref_img)
+                        if m:
+                            for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                                candidate = os.path.join(POS_PHOTOS_CHARS_DIR, f"{m.group(1)}{ext}")
+                                if os.path.isfile(candidate):
+                                    char_photo_path = candidate
+                                    break
+
+    # --- Resolve costume ---
+    costume_description = scene.get("costume_description", "")
+    costume_photo_path = scene.get("costume_photo_path", "")
+
+    costumes = scene.get("costumes", [])
+    if costumes and isinstance(costumes, list):
+        for cos_ref in costumes:
+            cos_id = cos_ref.get("id", "") if isinstance(cos_ref, dict) else ""
+            if cos_id:
+                pos_costume = _prompt_os.get_costume(cos_id)
+                if pos_costume:
+                    if not costume_description:
+                        if pos_costume.get("description"):
+                            costume_description = pos_costume["description"]
+                        else:
+                            c_parts = [pos_costume.get(k, "") for k in ("upperBody", "lowerBody", "footwear", "accessories") if pos_costume.get(k)]
+                            costume_description = ", ".join(c_parts)
+                    ref_img = pos_costume.get("referenceImagePath", "")
+                    if ref_img and not costume_photo_path:
+                        if os.path.isfile(ref_img):
+                            costume_photo_path = ref_img
+                        else:
+                            m = re.search(r"/api/pos/costumes/([^/]+)/photo", ref_img)
+                            if m:
+                                for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                                    candidate = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{m.group(1)}{ext}")
+                                    if os.path.isfile(candidate):
+                                        costume_photo_path = candidate
+                                        break
+                    break
+
+    if not costume_description and not costume_photo_path:
+        cos_id = scene.get("costumeId", "")
+        if cos_id:
+            pos_costume = _prompt_os.get_costume(cos_id)
+            if pos_costume:
+                if pos_costume.get("description"):
+                    costume_description = pos_costume["description"]
+                ref_img = pos_costume.get("referenceImagePath", "")
+                if ref_img:
+                    if os.path.isfile(ref_img):
+                        costume_photo_path = ref_img
+                    else:
+                        m = re.search(r"/api/pos/costumes/([^/]+)/photo", ref_img)
+                        if m:
+                            for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                                candidate = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{m.group(1)}{ext}")
+                                if os.path.isfile(candidate):
+                                    costume_photo_path = candidate
+                                    break
+
+    # --- Resolve environment ---
+    env_description = scene.get("environment_description", "")
+    env_photo_path = scene.get("environment_photo_path", "")
+
+    envs = scene.get("environments", [])
+    if envs and isinstance(envs, list):
+        for env_ref in envs:
+            env_id = env_ref.get("id", "") if isinstance(env_ref, dict) else ""
+            if env_id:
+                pos_env = _prompt_os.get_environment(env_id)
+                if pos_env:
+                    if not env_description:
+                        e_parts = [pos_env.get(k, "") for k in ("name", "description", "locationType", "timeOfDay") if pos_env.get(k)]
+                        env_description = ", ".join(e_parts)
+                    ref_img = pos_env.get("referenceImagePath", "")
+                    if ref_img and not env_photo_path:
+                        if os.path.isfile(ref_img):
+                            env_photo_path = ref_img
+                        else:
+                            m = re.search(r"/api/pos/environments/([^/]+)/photo", ref_img)
+                            if m:
+                                for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                                    candidate = os.path.join(POS_PHOTOS_ENVS_DIR, f"{m.group(1)}{ext}")
+                                    if os.path.isfile(candidate):
+                                        env_photo_path = candidate
+                                        break
+                    break
+
+    if not env_description and not env_photo_path:
+        env_id = scene.get("environmentId", "")
+        if env_id:
+            pos_env = _prompt_os.get_environment(env_id)
+            if pos_env:
+                e_parts = [pos_env.get(k, "") for k in ("name", "description", "locationType", "timeOfDay") if pos_env.get(k)]
+                env_description = ", ".join(e_parts)
+                ref_img = pos_env.get("referenceImagePath", "")
+                if ref_img:
+                    if os.path.isfile(ref_img):
+                        env_photo_path = ref_img
+                    else:
+                        m = re.search(r"/api/pos/environments/([^/]+)/photo", ref_img)
+                        if m:
+                            for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                                candidate = os.path.join(POS_PHOTOS_ENVS_DIR, f"{m.group(1)}{ext}")
+                                if os.path.isfile(candidate):
+                                    env_photo_path = candidate
+                                    break
+
+    # Apply resolved fields
+    scene["character_description"] = char_description
+    scene["character_photo_path"] = char_photo_path
+    scene["costume_description"] = costume_description
+    scene["costume_photo_path"] = costume_photo_path
+    scene["environment_description"] = env_description
+    scene["environment_photo_path"] = env_photo_path
+
+    if char_photo_path:
+        print(f"[ENRICH] Character photo: {char_photo_path}")
+    if costume_photo_path:
+        print(f"[ENRICH] Costume photo: {costume_photo_path}")
+    if env_photo_path:
+        print(f"[ENRICH] Environment photo: {env_photo_path}")
+
+    return scene
 
 
 def _run_generation(song_path: str, style: str):
@@ -299,44 +821,21 @@ def _run_generation(song_path: str, style: str):
                 for i, s in enumerate(scenes)
             ]
 
-        # Generate clips
-        with gen_lock:
-            gen_state["phase"] = "generating"
+        # Enrich scenes with asset data before saving
+        for s in scenes:
+            _enrich_scene_with_assets(s)
 
-        def on_progress(index, status):
-            with gen_lock:
-                if index < len(gen_state["progress"]):
-                    gen_state["progress"][index]["status"] = status
-
-        clip_paths = generate_all(scenes, CLIPS_DIR, progress_cb=on_progress, cost_cb=_record_cost)
-
-        # Record prompts to history
-        for i, scene in enumerate(scenes):
-            _record_prompt_history(scene.get("prompt", ""), scene_index=i)
-
-        valid = [c for c in clip_paths if c]
-        if not valid:
-            with gen_lock:
-                gen_state["phase"] = "error"
-                gen_state["error"] = "No clips were generated successfully"
-                gen_state["running"] = False
-            return
-
-        # Save scene plan
+        # Save draft scene plan immediately (no clip paths yet).
+        # The preview-first pipeline takes over from here:
+        #   1. Frontend shows thumbnails (via /api/preview-thumbnail/batch)
+        #   2. User approves/rejects scenes
+        #   3. User clicks "Generate Approved" -> POST /api/generate-approved
         output_file = os.path.join(OUTPUT_DIR, "final_video.mp4")
-        _save_scene_plan(scenes, clip_paths, song_path, output_file)
+        _save_scene_plan(scenes, [None] * len(scenes), song_path, output_file)
 
-        # Stitch
+        # Signal frontend to enter preview review mode
         with gen_lock:
-            gen_state["phase"] = "stitching"
-
-        # Extract transitions for stitching
-        scene_transitions = [s.get("transition", "crossfade") for s in scenes]
-        stitch(clip_paths, song_path, output_file, transitions=scene_transitions)
-
-        with gen_lock:
-            gen_state["phase"] = "done"
-            gen_state["output_file"] = output_file
+            gen_state["phase"] = "preview_pending"
             gen_state["running"] = False
 
     except Exception as e:
@@ -344,6 +843,46 @@ def _run_generation(song_path: str, style: str):
             gen_state["phase"] = "error"
             gen_state["error"] = str(e)
             gen_state["running"] = False
+
+
+def _chain_scene_keyframes(plan: dict) -> dict:
+    """
+    Auto-chain keyframes across scenes.
+    For each scene after the first, if no explicit first_frame is set,
+    extract the last frame from the previous scene's generated clip
+    and set it as this scene's first_frame_path.
+
+    Args:
+        plan: scene plan dict with "scenes" list
+
+    Returns:
+        modified plan dict
+    """
+    scenes = plan.get("scenes", [])
+    chained_count = 0
+    for i, scene in enumerate(scenes):
+        if i == 0:
+            continue
+        # Skip if scene already has an explicit first_frame_path
+        if scene.get("first_frame_path") and os.path.isfile(scene["first_frame_path"]):
+            continue
+        # Check if previous scene has a generated clip
+        prev = scenes[i - 1]
+        prev_clip = prev.get("clip_path")
+        if not prev_clip or not os.path.isfile(prev_clip):
+            continue
+        # Extract last frame from previous clip
+        kf_path = os.path.join(KEYFRAMES_DIR, f"scene_{i}_first.png")
+        try:
+            extract_last_frame(prev_clip, kf_path)
+            scene["first_frame_path"] = kf_path
+            chained_count += 1
+            print(f"[AUTO-CHAIN] Scene {i}: chained first_frame from scene {i-1} clip")
+        except Exception as e:
+            print(f"[AUTO-CHAIN] Scene {i}: failed to extract last frame from scene {i-1}: {e}")
+
+    print(f"[AUTO-CHAIN] Chained {chained_count} scenes")
+    return plan
 
 
 def _run_regen(scene_index: int, new_prompt: str):
@@ -380,7 +919,9 @@ def _run_regen(scene_index: int, new_prompt: str):
                 if gen_state["progress"]:
                     gen_state["progress"][0]["status"] = status
 
-        clip_path = generate_scene(scene, scene_index, CLIPS_DIR, progress_cb=on_progress, cost_cb=_record_cost)
+        _enrich_scene_with_assets(scene)
+        char_photo = scene.get("character_photo_path", "") or None
+        clip_path = generate_scene(scene, scene_index, CLIPS_DIR, progress_cb=on_progress, cost_cb=_record_cost, photo_path=char_photo)
         scene["clip_path"] = clip_path
         plan["scenes"][scene_index] = scene
 
@@ -429,6 +970,351 @@ def _run_restitch():
             gen_state["phase"] = "error"
             gen_state["error"] = str(e)
             gen_state["running"] = False
+
+
+def _run_generation_approved():
+    """
+    Background generation thread that only generates video clips for scenes
+    that have been approved in the preview step (preview_approved == True).
+    Scenes with no approval flag set are also generated (backward compat).
+    Unapproved scenes keep any existing clip_path or None.
+    """
+    try:
+        plan = _load_scene_plan()
+        if not plan:
+            with gen_lock:
+                gen_state["phase"] = "error"
+                gen_state["error"] = "No scene plan found. Run planning first."
+                gen_state["running"] = False
+            return
+
+        scenes = plan["scenes"]
+        song_path = plan.get("song_path", "")
+        output_path = plan.get("output_path", os.path.join(OUTPUT_DIR, "final_video.mp4"))
+
+        # Determine which scenes to generate
+        has_any_approval = any("preview_approved" in s for s in scenes)
+        scenes_to_gen = []
+        for i, s in enumerate(scenes):
+            if has_any_approval:
+                if s.get("preview_approved", False):
+                    scenes_to_gen.append((i, s))
+            else:
+                scenes_to_gen.append((i, s))
+
+        with gen_lock:
+            gen_state["phase"] = "generating"
+            gen_state["total_scenes"] = len(scenes_to_gen)
+            gen_state["progress"] = [
+                {"scene": orig_i, "status": "pending", "prompt": s.get("prompt", "")}
+                for orig_i, s in scenes_to_gen
+            ]
+
+        clip_paths = [s.get("clip_path") for s in scenes]  # existing paths as fallback
+
+        def on_progress(local_idx, status):
+            with gen_lock:
+                if local_idx < len(gen_state["progress"]):
+                    gen_state["progress"][local_idx]["status"] = status
+
+        for local_idx, (orig_i, scene) in enumerate(scenes_to_gen):
+            # Merge preview notes into prompt if present
+            notes = scene.get("preview_notes", "")
+            prompt_base = scene.get("prompt", "")
+            scene_copy = dict(scene)
+            if notes and notes.strip():
+                scene_copy["prompt"] = f"{prompt_base}. Director notes: {notes.strip()}"
+
+            # Enrich scene with asset photos and descriptions
+            _enrich_scene_with_assets(scene_copy)
+
+            def _prog(idx_unused, status, li=local_idx):
+                on_progress(li, status)
+
+            on_progress(local_idx, "generating...")
+            try:
+                # Pass character photo explicitly so the engine uses it as reference
+                char_photo = scene_copy.get("character_photo_path", "") or None
+                clip_path = generate_scene(scene_copy, orig_i, CLIPS_DIR,
+                                           progress_cb=_prog, cost_cb=_record_cost,
+                                           photo_path=char_photo)
+                clip_paths[orig_i] = clip_path
+                on_progress(local_idx, "done")
+                _record_prompt_history(scene_copy.get("prompt", ""), scene_index=orig_i)
+            except Exception as e:
+                on_progress(local_idx, f"FAILED: {e}")
+                clip_paths[orig_i] = None
+
+        # Update plan with new clip paths and save
+        for i, cp in enumerate(clip_paths):
+            plan["scenes"][i]["clip_path"] = cp
+
+        with open(SCENE_PLAN_PATH, "w") as f:
+            json.dump(plan, f, indent=2)
+
+        valid = [c for c in clip_paths if c and os.path.isfile(c)]
+        if not valid:
+            with gen_lock:
+                gen_state["phase"] = "error"
+                gen_state["error"] = "No clips were generated successfully"
+                gen_state["running"] = False
+            return
+
+        # Stitch only valid (approved) clips
+        stitch_clips = []
+        stitch_trans = []
+        for i, s in enumerate(plan["scenes"]):
+            cp = clip_paths[i]
+            if cp and os.path.isfile(cp):
+                stitch_clips.append(cp)
+                stitch_trans.append(s.get("transition", "crossfade"))
+
+        with gen_lock:
+            gen_state["phase"] = "stitching"
+
+        stitch(stitch_clips, song_path, output_path, transitions=stitch_trans)
+
+        with gen_lock:
+            gen_state["phase"] = "done"
+            gen_state["output_file"] = output_path
+            gen_state["running"] = False
+
+    except Exception as e:
+        with gen_lock:
+            gen_state["phase"] = "error"
+            gen_state["error"] = str(e)
+            gen_state["running"] = False
+
+
+# ---- Preview-first pipeline helpers ----
+
+def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
+                               scene_data: dict = None) -> dict:
+    """
+    Generate a preview thumbnail for a scene.
+
+    Strategy:
+    1. If a character photo exists, use Runway to generate a 5-second clip
+       with the photo as character reference, then extract the first frame.
+       This produces an accurate preview that matches the final video.
+    2. Fallback: use Grok image generation (text-only, no character likeness).
+
+    Returns dict with 'preview_url' on success or 'error' on failure.
+    """
+    import subprocess, tempfile
+
+    full_prompt = prompt.strip()
+    if notes and notes.strip():
+        full_prompt = f"{full_prompt}. {notes.strip()}"
+
+    out_path = os.path.join(SCENE_THUMBNAILS_DIR, f"scene_{index}.jpg")
+
+    # --- Resolve character photo from scene data ---
+    char_photo = None
+    if scene_data:
+        # Enrich scene to get photo paths
+        enriched = dict(scene_data)
+        _enrich_scene_with_assets(enriched)
+        char_photo = enriched.get("character_photo_path", "") or None
+
+    # --- Strategy A: Runway 5s clip + frame extraction (accurate) ---
+    if char_photo and os.path.isfile(char_photo):
+        try:
+            from lib.video_generator import (
+                _runway_submit_text_to_video, _runway_poll, _get_api_key,
+                _photo_to_data_uri, _describe_entity_photo, describe_photo,
+                _download
+            )
+            import requests as _req
+
+            print(f"[PREVIEW][{index}] Using Runway preview with character photo: {char_photo}")
+
+            # Build enriched prompt with character + costume + environment descriptions
+            preview_prompt = full_prompt
+
+            # Add character description
+            char_desc = ""
+            if scene_data:
+                char_desc = enriched.get("character_description", "")
+            if not char_desc:
+                try:
+                    char_desc = describe_photo(char_photo)
+                except Exception:
+                    pass
+            if char_desc:
+                preview_prompt = f"The exact person shown in the reference image: {char_desc}. Maintain exact likeness. {preview_prompt}"
+
+            # Add costume/environment descriptions from photos
+            costume_photo = enriched.get("costume_photo_path", "") if scene_data else ""
+            if costume_photo and os.path.isfile(costume_photo):
+                try:
+                    cos_desc = _describe_entity_photo(costume_photo, "costume")
+                    if cos_desc:
+                        preview_prompt = f"{preview_prompt} Costume: {cos_desc}."
+                except Exception:
+                    pass
+
+            env_photo = enriched.get("environment_photo_path", "") if scene_data else ""
+            if env_photo and os.path.isfile(env_photo):
+                try:
+                    env_desc = _describe_entity_photo(env_photo, "environment")
+                    if env_desc:
+                        preview_prompt = f"{preview_prompt} Setting: {env_desc}."
+                except Exception:
+                    pass
+
+            # Generate a short clip via Runway
+            engine = (scene_data or {}).get("engine", "gen4.5")
+            # Use fast engine for previews
+            preview_engine = "gen3a_turbo" if "turbo" not in engine else engine
+
+            task_id = _runway_submit_text_to_video(
+                preview_prompt,
+                duration=5,
+                model=preview_engine,
+                character_photo_path=char_photo,
+            )
+
+            print(f"[PREVIEW][{index}] Runway task submitted: {task_id[:16]}...")
+            video_info = _runway_poll(task_id)
+
+            # Download the video to a temp file
+            temp_video = os.path.join(SCENE_THUMBNAILS_DIR, f"scene_{index}_preview.mp4")
+            _download(video_info["url"], temp_video)
+
+            # Extract first frame with ffmpeg
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-i", temp_video, "-vframes", "1", "-q:v", "2", out_path],
+                capture_output=True, timeout=30,
+                creationflags=0x08000000 if os.name == "nt" else 0,  # windowsHide
+            )
+
+            # Clean up temp video
+            try:
+                os.unlink(temp_video)
+            except Exception:
+                pass
+
+            if result.returncode == 0 and os.path.isfile(out_path):
+                _record_cost(f"thumb_{index}", "video_preview")
+                print(f"[PREVIEW][{index}] Runway preview extracted successfully")
+                return {"preview_url": f"/api/scene-thumbnails/scene_{index}.jpg"}
+            else:
+                print(f"[PREVIEW][{index}] ffmpeg frame extraction failed, falling back to Grok")
+
+        except Exception as e:
+            print(f"[PREVIEW][{index}] Runway preview failed ({e}), falling back to Grok")
+
+    # --- Strategy B: Grok image generation (text-only fallback) ---
+    try:
+        from lib.video_generator import _get_api_key
+        import requests as _req
+
+        print(f"[PREVIEW][{index}] Using Grok image generation (no character photo)")
+
+        api_key = _get_api_key()
+        resp = _req.post(
+            "https://api.x.ai/v1/images/generations",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": "grok-imagine-image", "prompt": full_prompt, "n": 1},
+            timeout=60,
+        )
+        if resp.status_code != 200:
+            return {"error": f"API {resp.status_code}: {resp.text[:200]}"}
+
+        data = resp.json()
+        img_url = (data.get("data") or [{}])[0].get("url", "")
+        if not img_url:
+            b64 = (data.get("data") or [{}])[0].get("b64_json", "")
+            if b64:
+                import base64
+                img_bytes = base64.b64decode(b64)
+                with open(out_path, "wb") as f:
+                    f.write(img_bytes)
+                _record_cost(f"thumb_{index}", "image")
+                return {"preview_url": f"/api/scene-thumbnails/scene_{index}.jpg"}
+            return {"error": "No image data in API response"}
+
+        img_resp = _req.get(img_url, timeout=30)
+        if img_resp.status_code != 200:
+            return {"error": "Failed to download image from URL"}
+
+        with open(out_path, "wb") as f:
+            f.write(img_resp.content)
+        _record_cost(f"thumb_{index}", "image")
+        return {"preview_url": f"/api/scene-thumbnails/scene_{index}.jpg"}
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _run_preview_batch(scenes_data: list):
+    """
+    Background thread: generate thumbnails for all scenes concurrently.
+    scenes_data: list of {index, prompt, notes}
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    with preview_lock:
+        preview_state["running"] = True
+        preview_state["total"] = len(scenes_data)
+        preview_state["completed"] = 0
+        preview_state["failed"] = 0
+        preview_state["results"] = {
+            str(sd["index"]): {"status": "pending"} for sd in scenes_data
+        }
+
+    def _do_one(sd):
+        idx = sd["index"]
+        with preview_lock:
+            preview_state["results"][str(idx)] = {"status": "generating"}
+        result = _generate_scene_thumbnail(idx, sd.get("prompt", ""), sd.get("notes", ""),
+                                           scene_data=sd.get("scene_data"))
+        with preview_lock:
+            if "error" in result:
+                preview_state["results"][str(idx)] = {"status": "failed", "error": result["error"]}
+                preview_state["failed"] += 1
+            else:
+                preview_state["results"][str(idx)] = {
+                    "status": "done",
+                    "preview_url": result["preview_url"],
+                }
+                preview_state["completed"] += 1
+        # Persist to scene plan regardless of lock
+        if "preview_url" in result:
+            _update_scene_plan_thumbnail(idx, result["preview_url"])
+
+    max_workers = min(4, len(scenes_data))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = [pool.submit(_do_one, sd) for sd in scenes_data]
+        for f in as_completed(futures):
+            try:
+                f.result()
+            except Exception:
+                pass
+
+    with preview_lock:
+        preview_state["running"] = False
+
+
+def _update_scene_plan_thumbnail(index: int, preview_url: str):
+    """Persist thumbnail URL into the scene_plan.json for the given scene index."""
+    plan = _load_scene_plan()
+    if plan and 0 <= index < len(plan["scenes"]):
+        plan["scenes"][index]["preview_thumbnail"] = preview_url
+        with open(SCENE_PLAN_PATH, "w") as f:
+            json.dump(plan, f, indent=2)
+
+
+def _update_scene_plan_approval(index: int, approved: bool, notes: str = ""):
+    """Persist approval status into the scene_plan.json for the given scene index."""
+    plan = _load_scene_plan()
+    if plan and 0 <= index < len(plan["scenes"]):
+        plan["scenes"][index]["preview_approved"] = approved
+        if notes:
+            plan["scenes"][index]["preview_notes"] = notes
+        with open(SCENE_PLAN_PATH, "w") as f:
+            json.dump(plan, f, indent=2)
 
 
 # ---- Cost tracker helpers ----
@@ -591,79 +1477,80 @@ def _run_manual_generate_scene(scene_id: str):
                 if gen_state["progress"]:
                     gen_state["progress"][0]["status"] = status
 
-        # ---- Prompt OS entity injection ----
-        gen_prompt = scene["prompt"]
+        # ---- Structured Prompt Assembly ----
+        from lib.prompt_assembler import assemble_prompt, build_character_block, build_costume_block, build_environment_block
+
+        settings = _load_settings()
+        ds = settings.get("director_state", {})
+        universal_prompt = ds.get("universalPrompt", "")
+        world_setting = ds.get("worldSetting", "")
 
         pos_chars = []
         pos_costume = None
         pos_env = None
 
-        # Collect ALL characters (from characterIds array + legacy characterId)
+        # Collect ALL characters
         char_ids = list(scene.get("characterIds", []))
         if scene.get("characterId") and scene["characterId"] not in char_ids:
             char_ids.append(scene["characterId"])
-
         for cid in char_ids:
-            pos_char = _prompt_os.get_character(cid)
-            if pos_char:
-                pos_chars.append(pos_char)
-                char_desc_parts = []
-                desc = pos_char.get("description", pos_char.get("physicalDescription", ""))
-                if desc:
-                    char_desc_parts.append(desc)
-                if pos_char.get("outfitDescription"):
-                    char_desc_parts.append(f"wearing {pos_char['outfitDescription']}")
-                elif pos_char.get("hair"):
-                    char_desc_parts.append(f"with {pos_char['hair']}")
-                if char_desc_parts:
-                    char_inject = ", ".join(char_desc_parts)
-                    if char_inject.lower() not in gen_prompt.lower():
-                        gen_prompt = char_inject + ", " + gen_prompt
-                print(f"[GEN] Injected character '{pos_char.get('name')}' into prompt")
-
-        # Use first character's reference photo for Runway character reference
+            c = _prompt_os.get_character(cid)
+            if c:
+                pos_chars.append(c)
         pos_char = pos_chars[0] if pos_chars else None
 
         if scene.get("costumeId"):
             pos_costume = _prompt_os.get_costume(scene["costumeId"])
-            if pos_costume:
-                costume_desc = pos_costume.get("description", "")
-                if not costume_desc:
-                    parts = []
-                    if pos_costume.get("upperBody"):
-                        parts.append(pos_costume["upperBody"])
-                    if pos_costume.get("lowerBody"):
-                        parts.append(pos_costume["lowerBody"])
-                    costume_desc = ", ".join(parts)
-                if costume_desc and costume_desc.lower() not in gen_prompt.lower():
-                    gen_prompt = gen_prompt + f", wearing {costume_desc}"
-                print(f"[GEN] Injected costume '{pos_costume.get('name')}' into prompt")
 
         if scene.get("environmentId"):
             pos_env = _prompt_os.get_environment(scene["environmentId"])
-            if pos_env:
-                env_parts = []
-                if pos_env.get("description"):
-                    env_parts.append(pos_env["description"])
-                if pos_env.get("lighting"):
-                    env_parts.append(pos_env["lighting"])
-                if pos_env.get("atmosphere"):
-                    env_parts.append(pos_env["atmosphere"])
-                if env_parts:
-                    env_inject = ", ".join(env_parts)
-                    if env_inject.lower() not in gen_prompt.lower():
-                        gen_prompt = gen_prompt + f", in {env_inject}"
-                print(f"[GEN] Injected environment '{pos_env.get('name')}' into prompt")
+
+        # Use the structured assembler
+        assembled = assemble_prompt(
+            global_style=universal_prompt,
+            world_setting=world_setting,
+            character=pos_char,
+            costume=pos_costume,
+            environment=pos_env,
+            scene=scene,
+            universal_prompt=universal_prompt,
+        )
+
+        # The scene's own prompt is the user's action/creative input — combine with assembled blocks
+        user_prompt = scene["prompt"]
+        gen_prompt = f"{assembled['prompt']}. {user_prompt}" if assembled["prompt"] else user_prompt
+
+        print(f"[GEN] Assembled prompt ({len(gen_prompt)} chars): {gen_prompt[:120]}...")
+        if pos_char:
+            print(f"[GEN] Character: {pos_char.get('name')}")
+        if pos_costume:
+            print(f"[GEN] Costume: {pos_costume.get('name')}")
+        if pos_env:
+            print(f"[GEN] Environment: {pos_env.get('name')}")
 
         # Build the prompt - handle multi-photo compositing
         scene_photo_path = None
 
         # Auto-attach character reference photo from Prompt OS
-        if pos_char and pos_char.get("referencePhoto"):
+        if pos_char and pos_char.get("referencePhoto") and not scene.get("photo_path"):
             ref_photo = pos_char["referencePhoto"]
-            if os.path.isfile(ref_photo) and not scene.get("photo_path"):
-                scene_photo_path = ref_photo
-                print(f"[GEN] Auto-attached character reference photo: {ref_photo}")
+            # Resolve API URL to actual file path
+            resolved_photo = None
+            if os.path.isfile(ref_photo):
+                resolved_photo = ref_photo
+            else:
+                import re as _re3
+                m = _re3.search(r"/api/pos/characters/([^/]+)/photo", ref_photo)
+                if m:
+                    cid = m.group(1)
+                    for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                        candidate = os.path.join(POS_PHOTOS_CHARS_DIR, f"{cid}{ext}")
+                        if os.path.isfile(candidate):
+                            resolved_photo = candidate
+                            break
+            if resolved_photo:
+                scene_photo_path = resolved_photo
+                print(f"[GEN] Auto-attached character reference photo: {resolved_photo}")
 
         # Check BOTH photo_path (single) and photo_paths (array)
         single_photo = scene.get("photo_path", "")
@@ -708,6 +1595,99 @@ def _run_manual_generate_scene(scene_id: str):
         # Read continuity_mode from plan settings
         plan_continuity = plan.get("continuity_mode", True)
 
+        # Build a single consistent character description from stored fields
+        # This gets passed to the video generator so it doesn't re-describe the photo each time
+        char_description = ""
+        if pos_char:
+            desc_parts = []
+            phys = pos_char.get("physicalDescription", pos_char.get("description", ""))
+            if phys:
+                desc_parts.append(phys)
+            if pos_char.get("hair"):
+                desc_parts.append(pos_char["hair"])
+            if pos_char.get("skinTone"):
+                desc_parts.append(f"{pos_char['skinTone']} skin")
+            if pos_char.get("distinguishingFeatures"):
+                desc_parts.append(pos_char["distinguishingFeatures"])
+            if pos_char.get("outfitDescription"):
+                desc_parts.append(f"wearing {pos_char['outfitDescription']}")
+            char_description = ", ".join(desc_parts)
+
+        # Build environment description from stored fields
+        env_description = ""
+        if pos_env:
+            env_parts = []
+            if pos_env.get("description"):
+                env_parts.append(pos_env["description"])
+            if pos_env.get("lighting"):
+                env_parts.append(pos_env["lighting"])
+            if pos_env.get("atmosphere"):
+                env_parts.append(pos_env["atmosphere"])
+            if pos_env.get("location"):
+                env_parts.append(pos_env["location"])
+            if pos_env.get("weather"):
+                env_parts.append(pos_env["weather"])
+            if pos_env.get("timeOfDay"):
+                env_parts.append(pos_env["timeOfDay"])
+            env_description = ", ".join(env_parts)
+
+        # Build costume description from stored fields
+        costume_description = ""
+        if pos_costume:
+            if pos_costume.get("description"):
+                costume_description = pos_costume["description"]
+            else:
+                c_parts = []
+                if pos_costume.get("upperBody"):
+                    c_parts.append(pos_costume["upperBody"])
+                if pos_costume.get("lowerBody"):
+                    c_parts.append(pos_costume["lowerBody"])
+                if pos_costume.get("footwear"):
+                    c_parts.append(pos_costume["footwear"])
+                if pos_costume.get("accessories"):
+                    c_parts.append(pos_costume["accessories"])
+                costume_description = ", ".join(c_parts)
+
+        # Resolve costume reference photo to filesystem path
+        costume_photo_path = None
+        if pos_costume:
+            ref_img = pos_costume.get("referenceImagePath", "")
+            if ref_img:
+                import re as _re_cos
+                if os.path.isfile(ref_img):
+                    costume_photo_path = ref_img
+                else:
+                    m_cos = _re_cos.search(r"/api/pos/costumes/([^/]+)/photo", ref_img)
+                    if m_cos:
+                        cid_cos = m_cos.group(1)
+                        for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                            candidate = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{cid_cos}{ext}")
+                            if os.path.isfile(candidate):
+                                costume_photo_path = candidate
+                                break
+                if costume_photo_path:
+                    print(f"[GEN] Resolved costume reference photo: {costume_photo_path}")
+
+        # Resolve environment reference photo to filesystem path
+        environment_photo_path = None
+        if pos_env:
+            ref_img = pos_env.get("referenceImagePath", "")
+            if ref_img:
+                import re as _re_env
+                if os.path.isfile(ref_img):
+                    environment_photo_path = ref_img
+                else:
+                    m_env = _re_env.search(r"/api/pos/environments/([^/]+)/photo", ref_img)
+                    if m_env:
+                        eid_env = m_env.group(1)
+                        for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                            candidate = os.path.join(POS_PHOTOS_ENVS_DIR, f"{eid_env}{ext}")
+                            if os.path.isfile(candidate):
+                                environment_photo_path = candidate
+                                break
+                if environment_photo_path:
+                    print(f"[GEN] Resolved environment reference photo: {environment_photo_path}")
+
         gen_scene = {
             "prompt": gen_prompt,
             "duration": scene.get("duration", 8),
@@ -715,7 +1695,18 @@ def _run_manual_generate_scene(scene_id: str):
             "engine": scene.get("engine", ""),
             "id": scene.get("id", ""),
             "continuity_mode": plan_continuity,
+            "character_description": char_description,
+            "is_character_sheet": bool(pos_char and pos_char.get("isCharacterSheet")),
+            "environment_description": env_description,
+            "costume_description": costume_description,
+            "costume_photo_path": costume_photo_path or "",
+            "environment_photo_path": environment_photo_path or "",
         }
+        # Keyframe support: pass first/last frame paths from scene to gen_scene
+        if scene.get("first_frame_path"):
+            gen_scene["first_frame_path"] = scene["first_frame_path"]
+        if scene.get("last_frame_path"):
+            gen_scene["last_frame_path"] = scene["last_frame_path"]
 
         print(f"[_run_manual_generate_scene] Calling generate_scene with photo_path={scene_photo_path}, engine={gen_scene['engine']}")
         try:
@@ -737,6 +1728,20 @@ def _run_manual_generate_scene(scene_id: str):
 
         scene["clip_path"] = clip_path
         scene["has_clip"] = True
+
+        # Frame continuity: extract last frame for next shot's reference
+        try:
+            from lib.cinematic_engine import extract_last_frame
+            last_frame = extract_last_frame(clip_path)
+            if last_frame:
+                scene["reference_frame"] = last_frame
+                next_idx = scene_idx + 1
+                if next_idx < len(plan["scenes"]):
+                    plan["scenes"][next_idx]["reference_frame"] = last_frame
+                print(f"[FRAME CONTINUITY] Extracted last frame: {last_frame}")
+        except Exception as fe:
+            print(f"[FRAME CONTINUITY] Frame extract failed: {fe}")
+
         plan["scenes"][scene_idx] = scene
         _save_manual_plan(plan)
 
@@ -885,6 +1890,80 @@ def _run_manual_generate_all():
                 scene_photo_path = scene["photo_path"]
 
             plan_continuity = plan.get("continuity_mode", True)
+
+            # Resolve Prompt OS entity descriptions and reference photos
+            _all_char_desc = ""
+            _all_env_desc = ""
+            _all_cos_desc = ""
+            _all_cos_photo = ""
+            _all_env_photo = ""
+
+            if scene.get("characterId"):
+                _pc = _prompt_os.get_character(scene["characterId"])
+                if _pc:
+                    _dp = []
+                    if _pc.get("physicalDescription"): _dp.append(_pc["physicalDescription"])
+                    if _pc.get("hair"): _dp.append(_pc["hair"])
+                    if _pc.get("skinTone"): _dp.append(f"{_pc['skinTone']} skin")
+                    if _pc.get("distinguishingFeatures"): _dp.append(_pc["distinguishingFeatures"])
+                    _all_char_desc = ", ".join(_dp)
+                    if _pc.get("referencePhoto") and not scene_photo_path:
+                        import re as _re_ca2
+                        _ref = _pc["referencePhoto"]
+                        if os.path.isfile(_ref):
+                            scene_photo_path = _ref
+                        else:
+                            _mc = _re_ca2.search(r"/api/pos/characters/([^/]+)/photo", _ref)
+                            if _mc:
+                                for _ext in (".jpg", ".jpeg", ".png", ".webp"):
+                                    _cand = os.path.join(POS_PHOTOS_CHARS_DIR, f"{_mc.group(1)}{_ext}")
+                                    if os.path.isfile(_cand):
+                                        scene_photo_path = _cand
+                                        break
+
+            if scene.get("costumeId"):
+                _pcos = _prompt_os.get_costume(scene["costumeId"])
+                if _pcos:
+                    _all_cos_desc = _pcos.get("description", "")
+                    if not _all_cos_desc:
+                        _cp = [_pcos.get("upperBody", ""), _pcos.get("lowerBody", "")]
+                        _all_cos_desc = ", ".join(p for p in _cp if p)
+                    import re as _re_co3
+                    _cref = _pcos.get("referenceImagePath", "")
+                    if _cref:
+                        if os.path.isfile(_cref):
+                            _all_cos_photo = _cref
+                        else:
+                            _mco3 = _re_co3.search(r"/api/pos/costumes/([^/]+)/photo", _cref)
+                            if _mco3:
+                                for _ext in (".jpg", ".jpeg", ".png", ".webp"):
+                                    _cand = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{_mco3.group(1)}{_ext}")
+                                    if os.path.isfile(_cand):
+                                        _all_cos_photo = _cand
+                                        break
+
+            if scene.get("environmentId"):
+                _pe = _prompt_os.get_environment(scene["environmentId"])
+                if _pe:
+                    _ep = []
+                    if _pe.get("description"): _ep.append(_pe["description"])
+                    if _pe.get("lighting"): _ep.append(_pe["lighting"])
+                    if _pe.get("atmosphere"): _ep.append(_pe["atmosphere"])
+                    _all_env_desc = ", ".join(_ep)
+                    import re as _re_en3
+                    _eref = _pe.get("referenceImagePath", "")
+                    if _eref:
+                        if os.path.isfile(_eref):
+                            _all_env_photo = _eref
+                        else:
+                            _men3 = _re_en3.search(r"/api/pos/environments/([^/]+)/photo", _eref)
+                            if _men3:
+                                for _ext in (".jpg", ".jpeg", ".png", ".webp"):
+                                    _cand = os.path.join(POS_PHOTOS_ENVS_DIR, f"{_men3.group(1)}{_ext}")
+                                    if os.path.isfile(_cand):
+                                        _all_env_photo = _cand
+                                        break
+
             gen_scene = {
                 "prompt": gen_prompt,
                 "duration": scene.get("duration", 8),
@@ -892,7 +1971,17 @@ def _run_manual_generate_all():
                 "engine": scene.get("engine", ""),
                 "id": scene.get("id", ""),
                 "continuity_mode": plan_continuity,
+                "character_description": _all_char_desc,
+                "environment_description": _all_env_desc,
+                "costume_description": _all_cos_desc,
+                "costume_photo_path": _all_cos_photo,
+                "environment_photo_path": _all_env_photo,
             }
+            # Keyframe passthrough
+            if scene.get("first_frame_path"):
+                gen_scene["first_frame_path"] = scene["first_frame_path"]
+            if scene.get("last_frame_path"):
+                gen_scene["last_frame_path"] = scene["last_frame_path"]
 
             try:
                 clip_path = generate_scene(gen_scene, scene_idx, MANUAL_CLIPS_DIR,
@@ -989,6 +2078,11 @@ def _run_batch_generate_queue():
                     if pc.get("referencePhoto") and os.path.isfile(pc["referencePhoto"]) and not scene.get("photo_path"):
                         scene_photo_path = pc["referencePhoto"]
 
+            batch_cos_desc = ""
+            batch_cos_photo = ""
+            batch_env_desc = ""
+            batch_env_photo = ""
+
             if scene.get("costumeId"):
                 pcos = _prompt_os.get_costume(scene["costumeId"])
                 if pcos:
@@ -998,6 +2092,20 @@ def _run_batch_generate_queue():
                         cd = ", ".join(p for p in pts if p)
                     if cd and cd.lower() not in gen_prompt.lower():
                         gen_prompt += f", wearing {cd}"
+                    batch_cos_desc = cd
+                    import re as _re_bco
+                    _cref = pcos.get("referenceImagePath", "")
+                    if _cref:
+                        if os.path.isfile(_cref):
+                            batch_cos_photo = _cref
+                        else:
+                            _mbc = _re_bco.search(r"/api/pos/costumes/([^/]+)/photo", _cref)
+                            if _mbc:
+                                for _ext in (".jpg", ".jpeg", ".png", ".webp"):
+                                    _cand = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{_mbc.group(1)}{_ext}")
+                                    if os.path.isfile(_cand):
+                                        batch_cos_photo = _cand
+                                        break
 
             if scene.get("environmentId"):
                 pe = _prompt_os.get_environment(scene["environmentId"])
@@ -1010,6 +2118,20 @@ def _run_batch_generate_queue():
                         ei = ", ".join(ep)
                         if ei.lower() not in gen_prompt.lower():
                             gen_prompt += f", in {ei}"
+                    batch_env_desc = ", ".join(ep)
+                    import re as _re_ben
+                    _eref = pe.get("referenceImagePath", "")
+                    if _eref:
+                        if os.path.isfile(_eref):
+                            batch_env_photo = _eref
+                        else:
+                            _mbe = _re_ben.search(r"/api/pos/environments/([^/]+)/photo", _eref)
+                            if _mbe:
+                                for _ext in (".jpg", ".jpeg", ".png", ".webp"):
+                                    _cand = os.path.join(POS_PHOTOS_ENVS_DIR, f"{_mbe.group(1)}{_ext}")
+                                    if os.path.isfile(_cand):
+                                        batch_env_photo = _cand
+                                        break
 
             single_photo = scene.get("photo_path", "")
             if single_photo and os.path.isfile(single_photo):
@@ -1023,7 +2145,16 @@ def _run_batch_generate_queue():
                 "engine": scene.get("engine", ""),
                 "id": scene.get("id", ""),
                 "continuity_mode": plan_continuity,
+                "costume_description": batch_cos_desc,
+                "costume_photo_path": batch_cos_photo,
+                "environment_description": batch_env_desc,
+                "environment_photo_path": batch_env_photo,
             }
+            # Keyframe passthrough
+            if scene.get("first_frame_path"):
+                gen_scene["first_frame_path"] = scene["first_frame_path"]
+            if scene.get("last_frame_path"):
+                gen_scene["last_frame_path"] = scene["last_frame_path"]
 
             def on_progress(index, status):
                 with batch_lock:
@@ -1563,6 +2694,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(size))
+        # Prevent browser from caching video/image clips
+        if content_type.startswith("video/") or content_type.startswith("image/"):
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.end_headers()
         with open(path, "rb") as f:
             while True:
@@ -1613,6 +2747,14 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/":
             self._send_file(os.path.join(PROJECT_DIR, "public", "index.html"))
+        elif path == "/landing":
+            self._send_file(os.path.join(PROJECT_DIR, "public", "landing.html"))
+        elif path == "/tb-bear.png":
+            self._send_file(os.path.join(PROJECT_DIR, "public", "tb-bear.png"))
+        elif path in ("/bear-light.png", "/bear-dark.png", "/bg-light.png", "/bg-dark.png", "/logo.png", "/landing-light.png", "/landing-dark.png"):
+            self._send_file(os.path.join(PROJECT_DIR, "public", path.lstrip("/")))
+        elif path == "/manifesto":
+            self._send_file(os.path.join(PROJECT_DIR, "public", "manifesto.html"))
 
         elif path.startswith("/public/"):
             rel = path[len("/public/"):]
@@ -1706,6 +2848,17 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/api/previews/"):
             fname = os.path.basename(path[len("/api/previews/"):])
             self._send_file(os.path.join(PREVIEWS_DIR, fname))
+
+        elif path.startswith("/api/scene-thumbnails/"):
+            fname = os.path.basename(path[len("/api/scene-thumbnails/"):])
+            self._send_file(os.path.join(SCENE_THUMBNAILS_DIR, fname))
+
+        elif path == "/api/preview-thumbnail/status":
+            with preview_lock:
+                self._send_json(dict(preview_state))
+
+        elif path == "/api/auto-director/scenes/preview-status":
+            self._handle_scenes_preview_status()
 
         elif path == "/api/camera-presets":
             presets = []
@@ -1944,6 +3097,67 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"scenes": []})
 
+        # ──── Movie Planner GET routes ────
+        elif path == "/api/auto-director/movie-plan":
+            plan = load_movie_plan(OUTPUT_DIR)
+            if plan:
+                self._send_json(plan)
+            else:
+                self._send_json({"scenes": [], "bible": {}, "beats": []})
+
+        elif path == "/api/auto-director/coverage":
+            plan = load_movie_plan(OUTPUT_DIR)
+            if plan and plan.get("scenes"):
+                bible = rebuild_bible_from_plan(plan)
+                coverage = AssetCoverage.check_coverage(bible, plan["scenes"])
+                self._send_json(coverage)
+            else:
+                self._send_json({"characters": {"total": 0, "used": 0, "unused_names": []},
+                                  "costumes": {"total": 0, "used": 0, "unused_names": []},
+                                  "environments": {"total": 0, "used": 0, "unused_names": []},
+                                  "warnings": []})
+
+        elif path == "/api/auto-director/available-assets":
+            chars = _prompt_os.get_characters()
+            costumes = _prompt_os.get_costumes()
+            envs = _prompt_os.get_environments()
+            # Merge draft assets with library assets
+            drafts = _get_all_drafts()
+            char_list = [{"id": c["id"], "name": c.get("name", ""), "state": "library"} for c in chars] if chars else []
+            cos_list = [{"id": c["id"], "name": c.get("name", ""), "state": "library"} for c in costumes] if costumes else []
+            env_list = [{"id": e["id"], "name": e.get("name", ""), "state": "library"} for e in envs] if envs else []
+            for d in drafts.get("characters", []):
+                char_list.append({"id": d["id"], "name": d.get("label", d.get("name", "")), "state": "draft"})
+            for d in drafts.get("costumes", []):
+                cos_list.append({"id": d["id"], "name": d.get("label", d.get("name", "")), "state": "draft"})
+            for d in drafts.get("environments", []):
+                env_list.append({"id": d["id"], "name": d.get("label", d.get("name", "")), "state": "draft"})
+            self._send_json({
+                "characters": char_list,
+                "costumes": cos_list,
+                "environments": env_list,
+            })
+
+        elif path == "/api/auto-director/creation-readiness":
+            plan = load_movie_plan(OUTPUT_DIR)
+            if plan and plan.get("scenes"):
+                result = _creation_readiness(plan["scenes"])
+                self._send_json(result)
+            else:
+                self._send_json({"ready": True, "issues": [], "summary": "No plan"})
+
+        elif path == "/api/auto-director/draft-assets":
+            self._send_json(_get_all_drafts())
+
+        elif path == "/api/auto-director/validation":
+            plan = load_movie_plan(OUTPUT_DIR)
+            if plan and plan.get("scenes"):
+                bible = rebuild_bible_from_plan(plan)
+                validation = PlanValidator.validate(bible, plan["scenes"])
+                self._send_json(validation)
+            else:
+                self._send_json({"valid": False, "score": 0, "issues": [{"severity": "error", "message": "No plan exists", "scene_index": None}]})
+
         elif path == "/api/workflow-presets":
             presets = get_workflow_presets()
             self._send_json({"presets": presets})
@@ -1954,6 +3168,78 @@ class Handler(BaseHTTPRequestHandler):
             if not os.path.isfile(clip_file):
                 clip_file = os.path.join(AUTO_DIRECTOR_CLIPS_DIR, filename)
             self._send_file(clip_file)
+
+        # ──── Cinematic Engine ────
+        elif path == "/api/cinematic/camera-presets":
+            from lib.cinematic_engine import CAMERA_PRESETS
+            self._send_json({"presets": CAMERA_PRESETS})
+
+        elif path == "/api/cinematic/performance-options":
+            from lib.cinematic_engine import PERFORMANCE_DESCRIPTORS
+            self._send_json({"options": PERFORMANCE_DESCRIPTORS})
+
+        elif path == "/api/cinematic/style-memory":
+            from lib.cinematic_engine import StyleMemory
+            sm = StyleMemory()
+            self._send_json(sm.get())
+
+        elif path == "/api/director/pacing-styles":
+            from lib.director_mode import get_pacing_styles
+            self._send_json({"styles": get_pacing_styles()})
+
+        elif path == "/api/director/plan":
+            # Load saved director plan
+            plan_path = os.path.join(OUTPUT_DIR, "director_plan.json")
+            if os.path.isfile(plan_path):
+                with open(plan_path, "r") as f:
+                    self._send_json(json.load(f))
+            else:
+                self._send_json({"scenes": [], "shots": {}})
+
+        elif path == "/api/cinematic/shot-styles":
+            from lib.shot_style_library import get_full_library
+            self._send_json(get_full_library())
+
+        # ──── Beat Sync ────
+        elif path == "/api/cinematic/beat-sync":
+            from lib.beat_sync import CUT_MODES, SYNC_PRIORITIES
+            self._send_json({"cut_modes": CUT_MODES, "sync_priorities": SYNC_PRIORITIES})
+
+        # ──── Coherence Scorer ────
+        elif path == "/api/cinematic/coherence/project":
+            from lib.coherence_scorer import score_project
+            settings = _load_settings()
+            all_shots = settings.get("shots_data", {})
+            scenes_data = _prompt_os.get_scenes() if hasattr(_prompt_os, 'get_scenes') else []
+            result = score_project(all_shots, scenes_data)
+            self._send_json(result)
+
+        # ──── Coverage System ────
+        elif path == "/api/cinematic/coverage-modes":
+            from lib.coverage_system import COVERAGE_MODES, COVERAGE_ROLES
+            self._send_json({"modes": {k: {"name": v["name"], "shots_range": v["shots_range"]} for k, v in COVERAGE_MODES.items()}, "roles": COVERAGE_ROLES})
+
+        # ──── Narrative Engine ────
+        elif path == "/api/cinematic/arc-types":
+            from lib.narrative_engine import get_arc_types, get_scene_roles
+            self._send_json({"arc_types": get_arc_types(), "scene_roles": get_scene_roles()})
+
+        elif path == "/api/queue":
+            with gen_queue_lock:
+                items_safe = []
+                for it in gen_queue["items"]:
+                    items_safe.append({k: v for k, v in it.items() if k != "shot_data"})
+                self._send_json({"items": items_safe, "max_parallel": gen_queue["max_parallel"]})
+
+        elif path.startswith("/api/cinematic/continuity/"):
+            # GET /api/cinematic/continuity/{scene_id} — validate scene continuity
+            scene_id = path.split("/")[-1]
+            from lib.cinematic_engine import validate_scene_continuity
+            settings = _load_settings()
+            shots = settings.get("shots_data", {}).get(scene_id, [])
+            scene_data = _prompt_os.get_scene(scene_id) if scene_id else None
+            result = validate_scene_continuity(shots, scene_data)
+            self._send_json(result)
 
         # ──── Feature 1: Project Browser ────
         elif path == "/api/projects":
@@ -2012,6 +3298,20 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/versions":
             from lib.roadmap_features import list_versions
             self._send_json({"versions": list_versions(OUTPUT_DIR)})
+
+        # ---- Keyframe endpoints (GET) ----
+        elif re.match(r'^/api/scenes/(\d+)/keyframes$', path):
+            m = re.match(r'^/api/scenes/(\d+)/keyframes$', path)
+            self._handle_get_keyframes(int(m.group(1)))
+
+        elif path.startswith("/api/keyframes/"):
+            filename = path[len("/api/keyframes/"):]
+            safe = os.path.basename(filename)
+            kf_file = os.path.join(KEYFRAMES_DIR, safe)
+            if os.path.isfile(kf_file):
+                self._send_file(kf_file)
+            else:
+                self.send_error(404)
 
         else:
             self.send_error(404)
@@ -2270,6 +3570,20 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/embed-code":
             self._handle_embed_code()
 
+        # ──── Director Mode ────
+        elif path == "/api/director/generate-plan":
+            self._handle_director_generate_plan()
+
+        elif path == "/api/director/apply-plan":
+            self._handle_director_apply_plan()
+
+        # ──── Prompt Assembly ────
+        elif path == "/api/prompt/compile":
+            self._handle_prompt_compile()
+
+        elif path == "/api/prompt/compile-shot":
+            self._handle_compile_shot()
+
         # ──── Auto Director POST routes ────
         elif path == "/api/auto-director/plan":
             self._handle_auto_director_plan()
@@ -2280,13 +3594,292 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/auto-director/generate":
             self._handle_auto_director_generate()
 
+        elif path == "/api/auto-director/restitch":
+            self._handle_auto_director_restitch()
+
         elif path == "/api/auto-director/to-manual":
             self._handle_auto_director_to_manual()
+
+        # ──── Movie Planner POST routes ────
+        elif path == "/api/auto-director/movie-plan":
+            self._handle_movie_plan()
+
+        elif re.match(r'^/api/auto-director/scene/(\d+)/edit$', path):
+            m = re.match(r'^/api/auto-director/scene/(\d+)/edit$', path)
+            self._handle_movie_scene_edit(int(m.group(1)))
+
+        elif re.match(r'^/api/auto-director/scene/(\d+)/assets$', path):
+            m = re.match(r'^/api/auto-director/scene/(\d+)/assets$', path)
+            self._handle_scene_assets(int(m.group(1)))
+
+        elif re.match(r'^/api/auto-director/scene/(\d+)/validate-assets$', path):
+            m = re.match(r'^/api/auto-director/scene/(\d+)/validate-assets$', path)
+            self._handle_scene_validate_assets(int(m.group(1)))
+
+        elif re.match(r'^/api/auto-director/scene/(\d+)/preview$', path):
+            m = re.match(r'^/api/auto-director/scene/(\d+)/preview$', path)
+            self._handle_scene_preview(int(m.group(1)))
+
+        elif path == "/api/auto-director/scenes/preview-batch":
+            self._handle_scenes_preview_batch()
+
+        elif re.match(r'^/api/auto-director/scene/(\d+)/regenerate$', path):
+            m = re.match(r'^/api/auto-director/scene/(\d+)/regenerate$', path)
+            self._handle_movie_scene_regenerate(int(m.group(1)))
+
+        elif re.match(r'^/api/auto-director/scene/(\d+)/regenerate-downstream$', path):
+            m = re.match(r'^/api/auto-director/scene/(\d+)/regenerate-downstream$', path)
+            self._handle_movie_scene_regenerate_downstream(int(m.group(1)))
+
+        elif re.match(r'^/api/auto-director/scene/(\d+)/lock$', path):
+            m = re.match(r'^/api/auto-director/scene/(\d+)/lock$', path)
+            self._handle_movie_scene_lock(int(m.group(1)))
+
+        elif re.match(r'^/api/auto-director/scene/(\d+)/unlock$', path):
+            m = re.match(r'^/api/auto-director/scene/(\d+)/unlock$', path)
+            self._handle_movie_scene_unlock(int(m.group(1)))
+
+        elif path == "/api/auto-director/draft-assets/promote":
+            self._handle_draft_promote()
+
+        elif path == "/api/auto-director/draft-assets/resolve":
+            self._handle_draft_resolve()
+
+        elif path == "/api/auto-director/draft-assets/remove":
+            self._handle_draft_remove()
 
         elif path == "/api/workflow-presets":
             body = json.loads(self._read_body())
             preset = save_custom_preset(body)
             self._send_json({"ok": True, "preset": preset})
+
+        # ──── Beat Sync ────
+        elif path == "/api/cinematic/beat-sync/analyze":
+            from lib.beat_sync import generate_beat_sync_plan
+            from lib.audio_analyzer import analyze
+            body = json.loads(self._read_body())
+            cut_mode = body.get("cut_mode", "balanced")
+            sync_priority = body.get("sync_priority", "hybrid")
+            # Find song
+            song_path = None
+            mp = _load_manual_plan()
+            song_path = mp.get("song_path")
+            if not song_path or not os.path.isfile(song_path):
+                for f in sorted(os.listdir(UPLOADS_DIR), key=lambda x: os.path.getmtime(os.path.join(UPLOADS_DIR, x)), reverse=True):
+                    if f.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac')):
+                        song_path = os.path.join(UPLOADS_DIR, f)
+                        break
+            if not song_path or not os.path.isfile(song_path):
+                self._send_json({"error": "No audio file found"}, 400)
+            else:
+                audio = analyze(song_path)
+                plan = generate_beat_sync_plan(audio, cut_mode=cut_mode, sync_priority=sync_priority)
+                self._send_json({"ok": True, "plan": plan})
+
+        # ──── Coherence Scorer ────
+        elif path == "/api/cinematic/coherence/shot":
+            from lib.coherence_scorer import score_shot
+            body = json.loads(self._read_body())
+            shot = body.get("shot", {})
+            prev_shot = body.get("prev_shot")
+            result = score_shot(shot, prev_shot)
+            self._send_json(result)
+
+        elif path == "/api/cinematic/coherence/scene":
+            from lib.coherence_scorer import score_scene
+            body = json.loads(self._read_body())
+            scene_id = body.get("scene_id", "")
+            settings = _load_settings()
+            shots = settings.get("shots_data", {}).get(scene_id, [])
+            scene_data = _prompt_os.get_scene(scene_id) if scene_id else None
+            result = score_scene(shots, scene_data)
+            self._send_json(result)
+
+        # ──── Coverage System ────
+        elif path == "/api/cinematic/coverage/generate":
+            from lib.coverage_system import generate_coverage
+            body = json.loads(self._read_body())
+            beat = body.get("beat", body.get("scene_beat", ""))
+            mode = body.get("mode", "standard")
+            section_type = body.get("section_type", "verse")
+            result = generate_coverage(beat, mode, section_type=section_type)
+            # Optionally save to shots_data
+            scene_id = body.get("scene_id", "")
+            if scene_id and body.get("auto_save", False):
+                settings = _load_settings()
+                if scene_id not in settings.get("shots_data", {}):
+                    settings.setdefault("shots_data", {})[scene_id] = []
+                settings["shots_data"][scene_id].extend(result["shots"])
+                _save_settings(settings)
+            self._send_json({"ok": True, **result})
+
+        # ──── Narrative Engine ────
+        elif path == "/api/cinematic/narrative/generate":
+            from lib.narrative_engine import generate_narrative_plan
+            from lib.audio_analyzer import analyze
+            body = json.loads(self._read_body())
+            arc_type = body.get("arc_type", "rise")
+            theme = body.get("theme", "")
+            storyline = body.get("storyline", "")
+            lyrics = body.get("lyrics", "")
+            # Get sections from audio
+            sections = []
+            song_path = _load_manual_plan().get("song_path")
+            if not song_path:
+                for f in sorted(os.listdir(UPLOADS_DIR), key=lambda x: os.path.getmtime(os.path.join(UPLOADS_DIR, x)), reverse=True):
+                    if f.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac')):
+                        song_path = os.path.join(UPLOADS_DIR, f)
+                        break
+            if song_path and os.path.isfile(song_path):
+                audio = analyze(song_path)
+                sections = audio.get("sections", [])
+            # Characters
+            chars = []
+            for cid in body.get("character_ids", []):
+                c = _prompt_os.get_character(cid)
+                if c:
+                    chars.append(c)
+            result = generate_narrative_plan(
+                arc_type=arc_type, theme=theme, storyline=storyline,
+                lyrics=lyrics, sections=sections, characters=chars,
+            )
+            self._send_json({"ok": True, "narrative": result})
+
+        # ──── Shot Style Library ────
+        elif path == "/api/cinematic/shot-styles/add":
+            from lib.shot_style_library import add_custom_preset
+            body = json.loads(self._read_body())
+            cat = body.get("category", "")
+            name = body.get("name", "")
+            prompt_text = body.get("prompt_text", "")
+            if not cat or not name or not prompt_text:
+                self._send_json({"error": "category, name, and prompt_text required"}, 400)
+            else:
+                add_custom_preset(cat, name, prompt_text)
+                self._send_json({"ok": True})
+
+        elif path == "/api/cinematic/shot-styles/remove":
+            from lib.shot_style_library import remove_custom_preset
+            body = json.loads(self._read_body())
+            remove_custom_preset(body.get("category", ""), body.get("name", ""))
+            self._send_json({"ok": True})
+
+        elif path == "/api/cinematic/shot-styles/resolve":
+            from lib.shot_style_library import resolve_presets
+            body = json.loads(self._read_body())
+            prompt = resolve_presets(body.get("selections", {}))
+            self._send_json({"ok": True, "prompt": prompt})
+
+        # ──── Generation Queue ────
+        elif path == "/api/queue/add-shot":
+            body = json.loads(self._read_body())
+            scene_id = body.get("scene_id", "")
+            shot_id = body.get("shot_id", "")
+            # Find the shot data
+            settings = _load_settings()
+            shots = settings.get("shots_data", {}).get(scene_id, [])
+            shot_data = None
+            for s in shots:
+                if s.get("id") == shot_id:
+                    shot_data = s
+                    break
+            if not shot_data:
+                self._send_json({"error": "Shot not found"}, 404)
+            else:
+                item = _queue_add(shot_id, scene_id, shot_data)
+                self._send_json({"ok": True, "queue_id": item["id"]})
+
+        elif path == "/api/queue/add-scene":
+            body = json.loads(self._read_body())
+            scene_id = body.get("scene_id", "")
+            settings = _load_settings()
+            shots = settings.get("shots_data", {}).get(scene_id, [])
+            if not shots:
+                self._send_json({"error": "No shots in scene"}, 400)
+            else:
+                ids = []
+                for s in shots:
+                    item = _queue_add(s["id"], scene_id, s)
+                    ids.append(item["id"])
+                self._send_json({"ok": True, "queued": len(ids)})
+
+        elif path == "/api/queue/add-all":
+            settings = _load_settings()
+            all_shots = settings.get("shots_data", {})
+            count = 0
+            for scene_id, shots in all_shots.items():
+                for s in shots:
+                    _queue_add(s["id"], scene_id, s)
+                    count += 1
+            self._send_json({"ok": True, "queued": count})
+
+        elif path == "/api/queue/retry":
+            body = json.loads(self._read_body())
+            queue_id = body.get("queue_id", "")
+            with gen_queue_lock:
+                for it in gen_queue["items"]:
+                    if it["id"] == queue_id and it["status"] == "failed":
+                        it["status"] = "pending"
+                        it["error"] = None
+                        it["progress"] = ""
+                        break
+            _queue_process()
+            self._send_json({"ok": True})
+
+        elif path == "/api/queue/clear":
+            with gen_queue_lock:
+                gen_queue["items"] = [i for i in gen_queue["items"] if i["status"] == "generating"]
+            self._send_json({"ok": True})
+
+        # ──── Style Memory ────
+        elif path == "/api/cinematic/style-memory":
+            from lib.cinematic_engine import StyleMemory
+            body = json.loads(self._read_body())
+            sm = StyleMemory()
+            result = sm.update(body)
+            self._send_json({"ok": True, "style_memory": result})
+
+        elif path == "/api/cinematic/style-memory/from-vision":
+            from lib.cinematic_engine import StyleMemory
+            body = json.loads(self._read_body())
+            sm = StyleMemory()
+            result = sm.set_from_vision(
+                universal_prompt=body.get("universal_prompt", ""),
+                world_setting=body.get("world_setting", ""),
+                style=body.get("style", ""),
+            )
+            self._send_json({"ok": True, "style_memory": result})
+
+        elif path == "/api/cinematic/style-memory/learn":
+            from lib.cinematic_engine import StyleMemory
+            sm = StyleMemory()
+            settings = _load_settings()
+            all_shots = []
+            for sid, shots in settings.get("shots_data", {}).items():
+                all_shots.extend(shots)
+            result = sm.learn_from_shots(all_shots)
+            self._send_json({"ok": True, "style_memory": result})
+
+        # ──── Continuity Fix ────
+        elif path.startswith("/api/cinematic/fix-continuity/"):
+            scene_id = path.split("/")[-1]
+            from lib.cinematic_engine import fix_scene_continuity
+            settings = _load_settings()
+            shots = settings.get("shots_data", {}).get(scene_id, [])
+            if not shots:
+                self._send_json({"error": "No shots found for this scene"}, 404)
+            else:
+                scene_data = _prompt_os.get_scene(scene_id) if scene_id else None
+                fixed = fix_scene_continuity(shots, scene_data)
+                settings["shots_data"][scene_id] = fixed
+                _save_settings(settings)
+                from lib.cinematic_engine import validate_scene_continuity
+                result = validate_scene_continuity(fixed, scene_data)
+                self._send_json({"ok": True, "fixed": len(fixed), **result})
+
+        # ──── AI Director: Generate Full Video Plan (scenes + shots) ────
+        elif path == "/api/ai-director/full-plan":
+            self._handle_ai_director_full_plan()
 
         # ──── Prompt OS POST routes ────
         elif path == "/api/pos/prompts":
@@ -2346,6 +3939,19 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/pos/environments/([^/]+)/photo$', path):
             m = re.match(r'^/api/pos/environments/([^/]+)/photo$', path)
             self._handle_pos_photo_upload(m.group(1), "environments")
+
+        # ──── Auto-describe from photo ────
+        elif re.match(r'^/api/pos/characters/([^/]+)/describe$', path):
+            m = re.match(r'^/api/pos/characters/([^/]+)/describe$', path)
+            self._handle_pos_auto_describe(m.group(1), "characters")
+
+        elif re.match(r'^/api/pos/environments/([^/]+)/describe$', path):
+            m = re.match(r'^/api/pos/environments/([^/]+)/describe$', path)
+            self._handle_pos_auto_describe(m.group(1), "environments")
+
+        elif re.match(r'^/api/pos/costumes/([^/]+)/describe$', path):
+            m = re.match(r'^/api/pos/costumes/([^/]+)/describe$', path)
+            self._handle_pos_auto_describe(m.group(1), "costumes")
 
         # ──── Prompt OS Preview Generation routes ────
         elif re.match(r'^/api/pos/characters/([^/]+)/generate-preview$', path):
@@ -2466,6 +4072,61 @@ class Handler(BaseHTTPRequestHandler):
             from lib.prompt_assistant import detect_emotion, emotion_to_visual_prompt
             emotions = detect_emotion(body.get("lyrics", ""))
             self._send_json({"ok": True, "emotions": emotions, "visual_prompt": emotion_to_visual_prompt(emotions)})
+
+        # ──── Preview-first pipeline ────
+
+        elif path == "/api/preview-thumbnail":
+            self._handle_preview_thumbnail_single()
+
+        elif path == "/api/preview-thumbnail/batch":
+            self._handle_preview_thumbnail_batch()
+
+        elif re.match(r'^/api/scenes/(\d+)/approve$', path):
+            m = re.match(r'^/api/scenes/(\d+)/approve$', path)
+            self._handle_scene_approve(int(m.group(1)))
+
+        elif path == "/api/generate-approved":
+            self._handle_generate_approved()
+
+        # ---- Keyframe endpoints (POST) ----
+        elif re.match(r'^/api/scenes/(\d+)/keyframes$', path):
+            m = re.match(r'^/api/scenes/(\d+)/keyframes$', path)
+            self._handle_set_keyframes(int(m.group(1)))
+
+        elif re.match(r'^/api/scenes/(\d+)/keyframes/from-thumbnail$', path):
+            m = re.match(r'^/api/scenes/(\d+)/keyframes/from-thumbnail$', path)
+            self._handle_keyframe_from_thumbnail(int(m.group(1)))
+
+        elif re.match(r'^/api/scenes/(\d+)/keyframes/from-previous$', path):
+            m = re.match(r'^/api/scenes/(\d+)/keyframes/from-previous$', path)
+            self._handle_keyframe_from_previous(int(m.group(1)))
+
+        elif re.match(r'^/api/scenes/(\d+)/keyframes/clear$', path):
+            m = re.match(r'^/api/scenes/(\d+)/keyframes/clear$', path)
+            self._handle_clear_keyframe(int(m.group(1)))
+
+        elif path == "/api/scenes/auto-chain":
+            self._handle_auto_chain()
+
+        # ---- Manual scene keyframe endpoints ----
+        elif re.match(r'^/api/manual/scene/([^/]+)/keyframes$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/keyframes$', path)
+            self._handle_manual_set_keyframes(m.group(1))
+
+        elif re.match(r'^/api/manual/scene/([^/]+)/keyframes/from-thumbnail$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/keyframes/from-thumbnail$', path)
+            self._handle_manual_keyframe_from_thumbnail(m.group(1))
+
+        elif re.match(r'^/api/manual/scene/([^/]+)/keyframes/from-previous$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/keyframes/from-previous$', path)
+            self._handle_manual_keyframe_from_previous(m.group(1))
+
+        elif re.match(r'^/api/manual/scene/([^/]+)/keyframes/clear$', path):
+            m = re.match(r'^/api/manual/scene/([^/]+)/keyframes/clear$', path)
+            self._handle_manual_clear_keyframe(m.group(1))
+
+        elif path == "/api/manual/scenes/auto-chain":
+            self._handle_manual_auto_chain()
 
         else:
             self.send_error(404)
@@ -2682,6 +4343,140 @@ class Handler(BaseHTTPRequestHandler):
 
         self._send_json({"ok": True, "message": "Generation started"})
 
+    # ---- Preview-first pipeline endpoints ----
+
+    def _handle_preview_thumbnail_single(self):
+        """POST /api/preview-thumbnail — generate thumbnail for one scene.
+
+        Body: { "index": 0, "prompt": "...", "notes": "..." }
+        Returns: { "ok": true, "preview_url": "..." }
+        """
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        index = body.get("index")
+        prompt = body.get("prompt", "").strip()
+        notes = body.get("notes", "").strip()
+
+        if index is None:
+            self._send_json({"error": "Missing 'index'"}, 400)
+            return
+        if not prompt:
+            self._send_json({"error": "Missing 'prompt'"}, 400)
+            return
+
+        result = _generate_scene_thumbnail(int(index), prompt, notes)
+        if "error" in result:
+            self._send_json({"error": result["error"]}, 500)
+            return
+
+        # Persist thumbnail URL into scene plan
+        _update_scene_plan_thumbnail(int(index), result["preview_url"])
+        self._send_json({"ok": True, "preview_url": result["preview_url"], "index": index})
+
+    def _handle_preview_thumbnail_batch(self):
+        """POST /api/preview-thumbnail/batch — generate thumbnails for all scenes.
+
+        Body: { "scenes": [{"index": 0, "prompt": "...", "notes": "..."}, ...] }
+        OR omit body to use the current scene plan automatically.
+        Returns immediately with { "ok": true, "total": N }.
+        Poll GET /api/preview-thumbnail/status for progress.
+        """
+        try:
+            body = json.loads(self._read_body()) if self.headers.get("Content-Length", "0") != "0" else {}
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+
+        scenes_data = body.get("scenes")
+        if not scenes_data:
+            # Auto-load from current scene plan
+            plan = _load_scene_plan()
+            if not plan or not plan.get("scenes"):
+                self._send_json({"error": "No scene plan available and no scenes provided"}, 404)
+                return
+            scenes_data = [
+                {"index": i, "prompt": s.get("prompt", ""), "notes": s.get("preview_notes", ""),
+                 "scene_data": s}
+                for i, s in enumerate(plan["scenes"])
+            ]
+
+        with preview_lock:
+            if preview_state["running"]:
+                self._send_json({"error": "Batch preview already running"}, 409)
+                return
+
+        thread = threading.Thread(
+            target=_run_preview_batch,
+            args=(scenes_data,),
+            daemon=True,
+        )
+        thread.start()
+        self._send_json({"ok": True, "total": len(scenes_data)})
+
+    def _handle_scene_approve(self, index: int):
+        """POST /api/scenes/<index>/approve — set approval status for a scene.
+
+        Body: { "approved": true/false, "notes": "optional director notes" }
+        Returns: { "ok": true }
+        """
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        approved = bool(body.get("approved", False))
+        notes = body.get("notes", "").strip()
+
+        plan = _load_scene_plan()
+        if not plan:
+            self._send_json({"error": "No scene plan found"}, 404)
+            return
+        if index < 0 or index >= len(plan["scenes"]):
+            self._send_json({"error": f"Scene index {index} out of range"}, 400)
+            return
+
+        plan["scenes"][index]["preview_approved"] = approved
+        if notes:
+            plan["scenes"][index]["preview_notes"] = notes
+        elif "preview_notes" in plan["scenes"][index] and not notes:
+            # Clear notes if explicitly sent empty
+            if "notes" in body:
+                plan["scenes"][index]["preview_notes"] = ""
+
+        with open(SCENE_PLAN_PATH, "w") as f:
+            json.dump(plan, f, indent=2)
+
+        self._send_json({"ok": True, "index": index, "approved": approved})
+
+    def _handle_generate_approved(self):
+        """POST /api/generate-approved — generate video only for approved scenes.
+
+        Requires an existing scene plan (from /api/generate which goes through
+        planning phase). Skips scenes where preview_approved == False.
+        """
+        with gen_lock:
+            if gen_state["running"]:
+                self._send_json({"error": "Generation already in progress"}, 409)
+                return
+
+        plan = _load_scene_plan()
+        if not plan:
+            self._send_json({"error": "No scene plan found. Run planning first."}, 404)
+            return
+
+        with gen_lock:
+            _reset_state()
+            gen_state["running"] = True
+            gen_state["phase"] = "starting"
+
+        thread = threading.Thread(target=_run_generation_approved, daemon=True)
+        thread.start()
+        self._send_json({"ok": True, "message": "Generating approved scenes"})
+
     # ---- Scene Editor endpoints ----
 
     def _handle_get_scenes(self):
@@ -2701,6 +4496,17 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 entry["clip_url"] = None
                 entry["clip_exists"] = False
+            # Include keyframe URLs
+            ff = s.get("first_frame_path")
+            if ff and os.path.isfile(ff):
+                entry["first_frame_url"] = f"/api/keyframes/{os.path.basename(ff)}"
+            else:
+                entry["first_frame_url"] = None
+            lf = s.get("last_frame_path")
+            if lf and os.path.isfile(lf):
+                entry["last_frame_url"] = f"/api/keyframes/{os.path.basename(lf)}"
+            else:
+                entry["last_frame_url"] = None
             scenes_out.append(entry)
 
         self._send_json({"scenes": scenes_out, "song_path": plan.get("song_path", "")})
@@ -2754,6 +4560,345 @@ class Handler(BaseHTTPRequestHandler):
         thread.start()
 
         self._send_json({"ok": True, "message": "Re-stitching video"})
+
+    # ---- Keyframe endpoints ----
+
+    def _handle_get_keyframes(self, index: int):
+        """GET /api/scenes/<index>/keyframes -- return current keyframe URLs for a scene."""
+        plan = _load_scene_plan()
+        if not plan:
+            self._send_json({"error": "No scene plan available"}, 404)
+            return
+        scenes = plan.get("scenes", [])
+        if index < 0 or index >= len(scenes):
+            self._send_json({"error": "Scene index out of range"}, 400)
+            return
+        scene = scenes[index]
+        result = {"index": index, "first_frame": None, "last_frame": None}
+        ff = scene.get("first_frame_path")
+        if ff and os.path.isfile(ff):
+            result["first_frame"] = f"/api/keyframes/{os.path.basename(ff)}"
+        lf = scene.get("last_frame_path")
+        if lf and os.path.isfile(lf):
+            result["last_frame"] = f"/api/keyframes/{os.path.basename(lf)}"
+        self._send_json(result)
+
+    def _handle_set_keyframes(self, index: int):
+        """POST /api/scenes/<index>/keyframes -- upload first/last frame images."""
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._send_json({"error": "Expected multipart/form-data"}, 400)
+            return
+        parts_ct = content_type.split("boundary=")
+        if len(parts_ct) < 2:
+            self._send_json({"error": "No boundary"}, 400)
+            return
+        boundary = parts_ct[1].strip().encode()
+        body = self._read_body()
+        parts = self._parse_multipart(body, boundary)
+
+        plan = _load_scene_plan()
+        if not plan:
+            self._send_json({"error": "No scene plan available"}, 404)
+            return
+        scenes = plan.get("scenes", [])
+        if index < 0 or index >= len(scenes):
+            self._send_json({"error": "Scene index out of range"}, 400)
+            return
+
+        result = {"index": index, "first_frame": None, "last_frame": None}
+        for part in parts:
+            if part["name"] == "first_frame" and part["data"]:
+                ext = os.path.splitext(part.get("filename", "") or ".png")[1] or ".png"
+                dest = os.path.join(KEYFRAMES_DIR, f"scene_{index}_first{ext}")
+                with open(dest, "wb") as f:
+                    f.write(part["data"])
+                plan["scenes"][index]["first_frame_path"] = dest
+                result["first_frame"] = f"/api/keyframes/{os.path.basename(dest)}"
+            elif part["name"] == "last_frame" and part["data"]:
+                ext = os.path.splitext(part.get("filename", "") or ".png")[1] or ".png"
+                dest = os.path.join(KEYFRAMES_DIR, f"scene_{index}_last{ext}")
+                with open(dest, "wb") as f:
+                    f.write(part["data"])
+                plan["scenes"][index]["last_frame_path"] = dest
+                result["last_frame"] = f"/api/keyframes/{os.path.basename(dest)}"
+
+        with open(SCENE_PLAN_PATH, "w") as f:
+            json.dump(plan, f, indent=2)
+        self._send_json({"ok": True, **result})
+
+    def _handle_keyframe_from_thumbnail(self, index: int):
+        """POST /api/scenes/<index>/keyframes/from-thumbnail -- use scene thumbnail as first frame."""
+        plan = _load_scene_plan()
+        if not plan:
+            self._send_json({"error": "No scene plan available"}, 404)
+            return
+        scenes = plan.get("scenes", [])
+        if index < 0 or index >= len(scenes):
+            self._send_json({"error": "Scene index out of range"}, 400)
+            return
+
+        scene = scenes[index]
+        # Look for thumbnail in previews dir
+        thumb_url = scene.get("preview_url", "")
+        thumb_path = None
+        if thumb_url:
+            # preview_url is like /output/previews/scene_0_thumb.png
+            fname = os.path.basename(thumb_url.split("?")[0])
+            candidate = os.path.join(PREVIEWS_DIR, fname)
+            if os.path.isfile(candidate):
+                thumb_path = candidate
+        if not thumb_path:
+            # Try common naming patterns
+            for ext in (".png", ".jpg", ".jpeg"):
+                candidate = os.path.join(PREVIEWS_DIR, f"scene_{index}_thumb{ext}")
+                if os.path.isfile(candidate):
+                    thumb_path = candidate
+                    break
+        if not thumb_path:
+            self._send_json({"error": "No thumbnail found for this scene"}, 404)
+            return
+
+        import shutil
+        dest = os.path.join(KEYFRAMES_DIR, f"scene_{index}_first.png")
+        shutil.copy2(thumb_path, dest)
+        plan["scenes"][index]["first_frame_path"] = dest
+        with open(SCENE_PLAN_PATH, "w") as f:
+            json.dump(plan, f, indent=2)
+        self._send_json({
+            "ok": True,
+            "first_frame": f"/api/keyframes/{os.path.basename(dest)}",
+        })
+
+    def _handle_keyframe_from_previous(self, index: int):
+        """POST /api/scenes/<index>/keyframes/from-previous -- extract last frame from previous clip."""
+        plan = _load_scene_plan()
+        if not plan:
+            self._send_json({"error": "No scene plan available"}, 404)
+            return
+        scenes = plan.get("scenes", [])
+        if index < 1 or index >= len(scenes):
+            self._send_json({"error": "Scene index out of range or is first scene"}, 400)
+            return
+
+        prev_clip = scenes[index - 1].get("clip_path")
+        if not prev_clip or not os.path.isfile(prev_clip):
+            self._send_json({"error": "Previous scene has no generated clip"}, 404)
+            return
+
+        dest = os.path.join(KEYFRAMES_DIR, f"scene_{index}_first.png")
+        try:
+            extract_last_frame(prev_clip, dest)
+        except Exception as e:
+            self._send_json({"error": f"Failed to extract last frame: {e}"}, 500)
+            return
+
+        plan["scenes"][index]["first_frame_path"] = dest
+        with open(SCENE_PLAN_PATH, "w") as f:
+            json.dump(plan, f, indent=2)
+        self._send_json({
+            "ok": True,
+            "first_frame": f"/api/keyframes/{os.path.basename(dest)}",
+        })
+
+    def _handle_clear_keyframe(self, index: int):
+        """POST /api/scenes/<index>/keyframes/clear -- clear first or last keyframe."""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            params = {}
+        position = params.get("position", "both")  # "first", "last", or "both"
+
+        plan = _load_scene_plan()
+        if not plan:
+            self._send_json({"error": "No scene plan available"}, 404)
+            return
+        scenes = plan.get("scenes", [])
+        if index < 0 or index >= len(scenes):
+            self._send_json({"error": "Scene index out of range"}, 400)
+            return
+
+        if position in ("first", "both"):
+            plan["scenes"][index].pop("first_frame_path", None)
+        if position in ("last", "both"):
+            plan["scenes"][index].pop("last_frame_path", None)
+
+        with open(SCENE_PLAN_PATH, "w") as f:
+            json.dump(plan, f, indent=2)
+        self._send_json({"ok": True})
+
+    def _handle_auto_chain(self):
+        """POST /api/scenes/auto-chain -- auto-chain keyframes across all scenes."""
+        plan = _load_scene_plan()
+        if not plan:
+            self._send_json({"error": "No scene plan available"}, 404)
+            return
+        plan = _chain_scene_keyframes(plan)
+        with open(SCENE_PLAN_PATH, "w") as f:
+            json.dump(plan, f, indent=2)
+        # Count how many scenes got chained
+        chained = sum(1 for s in plan["scenes"] if s.get("first_frame_path"))
+        self._send_json({"ok": True, "chained_scenes": chained})
+
+    # ---- Manual scene keyframe handlers ----
+
+    def _handle_manual_set_keyframes(self, scene_id: str):
+        """POST /api/manual/scene/<id>/keyframes -- upload first/last frame for manual scene."""
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._send_json({"error": "Expected multipart/form-data"}, 400)
+            return
+        parts_ct = content_type.split("boundary=")
+        if len(parts_ct) < 2:
+            self._send_json({"error": "No boundary"}, 400)
+            return
+        boundary = parts_ct[1].strip().encode()
+        body = self._read_body()
+        parts = self._parse_multipart(body, boundary)
+
+        plan = _load_manual_plan()
+        scene = None
+        scene_idx = None
+        for i, s in enumerate(plan["scenes"]):
+            if s["id"] == scene_id:
+                scene = s
+                scene_idx = i
+                break
+        if scene is None:
+            self._send_json({"error": "Scene not found"}, 404)
+            return
+
+        result = {"scene_id": scene_id, "first_frame": None, "last_frame": None}
+        for part in parts:
+            if part["name"] == "first_frame" and part["data"]:
+                ext = os.path.splitext(part.get("filename", "") or ".png")[1] or ".png"
+                dest = os.path.join(KEYFRAMES_DIR, f"manual_{scene_id}_first{ext}")
+                with open(dest, "wb") as f:
+                    f.write(part["data"])
+                scene["first_frame_path"] = dest
+                result["first_frame"] = f"/api/keyframes/{os.path.basename(dest)}"
+            elif part["name"] == "last_frame" and part["data"]:
+                ext = os.path.splitext(part.get("filename", "") or ".png")[1] or ".png"
+                dest = os.path.join(KEYFRAMES_DIR, f"manual_{scene_id}_last{ext}")
+                with open(dest, "wb") as f:
+                    f.write(part["data"])
+                scene["last_frame_path"] = dest
+                result["last_frame"] = f"/api/keyframes/{os.path.basename(dest)}"
+
+        _save_manual_plan(plan)
+        self._send_json({"ok": True, **result})
+
+    def _handle_manual_keyframe_from_thumbnail(self, scene_id: str):
+        """POST /api/manual/scene/<id>/keyframes/from-thumbnail"""
+        plan = _load_manual_plan()
+        scene = None
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                scene = s
+                break
+        if scene is None:
+            self._send_json({"error": "Scene not found"}, 404)
+            return
+
+        # Look for the scene's preview thumbnail
+        thumb_path = None
+        preview_url = scene.get("preview_url", "")
+        if preview_url:
+            fname = os.path.basename(preview_url.split("?")[0])
+            candidate = os.path.join(PREVIEWS_DIR, fname)
+            if os.path.isfile(candidate):
+                thumb_path = candidate
+        # Also try photo as fallback
+        if not thumb_path:
+            photo_path = scene.get("photo_path", "")
+            if photo_path and os.path.isfile(photo_path):
+                thumb_path = photo_path
+        if not thumb_path:
+            self._send_json({"error": "No thumbnail or photo found for this scene"}, 404)
+            return
+
+        import shutil
+        dest = os.path.join(KEYFRAMES_DIR, f"manual_{scene_id}_first.png")
+        shutil.copy2(thumb_path, dest)
+        scene["first_frame_path"] = dest
+        _save_manual_plan(plan)
+        self._send_json({"ok": True, "first_frame": f"/api/keyframes/{os.path.basename(dest)}"})
+
+    def _handle_manual_keyframe_from_previous(self, scene_id: str):
+        """POST /api/manual/scene/<id>/keyframes/from-previous"""
+        plan = _load_manual_plan()
+        scenes = plan["scenes"]
+        scene_idx = None
+        for i, s in enumerate(scenes):
+            if s["id"] == scene_id:
+                scene_idx = i
+                break
+        if scene_idx is None:
+            self._send_json({"error": "Scene not found"}, 404)
+            return
+        if scene_idx < 1:
+            self._send_json({"error": "This is the first scene, no previous to chain from"}, 400)
+            return
+
+        prev_clip = scenes[scene_idx - 1].get("clip_path")
+        if not prev_clip or not os.path.isfile(prev_clip):
+            self._send_json({"error": "Previous scene has no generated clip"}, 404)
+            return
+
+        dest = os.path.join(KEYFRAMES_DIR, f"manual_{scene_id}_first.png")
+        try:
+            extract_last_frame(prev_clip, dest)
+        except Exception as e:
+            self._send_json({"error": f"Failed to extract last frame: {e}"}, 500)
+            return
+
+        scenes[scene_idx]["first_frame_path"] = dest
+        _save_manual_plan(plan)
+        self._send_json({"ok": True, "first_frame": f"/api/keyframes/{os.path.basename(dest)}"})
+
+    def _handle_manual_clear_keyframe(self, scene_id: str):
+        """POST /api/manual/scene/<id>/keyframes/clear"""
+        body = self._read_body()
+        try:
+            params = json.loads(body)
+        except json.JSONDecodeError:
+            params = {}
+        position = params.get("position", "both")
+
+        plan = _load_manual_plan()
+        for s in plan["scenes"]:
+            if s["id"] == scene_id:
+                if position in ("first", "both"):
+                    s.pop("first_frame_path", None)
+                if position in ("last", "both"):
+                    s.pop("last_frame_path", None)
+                break
+        _save_manual_plan(plan)
+        self._send_json({"ok": True})
+
+    def _handle_manual_auto_chain(self):
+        """POST /api/manual/scenes/auto-chain"""
+        plan = _load_manual_plan()
+        scenes = plan.get("scenes", [])
+        chained = 0
+        for i, scene in enumerate(scenes):
+            if i == 0:
+                continue
+            if scene.get("first_frame_path") and os.path.isfile(scene["first_frame_path"]):
+                continue
+            prev_clip = scenes[i - 1].get("clip_path")
+            if not prev_clip or not os.path.isfile(prev_clip):
+                continue
+            dest = os.path.join(KEYFRAMES_DIR, f"manual_{scene['id']}_first.png")
+            try:
+                extract_last_frame(prev_clip, dest)
+                scene["first_frame_path"] = dest
+                chained += 1
+            except Exception as e:
+                print(f"[MANUAL-CHAIN] Scene {scene['id']}: failed: {e}")
+        _save_manual_plan(plan)
+        self._send_json({"ok": True, "chained_scenes": chained})
 
     # ---- Reference Image endpoints ----
 
@@ -2840,7 +4985,9 @@ class Handler(BaseHTTPRequestHandler):
             clip_path = s.get("clip_path", "")
             entry["clip_exists"] = bool(clip_path and os.path.isfile(clip_path))
             if entry["clip_exists"]:
-                entry["clip_url"] = f"/api/clips/{os.path.basename(clip_path)}"
+                # Include file mtime in URL to bust browser cache on regeneration
+                mtime = int(os.path.getmtime(clip_path))
+                entry["clip_url"] = f"/api/clips/{os.path.basename(clip_path)}?v={mtime}"
             else:
                 entry["clip_url"] = None
             entry["has_photo"] = bool(s.get("photo_path") and os.path.isfile(s.get("photo_path", "")))
@@ -2879,6 +5026,17 @@ class Handler(BaseHTTPRequestHandler):
                 entry["previous_clip_url"] = f"/api/clips/{os.path.basename(prev_clip)}"
             else:
                 entry["previous_clip_url"] = None
+            # Keyframe URLs
+            ff = s.get("first_frame_path")
+            if ff and os.path.isfile(ff):
+                entry["first_frame_url"] = f"/api/keyframes/{os.path.basename(ff)}"
+            else:
+                entry["first_frame_url"] = None
+            lf = s.get("last_frame_path")
+            if lf and os.path.isfile(lf):
+                entry["last_frame_url"] = f"/api/keyframes/{os.path.basename(lf)}"
+            else:
+                entry["last_frame_url"] = None
             scenes_out.append(entry)
         self._send_json({
             "scenes": scenes_out,
@@ -3329,6 +5487,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if "project_title" in params:
             settings["project_title"] = params["project_title"]
+
+        if "director_state" in params:
+            settings["director_state"] = params["director_state"]
 
         _save_settings(settings)
         self._send_json({"ok": True, "settings": settings})
@@ -3907,6 +6068,140 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
+    def _handle_pos_auto_describe(self, entity_id, entity_type):
+        """Auto-describe a character or environment from its reference photo using vision AI.
+        Returns structured JSON with all form fields populated."""
+        try:
+            import base64, requests as _req
+
+            # Find the photo file
+            if entity_type == "characters":
+                photo_dir = POS_PHOTOS_CHARS_DIR
+            elif entity_type == "costumes":
+                photo_dir = POS_PHOTOS_COSTUMES_DIR
+            elif entity_type == "environments":
+                photo_dir = POS_PHOTOS_ENVS_DIR
+            else:
+                self._send_json({"error": f"Unsupported type: {entity_type}"}, 400)
+                return
+
+            photo_path = None
+            for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                candidate = os.path.join(photo_dir, f"{entity_id}{ext}")
+                if os.path.isfile(candidate):
+                    photo_path = candidate
+                    break
+
+            if not photo_path:
+                self._send_json({"error": "No reference photo found. Upload a photo first."}, 400)
+                return
+
+            # Read photo as base64
+            with open(photo_path, "rb") as f:
+                photo_bytes = f.read()
+            ext = os.path.splitext(photo_path)[1].lower()
+            mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}.get(ext, "image/jpeg")
+            data_uri = f"data:{mime};base64,{base64.b64encode(photo_bytes).decode('ascii')}"
+
+            api_key = os.environ.get("XAI_API_KEY", "")
+
+            if entity_type == "characters":
+                prompt_text = (
+                    "Analyze this image of a character. This may be a SINGLE photo OR a CHARACTER SHEET "
+                    "showing the SAME person from multiple angles (front, side, back, 3/4 view). "
+                    "If it is a character sheet with multiple views, treat them ALL as the SAME SINGLE PERSON "
+                    "and combine what you see from every angle into one unified description.\n\n"
+                    "Return a JSON object with these fields. "
+                    "These descriptions will be used as prompts for AI video generation, so the physicalDescription "
+                    "must be extremely detailed and vivid — it is the most important field.\n\n"
+                    '{\n'
+                    '  "physicalDescription": "VERY detailed 4-6 sentence description of this ONE person, combining all visible angles. '
+                    'Cover: face shape, exact skin tone, eye color and shape, nose, lips, jawline, facial hair if any, '
+                    'build/physique, height impression, overall vibe and presence. '
+                    'Write as comma-separated visual descriptors that an AI image generator can use to recreate this exact person. '
+                    'Include specific details like brow thickness, cheekbone prominence, face width, ear shape if visible from side views. '
+                    'If multiple angles are shown, note details only visible from certain angles (e.g. profile view reveals strong jaw, back view shows tattoo). '
+                    'Be precise, not generic.",\n'
+                    '  "hair": "exact hair color, texture, style, length, parting — describe from all visible angles '
+                    '(e.g. short tapered black hair with low fade, clean neckline visible from back, side-parted from front)",\n'
+                    '  "skinTone": "precise skin tone (e.g. deep brown, light olive, warm caramel, fair with freckles)",\n'
+                    '  "bodyType": "build from all visible angles (e.g. athletic V-shaped torso visible from back, slim from side profile)",\n'
+                    '  "ageRange": "estimated age range (e.g. early 20s, mid-30s, late 40s)",\n'
+                    '  "distinguishingFeatures": "ALL unique identifiers from ALL angles: scars, tattoos (location and design), '
+                    'piercings, moles, glasses, facial hair style, dimples, gap teeth, birthmarks — anything visible from any angle",\n'
+                    '  "defaultExpression": "typical expression and energy (e.g. intense focused gaze, relaxed confident smirk)",\n'
+                    '  "outfitDescription": "detailed outfit from all angles: front details, back details, side profile, '
+                    'fabric types, colors, fit, accessories, shoes, jewelry"\n'
+                    '}\n\n'
+                    "Return ONLY valid JSON, no other text."
+                )
+            elif entity_type == "costumes":
+                prompt_text = (
+                    "Analyze this image of a costume/outfit and return a JSON object with these fields. "
+                    "Be specific and visual — these descriptions will be used to generate AI video with this wardrobe.\n\n"
+                    '{\n'
+                    '  "description": "2-3 sentence vivid description of the complete outfit look, silhouette, and style",\n'
+                    '  "upperBody": "detailed upper body garment — jacket, shirt, top, outerwear, layering",\n'
+                    '  "lowerBody": "detailed lower body garment — pants, skirt, bottoms, legwear",\n'
+                    '  "footwear": "shoes, boots, or other footwear visible",\n'
+                    '  "accessories": "jewelry, belts, gloves, eyewear, headwear, bags, watches, chains",\n'
+                    '  "colorPalette": "dominant colors in the outfit (e.g. black, gunmetal, neon blue)",\n'
+                    '  "material": "primary fabric/material (e.g. leather, denim, tactical nylon, silk)",\n'
+                    '  "wearLevel": "condition (pristine, clean, lightly worn, worn, distressed, damaged)",\n'
+                    '  "texture": "surface finish (matte, glossy, weathered, rough, smooth)"\n'
+                    '}\n\n'
+                    "Return ONLY valid JSON, no other text."
+                )
+            else:
+                prompt_text = (
+                    "Analyze this image of an environment/location and return a JSON object with these fields. "
+                    "Be specific and visual — these descriptions will be used to generate AI video in this setting.\n\n"
+                    '{\n'
+                    '  "description": "2-3 sentence vivid description of the environment",\n'
+                    '  "location": "type of location (e.g. urban rooftop, forest clearing, underground club)",\n'
+                    '  "timeOfDay": "time of day (e.g. night, golden hour, overcast afternoon)",\n'
+                    '  "weather": "weather/conditions (e.g. rainy, clear, foggy, snowy)",\n'
+                    '  "lighting": "lighting description (e.g. neon-lit, natural sunlight, dramatic shadows)",\n'
+                    '  "keyProps": "notable objects or props in the scene",\n'
+                    '  "atmosphere": "mood/atmosphere (e.g. gritty and tense, serene and peaceful)"\n'
+                    '}\n\n'
+                    "Return ONLY valid JSON, no other text."
+                )
+
+            resp = _req.post(
+                "https://api.x.ai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": "grok-4-1-fast-non-reasoning",
+                    "messages": [{"role": "user", "content": [
+                        {"type": "image_url", "image_url": {"url": data_uri}},
+                        {"type": "text", "text": prompt_text},
+                    ]}],
+                    "response_format": {"type": "json_object"},
+                    "max_tokens": 800,
+                },
+                timeout=60,
+            )
+            resp.raise_for_status()
+            content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+
+            # Parse the JSON response
+            import re as _re
+            try:
+                fields = json.loads(content)
+            except json.JSONDecodeError:
+                # Try extracting JSON from markdown
+                m = _re.search(r'\{[\s\S]*\}', content)
+                if m:
+                    fields = json.loads(m.group(0))
+                else:
+                    self._send_json({"error": "Could not parse AI response"}, 500)
+                    return
+
+            self._send_json({"fields": fields, "entity_type": entity_type})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     def _handle_pos_generate_preview(self, entity_id, entity_type):
         """Generate an AI preview image for a character/costume/environment."""
         try:
@@ -3942,7 +6237,7 @@ class Handler(BaseHTTPRequestHandler):
                         acc = ", ".join(acc)
                     parts.append(acc)
                 desc = ", ".join(p for p in parts if p)
-                prompt = f"Full body portrait of {desc}. Studio lighting, character reference sheet style, neutral background, high detail"
+                prompt = f"Single cinematic portrait, front-facing, one person only: {desc}. Studio lighting, neutral background, photorealistic, high detail"
 
             elif entity_type == "costumes":
                 parts = []
@@ -3976,9 +6271,46 @@ class Handler(BaseHTTPRequestHandler):
                 desc = ", ".join(p for p in parts if p)
                 prompt = f"Wide establishing shot of {desc}. Cinematic, high detail, no people"
 
-            # If entity has a reference photo but no text description, use the photo
+            # Resolve reference photo path
             ref_photo = entity.get("referencePhoto", entity.get("referenceImagePath", ""))
-            if ref_photo and os.path.isfile(ref_photo) and not desc.strip():
+            ref_photo_path = None
+            if ref_photo:
+                import re as _re2
+                m = _re2.search(r"/api/pos/(?:characters|environments|costumes)/([^/]+)/photo", ref_photo)
+                if m:
+                    eid = m.group(1)
+                    photo_dirs = {"characters": POS_PHOTOS_CHARS_DIR, "costumes": POS_PHOTOS_COSTUMES_DIR, "environments": POS_PHOTOS_ENVS_DIR}
+                    pdir = photo_dirs.get(entity_type, POS_PHOTOS_CHARS_DIR)
+                    for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                        candidate = os.path.join(pdir, f"{eid}{ext}")
+                        if os.path.isfile(candidate):
+                            ref_photo_path = candidate
+                            break
+                elif os.path.isfile(ref_photo):
+                    ref_photo_path = ref_photo
+
+            # For characters with a reference photo: USE THE PHOTO as the preview
+            # This avoids Grok generating a different-looking person
+            if ref_photo_path and entity_type == "characters":
+                import shutil as _sh2
+                preview_path = os.path.join(POS_PREVIEWS_CHARS_DIR, f"{entity_id}.jpg")
+                _sh2.copy2(ref_photo_path, preview_path)
+                preview_url = f"/api/pos/{entity_type}/{entity_id}/preview"
+                _prompt_os.update_character(entity_id, {"previewImage": preview_url})
+                self._send_json({"ok": True, "preview_url": preview_url, "source": "reference_photo"})
+                return
+
+            # For environments with a reference photo: USE THE PHOTO as the preview
+            if ref_photo_path and entity_type == "environments":
+                import shutil as _sh3
+                preview_path = os.path.join(POS_PREVIEWS_ENVS_DIR, f"{entity_id}.jpg")
+                _sh3.copy2(ref_photo_path, preview_path)
+                preview_url = f"/api/pos/{entity_type}/{entity_id}/preview"
+                _prompt_os.update_environment(entity_id, {"previewImage": preview_url})
+                self._send_json({"ok": True, "preview_url": preview_url, "source": "reference_photo"})
+                return
+
+            if ref_photo_path and not desc.strip():
                 # Use the uploaded photo AS the preview (no need to generate)
                 import shutil as _sh
                 preview_dirs = {
@@ -3988,7 +6320,7 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 preview_dir = preview_dirs.get(entity_type, POS_PREVIEWS_CHARS_DIR)
                 preview_path = os.path.join(preview_dir, f"{entity_id}.jpg")
-                _sh.copy2(ref_photo, preview_path)
+                _sh.copy2(ref_photo_path, preview_path)
                 entity["previewImage"] = preview_path
                 if entity_type == "characters": _prompt_os.update_character(entity_id, {"previewImage": preview_path})
                 elif entity_type == "costumes": _prompt_os.update_costume(entity_id, {"previewImage": preview_path})
@@ -4001,34 +6333,20 @@ class Handler(BaseHTTPRequestHandler):
                 desc = entity.get("name", "unnamed")
                 prompt = f"Artistic portrait of {desc}, studio lighting, high detail"
 
-            # Call Grok image API
-            from lib.video_generator import _get_api_key
-            import requests as _requests
-            api_key = _get_api_key()
-            print(f"[PREVIEW] Generating preview for {entity_type}/{entity_id}: {prompt[:80]}...")
-            resp = _requests.post(
-                "https://api.x.ai/v1/images/generations",
-                headers={"Authorization": f"Bearer {api_key}",
-                         "Content-Type": "application/json"},
-                json={"model": "grok-imagine-image", "prompt": prompt, "n": 1},
-                timeout=60,
-            )
-            if resp.status_code != 200:
-                print(f"[PREVIEW] Grok error {resp.status_code}: {resp.text[:200]}")
-                self._send_json({"error": f"Grok API error: {resp.status_code} - {resp.text[:100]}"}, 500)
-                return
+            # Determine which engine to use for preview
+            settings = _load_settings()
+            preview_engine = settings.get("default_engine", "grok")
+            # Read body for engine override if provided
+            try:
+                body_data = json.loads(self._read_body()) if self.headers.get("Content-Length") else {}
+                if body_data.get("engine"):
+                    preview_engine = body_data["engine"]
+            except Exception:
+                pass
 
-            data = resp.json()
-            img_url = data.get("data", [{}])[0].get("url", "")
-            if not img_url:
-                self._send_json({"error": "No image URL in API response"}, 500)
-                return
-
-            # Download and save
-            img_resp = _requests.get(img_url, timeout=30)
-            if img_resp.status_code != 200:
-                self._send_json({"error": "Failed to download generated image"}, 500)
-                return
+            # Video-only engines: generate short clip, extract first frame
+            VIDEO_ONLY_ENGINES = {"gen4_5", "gen3a_turbo", "kling_pro", "kling_standard",
+                                   "veo3", "veo3_1", "veo3_1_fast", "luma", "runway"}
 
             preview_dirs = {
                 "characters": POS_PREVIEWS_CHARS_DIR,
@@ -4036,10 +6354,104 @@ class Handler(BaseHTTPRequestHandler):
                 "environments": POS_PREVIEWS_ENVS_DIR,
             }
             preview_path = os.path.join(preview_dirs[entity_type], entity_id + ".jpg")
-            with open(preview_path, "wb") as f:
-                f.write(img_resp.content)
 
-            _record_cost(f"pos_{entity_type}_{entity_id}", "image")
+            if preview_engine in VIDEO_ONLY_ENGINES:
+                # Generate a 4-second clip with the selected engine, extract frame 1
+                print(f"[PREVIEW] Using video engine '{preview_engine}' for {entity_type}/{entity_id}")
+                import tempfile
+                gen_scene = {
+                    "prompt": prompt,
+                    "duration": 4,
+                    "camera_movement": "static",
+                    "engine": preview_engine,
+                    "id": f"preview_{entity_id}",
+                }
+                # Add character description + photo for character previews
+                char_desc = ""
+                photo_path_for_gen = None
+                if entity_type == "characters" and ref_photo_path:
+                    photo_path_for_gen = ref_photo_path
+                    phys = entity.get("physicalDescription", entity.get("description", ""))
+                    if phys:
+                        char_desc = phys
+                    gen_scene["character_description"] = char_desc
+
+                try:
+                    tmp_dir = os.path.join(OUTPUT_DIR, "preview_clips")
+                    os.makedirs(tmp_dir, exist_ok=True)
+                    clip_path = generate_scene(gen_scene, 0, tmp_dir,
+                                                photo_path=photo_path_for_gen)
+                    # Extract first frame
+                    from lib.cinematic_engine import extract_last_frame
+                    # Extract FIRST frame (at time 0)
+                    kw = {}
+                    if __import__("sys").platform == "win32":
+                        si = __import__("subprocess").STARTUPINFO()
+                        si.dwFlags |= __import__("subprocess").STARTF_USESHOWWINDOW
+                        si.wShowWindow = 0
+                        kw["startupinfo"] = si
+                    __import__("subprocess").run(
+                        ["ffmpeg", "-y", "-i", clip_path, "-frames:v", "1", "-q:v", "2", preview_path],
+                        capture_output=True, timeout=15, **kw
+                    )
+                    if not os.path.isfile(preview_path):
+                        raise RuntimeError("Frame extraction failed")
+                    print(f"[PREVIEW] Extracted frame from {preview_engine} clip: {preview_path}")
+                    _record_cost(f"pos_{entity_type}_{entity_id}", "video")
+                except Exception as ve:
+                    print(f"[PREVIEW] Video engine failed ({ve}), falling back to Grok image")
+                    # Fall through to Grok image generation below
+                    preview_engine = "grok"
+
+            if preview_engine not in VIDEO_ONLY_ENGINES:
+                # Image generation (Grok or OpenAI)
+                from lib.video_generator import _get_api_key
+                import requests as _requests
+                api_key = _get_api_key()
+                print(f"[PREVIEW] Generating image preview for {entity_type}/{entity_id} via {preview_engine}: {prompt[:80]}...")
+
+                if preview_engine == "openai":
+                    # OpenAI DALL-E
+                    oai_key = os.environ.get("OPENAI_API_KEY", "")
+                    if oai_key:
+                        resp = _requests.post(
+                            "https://api.openai.com/v1/images/generations",
+                            headers={"Authorization": f"Bearer {oai_key}", "Content-Type": "application/json"},
+                            json={"model": "dall-e-3", "prompt": prompt, "n": 1, "size": "1024x1024"},
+                            timeout=60,
+                        )
+                    else:
+                        # No OpenAI key, fall back to Grok
+                        preview_engine = "grok"
+
+                if preview_engine == "grok":
+                    resp = _requests.post(
+                        "https://api.x.ai/v1/images/generations",
+                        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                        json={"model": "grok-imagine-image", "prompt": prompt, "n": 1},
+                        timeout=60,
+                    )
+
+                if resp.status_code != 200:
+                    print(f"[PREVIEW] API error {resp.status_code}: {resp.text[:200]}")
+                    self._send_json({"error": f"API error: {resp.status_code}"}, 500)
+                    return
+
+                data = resp.json()
+                img_url = data.get("data", [{}])[0].get("url", "")
+                if not img_url:
+                    self._send_json({"error": "No image URL in API response"}, 500)
+                    return
+
+                img_resp = _requests.get(img_url, timeout=30)
+                if img_resp.status_code != 200:
+                    self._send_json({"error": "Failed to download image"}, 500)
+                    return
+
+                with open(preview_path, "wb") as f:
+                    f.write(img_resp.content)
+
+                _record_cost(f"pos_{entity_type}_{entity_id}", "image")
 
             # Update entity record
             preview_url = f"/api/pos/{entity_type}/{entity_id}/preview"
@@ -5632,24 +8044,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"estimate_seconds": 0, "estimate_human": "0 seconds"})
             return
         
-        # Average generation time per engine
-        ENGINE_TIMES = {
-            "grok": 35,      # ~35 seconds per clip
-            "runway": 60,    # ~60 seconds per clip  
-            "luma": 45,      # ~45 seconds per clip
-            "openai": 15,    # ~15 seconds (image only + Ken Burns)
-        }
         STITCH_PER_CLIP = 5  # ~5 seconds per clip for stitching
-        
+
         settings = _load_settings()
         default_engine = settings.get("default_engine", "grok")
-        
+
         total = 0
         for s in scenes:
             if s.get("has_clip") or s.get("clip_path"):
                 continue  # already generated
             engine = s.get("engine") or default_engine
-            total += ENGINE_TIMES.get(engine, 35)
+            total += RENDER_TIME_ESTIMATES.get(engine, 45)
         
         total += len(scenes) * STITCH_PER_CLIP  # stitching time
         
@@ -5810,6 +8215,25 @@ class Handler(BaseHTTPRequestHandler):
         if os.path.isfile(auto_plan):
             os.unlink(auto_plan)
             cleared.append("scene_plan")
+        # Clear auto director plan
+        ad_plan = os.path.join(OUTPUT_DIR, "auto_director_plan.json")
+        if os.path.isfile(ad_plan):
+            os.unlink(ad_plan)
+            cleared.append("auto_director_plan")
+        # Clear scene thumbnails
+        thumb_dir = os.path.join(OUTPUT_DIR, "scene_thumbnails")
+        if os.path.isdir(thumb_dir):
+            for f in os.listdir(thumb_dir):
+                try: os.unlink(os.path.join(thumb_dir, f))
+                except: pass
+            cleared.append("scene_thumbnails")
+        # Clear keyframes
+        kf_dir = os.path.join(OUTPUT_DIR, "keyframes")
+        if os.path.isdir(kf_dir):
+            for f in os.listdir(kf_dir):
+                try: os.unlink(os.path.join(kf_dir, f))
+                except: pass
+            cleared.append("keyframes")
         # Clear clips
         for clips_dir in [CLIPS_DIR, MANUAL_CLIPS_DIR]:
             if os.path.isdir(clips_dir):
@@ -5935,10 +8359,525 @@ class Handler(BaseHTTPRequestHandler):
             gen_state["analysis"] = None
             gen_state["scenes"] = None
 
+        # Clear Prompt OS entities (characters, costumes, environments, scenes, shots)
+        try:
+            pos_dir = os.path.join(OUTPUT_DIR, "prompt_os")
+            if os.path.isdir(pos_dir):
+                for fname in os.listdir(pos_dir):
+                    fpath = os.path.join(pos_dir, fname)
+                    if fname.endswith(".json") and os.path.isfile(fpath):
+                        with open(fpath, "w", encoding="utf-8") as f:
+                            json.dump([], f)
+                        cleared.append(f"prompt_os/{fname}")
+                # Clear uploaded entity photos
+                photos_dir = os.path.join(pos_dir, "photos")
+                if os.path.isdir(photos_dir):
+                    import shutil
+                    shutil.rmtree(photos_dir, ignore_errors=True)
+                    os.makedirs(photos_dir, exist_ok=True)
+                    cleared.append("prompt_os/photos")
+        except Exception as e:
+            print(f"[RESET] Warning clearing POS data: {e}")
+
         print(f"[RESET] Full project reset. Cleared: {', '.join(cleared)}")
         self._send_json({"ok": True, "cleared": cleared})
 
     # ──── Auto Director Handlers ────
+
+    def _handle_ai_director_full_plan(self):
+        """AI Director: Generate complete video plan with scenes + shots from Vision inputs."""
+        try:
+            body = json.loads(self._read_body())
+            style = body.get("style", "cinematic")
+            lyrics = body.get("lyrics", "")
+            storyline = body.get("storyline", "")
+            world_setting = body.get("world_setting", "")
+            engine = body.get("engine", "gen4_5")
+            character_ids = body.get("character_ids", [])
+            environment_ids = body.get("environment_ids", [])
+
+            # Find song
+            song_path = None
+            plan = _load_manual_plan()
+            song_path = plan.get("song_path")
+            if not song_path or not os.path.isfile(song_path):
+                audio_files = []
+                for f in os.listdir(UPLOADS_DIR):
+                    if f.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac')):
+                        fp = os.path.join(UPLOADS_DIR, f)
+                        audio_files.append((os.path.getmtime(fp), fp))
+                if audio_files:
+                    audio_files.sort(reverse=True)
+                    song_path = audio_files[0][1]
+
+            # Analyze audio for timing
+            duration = 30.0
+            sections = []
+            if song_path and os.path.isfile(song_path):
+                from lib.audio_analyzer import analyze
+                analysis = analyze(song_path)
+                duration = analysis.get("duration", 30)
+                sections = analysis.get("sections", [])
+
+            if not sections:
+                # Default sections for the duration
+                sec_dur = duration / 4
+                sections = [
+                    {"start": 0, "end": sec_dur, "type": "intro", "energy": 0.3},
+                    {"start": sec_dur, "end": sec_dur*2, "type": "verse", "energy": 0.5},
+                    {"start": sec_dur*2, "end": sec_dur*3, "type": "chorus", "energy": 0.8},
+                    {"start": sec_dur*3, "end": duration, "type": "outro", "energy": 0.4},
+                ]
+
+            # Load characters and environments
+            characters = []
+            for cid in character_ids:
+                c = _prompt_os.get_character(cid)
+                if c:
+                    characters.append(c)
+            environments = []
+            for eid in environment_ids:
+                e = _prompt_os.get_environment(eid)
+                if e:
+                    environments.append(e)
+
+            # Pacing rules: shots per section type
+            SECTION_SHOT_COUNTS = {
+                "intro": 2,    # slower, fewer shots
+                "verse": 3,    # narrative, moderate
+                "chorus": 5,   # fast cuts, more shots
+                "bridge": 3,   # experimental
+                "outro": 2,    # slow resolution
+            }
+
+            # Camera presets by section type
+            from lib.cinematic_engine import CAMERA_PRESETS
+            SECTION_CAMERAS = {
+                "intro": ["tarkovsky_stillness", "drone_reveal", "kubrick_symmetry_static"],
+                "verse": ["fincher_slow_creep", "spielberg_tracking", "handheld_documentary"],
+                "chorus": ["music_video_fast_cut", "nolan_push_in", "handheld_documentary"],
+                "bridge": ["kubrick_symmetry_static", "surveillance_static", "tarkovsky_stillness"],
+                "outro": ["tarkovsky_stillness", "drone_reveal", "wes_anderson_centered"],
+            }
+
+            # Emotion mapping
+            SECTION_EMOTIONS = {
+                "intro": ["calm", "tense"],
+                "verse": ["melancholy", "vulnerable", "confident"],
+                "chorus": ["aggressive", "defiant", "confident"],
+                "bridge": ["vulnerable", "calm", "melancholy"],
+                "outro": ["calm", "melancholy"],
+            }
+
+            SECTION_ENERGY = {
+                "intro": "low", "verse": "controlled",
+                "chorus": "explosive", "bridge": "controlled", "outro": "low",
+            }
+
+            import random, uuid as _uuid
+
+            created_scenes = []
+            all_shots = {}
+            total_shots = 0
+
+            # Storyline beats distribution
+            story_beats = []
+            if storyline:
+                story_beats = [s.strip() for s in storyline.replace(". ", ".\n").split("\n") if s.strip()]
+
+            for i, section in enumerate(sections):
+                stype = section.get("type", "verse")
+                sec_start = section.get("start", 0)
+                sec_end = section.get("end", 0)
+                sec_dur = round(sec_end - sec_start, 1)
+                energy = section.get("energy", 0.5)
+
+                # Pick character (rotate)
+                char = characters[i % len(characters)] if characters else None
+                # Pick environment (rotate, avoid repeats)
+                env = environments[i % len(environments)] if environments else None
+
+                # Story beat
+                beat = ""
+                if story_beats:
+                    ratio = len(story_beats) / len(sections)
+                    beat = story_beats[min(int(i * ratio), len(story_beats) - 1)]
+
+                # Build scene name
+                mood_words = {"intro": "Opening", "verse": "Narrative", "chorus": "Peak",
+                              "bridge": "Reflection", "outro": "Resolution"}
+                scene_name = f"{mood_words.get(stype, 'Scene')} — {stype.title()}"
+                if beat:
+                    scene_name = beat[:40]
+
+                # Create POS scene
+                scene_data = {
+                    "title": scene_name,
+                    "name": scene_name,
+                    "prompt": f"{style}. {beat}" if beat else style,
+                    "characterId": char["id"] if char else None,
+                    "environmentId": env["id"] if env else None,
+                    "duration": min(sec_dur, 10),
+                    "mood": stype,
+                    "order": i,
+                    "section_type": stype,
+                    "energy": energy,
+                    "story_beat": beat,
+                }
+                pos_scene = _prompt_os.create_scene(scene_data)
+                created_scenes.append(pos_scene)
+
+                # Generate shots for this scene
+                n_shots = SECTION_SHOT_COUNTS.get(stype, 3)
+                shot_dur = round(sec_dur / n_shots, 1)
+                shot_dur = max(2, min(shot_dur, 8))  # clamp 2-8s
+
+                scene_shots = []
+                cam_pool = SECTION_CAMERAS.get(stype, ["handheld_documentary"])
+                emo_pool = SECTION_EMOTIONS.get(stype, ["calm"])
+                section_energy = SECTION_ENERGY.get(stype, "controlled")
+
+                # Shot type progression within section
+                SHOT_TYPES_BY_POSITION = {
+                    0: "wide",      # establishing
+                    1: "medium",    # narrative
+                    2: "close",     # reaction/emotion
+                    3: "medium",    # action
+                    4: "close",     # intensity
+                    5: "wide",      # release
+                }
+
+                for j in range(n_shots):
+                    shot_type = SHOT_TYPES_BY_POSITION.get(j, "medium")
+                    preset = cam_pool[j % len(cam_pool)]
+                    cam_data = dict(CAMERA_PRESETS.get(preset, {}))
+                    emotion = emo_pool[j % len(emo_pool)]
+
+                    # Intensity ramps up mid-section, down at end
+                    if n_shots <= 2:
+                        intensity = 5
+                    else:
+                        progress = j / (n_shots - 1)
+                        if progress < 0.5:
+                            intensity = int(3 + progress * 10)
+                        else:
+                            intensity = int(8 - (progress - 0.5) * 6)
+
+                    # Auto-generate shot title
+                    move_word = (cam_data.get("movement", "static") or "static").split()[0].title()
+                    title = f"{shot_type.title()} {move_word}"
+
+                    shot = {
+                        "id": f"shot_{_uuid.uuid4().hex[:8]}",
+                        "scene_id": pos_scene["id"],
+                        "shot_number": j + 1,
+                        "title": title,
+                        "duration": shot_dur,
+                        "camera": {
+                            "shot_type": shot_type,
+                            "lens": cam_data.get("lens", "35mm"),
+                            "height": cam_data.get("height", "eye"),
+                            "angle": cam_data.get("angle", "straight"),
+                            "movement": cam_data.get("movement", "static"),
+                            "preset": preset,
+                        },
+                        "framing": {
+                            "composition": cam_data.get("composition", "rule_of_thirds"),
+                            "subject_position": "center",
+                            "depth": "mid",
+                        },
+                        "action": {
+                            "summary": beat if beat else f"{stype} moment — {emotion}",
+                            "start_pose": "",
+                            "end_pose": "",
+                        },
+                        "performance": {
+                            "intensity": intensity,
+                            "energy": section_energy,
+                            "emotion": emotion,
+                            "speed": "slow" if stype in ("intro", "outro", "bridge") else "normal" if stype == "verse" else "fast",
+                        },
+                        "layers": {
+                            "surface": beat[:60] if beat else "",
+                            "symbolic": "",
+                            "hidden": "",
+                            "emotional": emotion,
+                        },
+                        "locks": {
+                            "character_lock": True, "environment_lock": True,
+                            "tone_lock": True, "visual_lock": True,
+                            "continuity_lock": True, "prop_lock": True,
+                        },
+                        "continuity": {
+                            "lock_environment": True,
+                            "lock_character_pose": False,
+                            "lock_lighting": True,
+                            "lock_props": True,
+                        },
+                        "status": "planned",
+                    }
+                    scene_shots.append(shot)
+                    total_shots += 1
+
+                all_shots[pos_scene["id"]] = scene_shots
+
+            # Save shots to settings
+            settings = _load_settings()
+            settings["shots_data"] = all_shots
+            _save_settings(settings)
+
+            # Also run the normal auto-director plan for generation compatibility
+            try:
+                char_list = characters
+                env_list = environments
+                ad_plan = _auto_director.plan_full_video(
+                    song_path=song_path or "",
+                    style=style,
+                    characters=char_list,
+                    environments=env_list,
+                    engine=engine,
+                    natural_pacing=True,
+                    storyline=storyline,
+                )
+                # Inject universal prompt + world setting
+                if world_setting:
+                    for s in ad_plan.get("scenes", []):
+                        s["prompt"] = f"{world_setting}. {s['prompt']}"
+                    ad_plan["world_setting"] = world_setting
+
+                with open(AUTO_DIRECTOR_PLAN_PATH, "w") as f:
+                    json.dump(ad_plan, f, indent=2)
+                _sync_auto_plan_to_scene_plan(ad_plan)
+            except Exception as pe:
+                print(f"[AI DIRECTOR] Auto-director plan also created (error: {pe})")
+
+            # Auto-populate style memory from Vision inputs
+            try:
+                from lib.cinematic_engine import StyleMemory
+                sm = StyleMemory()
+                sm.set_from_vision(
+                    universal_prompt=style,
+                    world_setting=body.get("world_setting", ""),
+                    style=style,
+                )
+                print(f"[AI DIRECTOR] Style memory set: {sm.data.get('mood_profile')}, {sm.data.get('lighting_style')}")
+            except Exception as sme:
+                print(f"[AI DIRECTOR] Style memory error: {sme}")
+
+            self._send_json({
+                "ok": True,
+                "scenes_created": len(created_scenes),
+                "shots_created": total_shots,
+                "scenes": [{"id": s["id"], "name": s.get("title", s.get("name", ""))} for s in created_scenes],
+                "duration": round(duration, 1),
+            })
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_compile_shot(self):
+        """Compile cinematic prompt variants for a shot."""
+        try:
+            from lib.prompt_assembler import compile_shot_variants
+            body = json.loads(self._read_body())
+
+            shot = body.get("shot", {})
+            scene_id = body.get("scene_id", shot.get("scene_id", ""))
+            shot_idx = body.get("shot_index", -1)
+
+            # Load entities from scene
+            char = None
+            costume = None
+            env = None
+            if scene_id:
+                scene_data = _prompt_os.get_scene(scene_id)
+                if scene_data:
+                    cid = scene_data.get("characterId")
+                    if cid:
+                        char = _prompt_os.get_character(cid)
+                    costid = scene_data.get("costumeId")
+                    if costid:
+                        costume = _prompt_os.get_costume(costid)
+                    eid = scene_data.get("environmentId")
+                    if eid:
+                        env = _prompt_os.get_environment(eid)
+
+            # Override with explicit IDs if provided
+            if body.get("character_id"):
+                char = _prompt_os.get_character(body["character_id"])
+            if body.get("costume_id"):
+                costume = _prompt_os.get_costume(body["costume_id"])
+            if body.get("environment_id"):
+                env = _prompt_os.get_environment(body["environment_id"])
+
+            # Load global settings
+            settings = _load_settings()
+            ds = settings.get("director_state", {})
+
+            # Get previous shot for continuity
+            prev_shot = None
+            if scene_id and shot_idx > 0:
+                shots = settings.get("shots_data", {}).get(scene_id, [])
+                if shot_idx < len(shots):
+                    prev_shot = shots[shot_idx - 1]
+
+            variants = compile_shot_variants(
+                shot=shot,
+                character=char,
+                costume=costume,
+                environment=env,
+                global_style=ds.get("universalPrompt", ""),
+                world_setting=ds.get("worldSetting", ""),
+                prev_shot=prev_shot,
+            )
+            self._send_json({"ok": True, "variants": variants})
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_director_generate_plan(self):
+        """Generate a full director plan from Vision inputs."""
+        try:
+            from lib.director_mode import generate_director_plan
+            from lib.audio_analyzer import analyze
+            body = json.loads(self._read_body())
+
+            # Find audio
+            song_path = _load_manual_plan().get("song_path")
+            if not song_path:
+                for f in sorted(os.listdir(UPLOADS_DIR), key=lambda x: os.path.getmtime(os.path.join(UPLOADS_DIR, x)), reverse=True):
+                    if f.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac')):
+                        song_path = os.path.join(UPLOADS_DIR, f)
+                        break
+
+            audio = {}
+            if song_path and os.path.isfile(song_path):
+                audio = analyze(song_path)
+
+            # Load entities
+            chars = [_prompt_os.get_character(cid) for cid in body.get("character_ids", []) if _prompt_os.get_character(cid)]
+            envs = [_prompt_os.get_environment(eid) for eid in body.get("environment_ids", []) if _prompt_os.get_environment(eid)]
+            costumes = [_prompt_os.get_costume(cid) for cid in body.get("costume_ids", []) if _prompt_os.get_costume(cid)]
+
+            plan = generate_director_plan(
+                audio_analysis=audio,
+                lyrics=body.get("lyrics", ""),
+                storyline=body.get("storyline", ""),
+                style=body.get("style", ""),
+                world_setting=body.get("world_setting", ""),
+                arc_type=body.get("arc_type", "rise"),
+                pacing_style=body.get("pacing_style", "balanced"),
+                coverage_mode=body.get("coverage_mode", "standard"),
+                emotional_intensity=body.get("emotional_intensity", 0.7),
+                abstract_level=body.get("abstract_level", 0.3),
+                characters=chars,
+                environments=envs,
+                costumes=costumes,
+            )
+
+            # Save plan
+            plan_path = os.path.join(OUTPUT_DIR, "director_plan.json")
+            with open(plan_path, "w") as f:
+                json.dump(plan, f, indent=2)
+
+            self._send_json({"ok": True, "plan": plan})
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_director_apply_plan(self):
+        """Apply a director plan — create POS scenes + shots from the plan."""
+        try:
+            plan_path = os.path.join(OUTPUT_DIR, "director_plan.json")
+            if not os.path.isfile(plan_path):
+                self._send_json({"error": "No director plan exists. Generate one first."}, 400)
+                return
+            with open(plan_path, "r") as f:
+                plan = json.load(f)
+
+            created_scenes = 0
+            all_shots_data = {}
+
+            for scene in plan.get("scenes", []):
+                # Create POS scene
+                scene_body = {
+                    "name": scene.get("name", f"Scene {scene.get('scene_index', 0)+1}"),
+                    "title": scene.get("name", ""),
+                    "sceneType": scene.get("type", "verse"),
+                    "emotion": scene.get("emotion", ""),
+                    "energy": scene.get("energy", 5),
+                    "narrativeIntent": scene.get("purpose", ""),
+                    "shotDescription": scene.get("emotional_goal", ""),
+                    "characterId": scene.get("character_id", ""),
+                    "environmentId": scene.get("environment_id", ""),
+                    "costumeId": scene.get("costume_id", ""),
+                    "duration": scene.get("duration", 5),
+                    "orderIndex": scene.get("scene_index", 0),
+                }
+                pos_scene = _prompt_os.create_scene(scene_body)
+                created_scenes += 1
+
+                # Store shots for this scene
+                scene_idx = scene.get("scene_index", 0)
+                shots = plan.get("shots", {}).get(str(scene_idx), plan.get("shots", {}).get(scene_idx, []))
+                if shots:
+                    for shot in shots:
+                        shot["scene_id"] = pos_scene["id"]
+                    all_shots_data[pos_scene["id"]] = shots
+
+            # Save shots to settings
+            settings = _load_settings()
+            existing_shots = settings.get("shots_data", {})
+            existing_shots.update(all_shots_data)
+            settings["shots_data"] = existing_shots
+            _save_settings(settings)
+
+            total_shots = sum(len(v) for v in all_shots_data.values())
+            self._send_json({
+                "ok": True,
+                "scenes_created": created_scenes,
+                "shots_created": total_shots,
+            })
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_prompt_compile(self):
+        """Compile a structured prompt from entity IDs for preview."""
+        try:
+            from lib.prompt_assembler import assemble_prompt
+            body = json.loads(self._read_body())
+
+            # Load entities
+            char = None
+            if body.get("character_id"):
+                char = _prompt_os.get_character(body["character_id"])
+            costume = None
+            if body.get("costume_id"):
+                costume = _prompt_os.get_costume(body["costume_id"])
+            env = None
+            if body.get("environment_id"):
+                env = _prompt_os.get_environment(body["environment_id"])
+
+            # Load global settings
+            settings = _load_settings()
+            ds = settings.get("director_state", {})
+
+            result = assemble_prompt(
+                global_style=body.get("global_style", ds.get("universalPrompt", "")),
+                world_setting=body.get("world_setting", ds.get("worldSetting", "")),
+                character=char,
+                costume=costume,
+                environment=env,
+                scene=body.get("scene", {}),
+                global_negative=body.get("negative_prompt", ""),
+                universal_prompt=ds.get("universalPrompt", ""),
+            )
+            self._send_json({"ok": True, **result})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
 
     def _handle_auto_director_plan(self):
         """Plan a full video via Auto Director."""
@@ -5988,6 +8927,8 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             storyline = body.get("storyline", "")
+            universal_prompt = body.get("universal_prompt", "")
+            world_setting = body.get("world_setting", "")
             plan = _auto_director.plan_full_video(
                 song_path=song_path,
                 style=style,
@@ -6000,9 +8941,23 @@ class Handler(BaseHTTPRequestHandler):
                 storyline=storyline,
             )
 
+            # Inject universal prompt and world setting into every scene
+            if universal_prompt or world_setting:
+                prefix_parts = []
+                if universal_prompt:
+                    prefix_parts.append(universal_prompt)
+                if world_setting:
+                    prefix_parts.append(f"World: {world_setting}")
+                prefix = ". ".join(prefix_parts)
+                for scene in plan.get("scenes", []):
+                    scene["prompt"] = f"{prefix}. {scene['prompt']}"
+                plan["universal_prompt"] = universal_prompt
+                plan["world_setting"] = world_setting
+
             # Save plan
             with open(AUTO_DIRECTOR_PLAN_PATH, "w") as f:
                 json.dump(plan, f, indent=2)
+            _sync_auto_plan_to_scene_plan(plan)
 
             self._send_json({"ok": True, "plan": plan})
         except Exception as e:
@@ -6055,6 +9010,8 @@ class Handler(BaseHTTPRequestHandler):
                 environments.append(e)
 
         try:
+            universal_prompt = body.get("universal_prompt", "")
+            world_setting = body.get("world_setting", "")
             plan = _auto_director.plan_with_ai(
                 song_path=song_path,
                 creative_direction=creative_direction,
@@ -6067,9 +9024,23 @@ class Handler(BaseHTTPRequestHandler):
                 budget=budget,
             )
 
+            # Inject universal prompt and world setting into every scene
+            if universal_prompt or world_setting:
+                prefix_parts = []
+                if universal_prompt:
+                    prefix_parts.append(universal_prompt)
+                if world_setting:
+                    prefix_parts.append(f"World: {world_setting}")
+                prefix = ". ".join(prefix_parts)
+                for scene in plan.get("scenes", []):
+                    scene["prompt"] = f"{prefix}. {scene['prompt']}"
+                plan["universal_prompt"] = universal_prompt
+                plan["world_setting"] = world_setting
+
             # Save plan (same path so generate/to-manual work)
             with open(AUTO_DIRECTOR_PLAN_PATH, "w") as f:
                 json.dump(plan, f, indent=2)
+            _sync_auto_plan_to_scene_plan(plan)
 
             self._send_json({"ok": True, "plan": plan})
         except Exception as e:
@@ -6100,6 +9071,43 @@ class Handler(BaseHTTPRequestHandler):
         thread = threading.Thread(target=run_generation, daemon=True)
         thread.start()
         self._send_json({"ok": True, "message": "Auto Director generation started"})
+
+    def _handle_auto_director_restitch(self):
+        """Re-stitch existing clips without regenerating."""
+        if not os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
+            self._send_json({"error": "No plan exists"}, 400)
+            return
+
+        with open(AUTO_DIRECTOR_PLAN_PATH, "r") as f:
+            plan = json.load(f)
+
+        scenes = plan.get("scenes", [])
+        song_path = plan.get("song_path")
+
+        # Collect valid clips
+        clip_paths = [s.get("clip_path") for s in scenes
+                      if s.get("clip_path") and os.path.isfile(s.get("clip_path", ""))]
+        if not clip_paths:
+            self._send_json({"error": "No clips found on disk to stitch"}, 400)
+            return
+
+        transitions = [s.get("transition", "crossfade") for s in scenes
+                       if s.get("clip_path") and os.path.isfile(s.get("clip_path", ""))]
+        output_path = os.path.join(OUTPUT_DIR, "auto_director_final.mp4")
+        audio = song_path if song_path and os.path.isfile(song_path) else None
+
+        def run_stitch():
+            try:
+                _auto_director._update_progress(phase="stitching")
+                from lib.video_stitcher import stitch
+                stitch(clip_paths, audio, output_path, transitions=transitions)
+                _auto_director._update_progress(phase="done", output_file=output_path)
+            except Exception as e:
+                _auto_director._update_progress(phase="error", error=f"Stitch failed: {e}")
+
+        thread = threading.Thread(target=run_stitch, daemon=True)
+        thread.start()
+        self._send_json({"ok": True, "message": f"Re-stitching {len(clip_paths)} clips..."})
 
     def _handle_auto_director_to_manual(self):
         """Convert Auto Director plan to manual scene plan for fine-tuning."""
@@ -6142,10 +9150,690 @@ class Handler(BaseHTTPRequestHandler):
         _save_manual_plan(manual_plan)
         self._send_json({"ok": True, "message": f"Converted {len(ad_plan.get('scenes', []))} scenes to Manual Mode"})
 
+    # ──────────────── Movie Planner Handlers ────────────────
+
+    def _handle_movie_plan(self):
+        """Create a full movie plan via the Movie Planner engine."""
+        body = json.loads(self._read_body())
+        style = body.get("style", "cinematic")
+        lyrics = body.get("lyrics", "")
+        storyline = body.get("storyline", "")
+        world_setting = body.get("world_setting", "")
+        universal_prompt = body.get("universal_prompt", "")
+        engine = body.get("engine", "gen4_5")
+        preset = body.get("preset", body.get("preset_id", ""))
+        budget = body.get("budget")
+
+        # Film mode params
+        project_mode = body.get("project_mode", "music_video")
+        film_runtime = body.get("film_runtime", 60)
+        film_scene_count = body.get("film_scene_count", 5)
+        film_pacing = body.get("film_pacing", "medium")
+        film_climax_position = body.get("film_climax_position", "late")
+        film_tension_curve = body.get("film_tension_curve", "exponential")
+        film_ending_type = body.get("film_ending_type", "bittersweet")
+
+        is_film = (project_mode != "music_video")
+
+        # Resolve characters, costumes, environments from POS
+        char_ids = body.get("character_ids", [])
+        costume_ids = body.get("costume_ids", [])
+        env_ids = body.get("environment_ids", [])
+
+        characters = []
+        for cid in char_ids:
+            c = _prompt_os.get_character(cid)
+            if c:
+                characters.append(c)
+
+        costumes = []
+        for cid in costume_ids:
+            c = _prompt_os.get_costume(cid)
+            if c:
+                costumes.append(c)
+
+        environments = []
+        for eid in env_ids:
+            e = _prompt_os.get_environment(eid)
+            if e:
+                environments.append(e)
+
+        # Get audio sections — only needed for music video mode
+        audio_sections = body.get("audio_sections")
+        num_scenes = body.get("num_scenes")
+        song_path = None
+
+        if not is_film:
+            # Only look for song if music mode
+            if not audio_sections:
+                # Try to analyze the uploaded song for sections
+                song_path = body.get("song_path")
+                if not song_path:
+                    plan = _load_manual_plan()
+                    song_path = plan.get("song_path")
+                if not song_path or not os.path.isfile(song_path):
+                    audio_files = []
+                    for f in os.listdir(UPLOADS_DIR):
+                        if f.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac')):
+                            fp = os.path.join(UPLOADS_DIR, f)
+                            audio_files.append((os.path.getmtime(fp), fp))
+                    if audio_files:
+                        audio_files.sort(reverse=True)
+                        song_path = audio_files[0][1]
+
+                if song_path and os.path.isfile(song_path):
+                    try:
+                        from lib.audio_analyzer import analyze as _analyze_audio
+                        analysis = _analyze_audio(song_path)
+                        audio_sections = analysis.get("sections", [])
+                    except Exception as ae:
+                        print(f"[MOVIE PLANNER] Audio analysis failed: {ae}")
+
+        try:
+            result = create_movie_plan(
+                style=style,
+                lyrics=lyrics,
+                storyline=storyline,
+                world_setting=world_setting,
+                universal_prompt=universal_prompt,
+                characters=characters,
+                costumes=costumes,
+                environments=environments,
+                engine=engine,
+                preset=preset,
+                audio_sections=audio_sections,
+                num_scenes=num_scenes,
+                output_dir=OUTPUT_DIR,
+                project_mode=project_mode,
+                film_runtime=film_runtime,
+                film_scene_count=film_scene_count,
+                film_pacing=film_pacing,
+                film_climax_position=film_climax_position,
+                film_tension_curve=film_tension_curve,
+                film_ending_type=film_ending_type,
+            )
+
+            # Also sync to auto_director_plan.json and scene_plan.json for generation compatibility
+            compat_plan = {
+                "song_path": song_path if song_path and os.path.isfile(song_path) else "",
+                "style": style,
+                "engine": engine,
+                "scenes": result.get("scenes", []),
+                "universal_prompt": universal_prompt,
+                "world_setting": world_setting,
+                "project_mode": project_mode,
+            }
+            with open(AUTO_DIRECTOR_PLAN_PATH, "w") as f:
+                json.dump(compat_plan, f, indent=2)
+            _sync_auto_plan_to_scene_plan(compat_plan)
+
+            self._send_json(result)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_movie_scene_edit(self, scene_index):
+        """Edit specific fields of a scene in the movie plan."""
+        body = json.loads(self._read_body())
+        plan = load_movie_plan(OUTPUT_DIR)
+        if not plan or not plan.get("scenes"):
+            self._send_json({"error": "No movie plan exists"}, 400)
+            return
+
+        scenes = plan["scenes"]
+        if scene_index < 0 or scene_index >= len(scenes):
+            self._send_json({"error": f"Scene index {scene_index} out of range"}, 400)
+            return
+
+        scene = scenes[scene_index]
+        locks = scene.get("locks", {})
+
+        # Update provided fields (respecting locks)
+        updated_fields = []
+        for field, value in body.items():
+            if field in ("locks", "id", "order"):
+                continue  # Protected fields
+            if locks.get(field):
+                continue  # Locked
+            scene[field] = value
+            updated_fields.append(field)
+
+        # If prompt-affecting fields changed, rebuild the shot prompt
+        prompt_fields = {"camera_direction", "lighting_direction", "color_direction",
+                         "motion_direction", "action", "characters", "costumes", "environments"}
+        if prompt_fields & set(updated_fields) and not locks.get("shot_prompt"):
+            bible = rebuild_bible_from_plan(plan)
+            prev_scene = scenes[scene_index - 1] if scene_index > 0 else None
+            scene["shot_prompt"] = PromptBuilder.build_shot_prompt(scene, bible, prev_scene)
+            scene["prompt"] = scene["shot_prompt"]
+
+        # Check if preview should be marked stale
+        visual_fields_set = {"summary", "action", "shot_prompt", "prompt",
+                             "camera_direction", "lighting_direction", "color_direction",
+                             "motion_direction", "characters", "costumes", "environments",
+                             "emotional_shift", "visual_shift", "duration",
+                             "transition_in", "transition_out", "title", "purpose", "delta"}
+        if visual_fields_set & set(updated_fields):
+            new_hash = _compute_scene_fingerprint(scene)
+            preview = scene.setdefault("preview", {"status": "none"})
+            if preview.get("status") == "ready" and preview.get("prompt_hash") != new_hash:
+                preview["status"] = "stale"
+
+        scenes[scene_index] = scene
+        plan["scenes"] = scenes
+        save_movie_plan(plan, OUTPUT_DIR)
+
+        # Sync to generation pipeline
+        self._sync_movie_plan_to_pipeline(plan)
+
+        self._send_json({"ok": True, "scene": scene, "updated_fields": updated_fields})
+
+    def _handle_scene_assets(self, scene_index):
+        """Update scene asset bindings and rebuild shot prompt."""
+        body = json.loads(self._read_body())
+        plan = load_movie_plan(OUTPUT_DIR)
+        if not plan or not plan.get("scenes"):
+            self._send_json({"error": "No movie plan exists"}, 400)
+            return
+
+        scenes = plan["scenes"]
+        if scene_index < 0 or scene_index >= len(scenes):
+            self._send_json({"error": f"Scene index {scene_index} out of range"}, 400)
+            return
+
+        scene = scenes[scene_index]
+
+        # Update asset IDs and resolve full objects (library + draft)
+        for asset_type in ["characters", "costumes", "environments"]:
+            if asset_type in body:
+                new_ids = body[asset_type]  # list of IDs
+                resolved = []
+                for aid in new_ids:
+                    obj = None
+                    state = "library"
+                    # Try POS library first
+                    if asset_type == "characters":
+                        obj = _prompt_os.get_character(aid)
+                    elif asset_type == "costumes":
+                        obj = _prompt_os.get_costume(aid)
+                    else:
+                        obj = _prompt_os.get_environment(aid)
+                    # Fall back to draft assets
+                    if not obj and aid.startswith("draft_"):
+                        draft = _get_draft(aid)
+                        if draft:
+                            obj = {"id": aid, "name": draft.get("label", draft.get("name", ""))}
+                            state = "draft"
+                    if obj:
+                        entry = {
+                            "id": aid,
+                            "name": obj.get("name", ""),
+                            "state": state,
+                        }
+                        if asset_type == "characters":
+                            entry["role_in_scene"] = "featured"
+                        elif asset_type == "costumes":
+                            entry["when_worn"] = "throughout"
+                        else:
+                            entry["how_used"] = "main setting"
+                        resolved.append(entry)
+                scene[asset_type] = resolved
+
+        # Rebuild shot prompt with new assets
+        bible = rebuild_bible_from_plan(plan)
+        prev_scene = scenes[scene_index - 1] if scene_index > 0 else None
+        scene["shot_prompt"] = PromptBuilder.build_shot_prompt(scene, bible, prev_scene)
+        scene["prompt"] = scene["shot_prompt"]
+
+        # Run validation
+        from lib.movie_planner import SceneBuilder
+        scene["asset_validation"] = SceneBuilder.validate_scene_assets(scene, bible)
+
+        # Mark preview stale (asset changes affect generation)
+        new_hash = _compute_scene_fingerprint(scene)
+        preview = scene.setdefault("preview", {"status": "none"})
+        if preview.get("status") == "ready" and preview.get("prompt_hash") != new_hash:
+            preview["status"] = "stale"
+
+        # Save
+        scenes[scene_index] = scene
+        plan["scenes"] = scenes
+        save_movie_plan(plan, OUTPUT_DIR)
+
+        # Sync to generation pipeline
+        self._sync_movie_plan_to_pipeline(plan)
+
+        self._send_json({"ok": True, "scene": scene})
+
+    def _handle_scene_validate_assets(self, scene_index):
+        """Validate scene text against assigned assets."""
+        plan = load_movie_plan(OUTPUT_DIR)
+        if not plan or not plan.get("scenes"):
+            self._send_json({"error": "No movie plan exists"}, 400)
+            return
+
+        scenes = plan["scenes"]
+        if scene_index < 0 or scene_index >= len(scenes):
+            self._send_json({"error": f"Scene index {scene_index} out of range"}, 400)
+            return
+
+        scene = scenes[scene_index]
+        bible = rebuild_bible_from_plan(plan)
+
+        from lib.movie_planner import SceneBuilder
+        validation = SceneBuilder.validate_scene_assets(scene, bible)
+
+        # Also get suggestions for unresolved mentions
+        all_assets = (
+            [{"id": _safe_id(c), "name": _safe_name(c)} for c in bible.characters] +
+            [{"id": _safe_id(c), "name": _safe_name(c)} for c in bible.costumes] +
+            [{"id": _safe_id(e), "name": _safe_name(e)} for e in bible.environments]
+        )
+        text = ' '.join([
+            scene.get('summary', ''),
+            scene.get('action', ''),
+            scene.get('shot_prompt', ''),
+        ])
+        suggestions = SceneBuilder.match_text_to_assets(text, all_assets)
+
+        self._send_json({
+            "warnings": validation.get("warnings", []),
+            "unresolved": validation.get("unresolved", []),
+            "suggestions": suggestions,
+        })
+
+    def _handle_draft_promote(self):
+        """Promote a draft asset to a POS library entity."""
+        body = json.loads(self._read_body())
+        draft_id = body.get("draft_id", "")
+        if not draft_id:
+            self._send_json({"error": "draft_id required"}, 400)
+            return
+
+        entity, old_id = _promote_draft(draft_id, _prompt_os)
+        if not entity:
+            self._send_json({"error": f"Draft '{draft_id}' not found or promotion failed"}, 404)
+            return
+
+        # Update all scenes that reference this draft
+        plan = load_movie_plan(OUTPUT_DIR)
+        replaced = 0
+        if plan and plan.get("scenes"):
+            replaced = _replace_draft_in_scenes(plan["scenes"], old_id, entity["id"], entity.get("name"))
+            if replaced > 0:
+                save_movie_plan(plan, OUTPUT_DIR)
+                self._sync_movie_plan_to_pipeline(plan)
+
+        self._send_json({
+            "ok": True,
+            "entity": entity,
+            "old_draft_id": old_id,
+            "scenes_updated": replaced,
+        })
+
+    def _handle_draft_resolve(self):
+        """Resolve a draft asset by mapping it to an existing library asset."""
+        body = json.loads(self._read_body())
+        draft_id = body.get("draft_id", "")
+        library_id = body.get("library_id", "")
+        asset_type = body.get("asset_type", "")
+        if not draft_id or not library_id:
+            self._send_json({"error": "draft_id and library_id required"}, 400)
+            return
+
+        # Verify library asset exists
+        obj = None
+        if asset_type in ("character", "characters"):
+            obj = _prompt_os.get_character(library_id)
+        elif asset_type in ("costume", "costumes"):
+            obj = _prompt_os.get_costume(library_id)
+        elif asset_type in ("environment", "environments"):
+            obj = _prompt_os.get_environment(library_id)
+        if not obj:
+            self._send_json({"error": f"Library asset '{library_id}' not found"}, 404)
+            return
+
+        # Replace draft ID in all scenes
+        plan = load_movie_plan(OUTPUT_DIR)
+        replaced = 0
+        if plan and plan.get("scenes"):
+            replaced = _replace_draft_in_scenes(plan["scenes"], draft_id, library_id, obj.get("name"))
+            if replaced > 0:
+                save_movie_plan(plan, OUTPUT_DIR)
+                self._sync_movie_plan_to_pipeline(plan)
+
+        # Remove the draft
+        _remove_draft(draft_id)
+
+        self._send_json({
+            "ok": True,
+            "library_asset": {"id": obj["id"], "name": obj.get("name", "")},
+            "old_draft_id": draft_id,
+            "scenes_updated": replaced,
+        })
+
+    def _handle_draft_remove(self):
+        """Remove a draft asset (keep as generic text)."""
+        body = json.loads(self._read_body())
+        draft_id = body.get("draft_id", "")
+        if not draft_id:
+            self._send_json({"error": "draft_id required"}, 400)
+            return
+
+        # Mark asset as generic in scenes (remove the ID but keep the name)
+        plan = load_movie_plan(OUTPUT_DIR)
+        if plan and plan.get("scenes"):
+            for scene in plan["scenes"]:
+                for asset_type in ("characters", "costumes", "environments"):
+                    for asset in scene.get(asset_type, []):
+                        if asset.get("id") == draft_id:
+                            asset["state"] = "generic"
+                            asset["id"] = ""
+            save_movie_plan(plan, OUTPUT_DIR)
+
+        _remove_draft(draft_id)
+        self._send_json({"ok": True, "removed": draft_id})
+
+    def _handle_movie_scene_regenerate(self, scene_index):
+        """Regenerate one scene in the movie plan."""
+        body = json.loads(self._read_body())
+        plan = load_movie_plan(OUTPUT_DIR)
+        if not plan or not plan.get("scenes"):
+            self._send_json({"error": "No movie plan exists"}, 400)
+            return
+
+        scenes = plan["scenes"]
+        if scene_index < 0 or scene_index >= len(scenes):
+            self._send_json({"error": f"Scene index {scene_index} out of range"}, 400)
+            return
+
+        bible = rebuild_bible_from_plan(plan)
+        respect_locks = body.get("respect_locks", True)
+        locks = scenes[scene_index].get("locks", {}) if respect_locks else {}
+
+        result = SceneRegenerator.regenerate_scene(scene_index, scenes, bible, locks)
+        if result is None:
+            self._send_json({"error": "Regeneration failed"}, 500)
+            return
+
+        plan["scenes"] = scenes
+        save_movie_plan(plan, OUTPUT_DIR)
+        self._sync_movie_plan_to_pipeline(plan)
+
+        self._send_json({"ok": True, "scene": result})
+
+    def _handle_movie_scene_regenerate_downstream(self, scene_index):
+        """Regenerate a scene and all following scenes."""
+        plan = load_movie_plan(OUTPUT_DIR)
+        if not plan or not plan.get("scenes"):
+            self._send_json({"error": "No movie plan exists"}, 400)
+            return
+
+        scenes = plan["scenes"]
+        if scene_index < 0 or scene_index >= len(scenes):
+            self._send_json({"error": f"Scene index {scene_index} out of range"}, 400)
+            return
+
+        bible = rebuild_bible_from_plan(plan)
+        updated = SceneRegenerator.regenerate_downstream(scene_index, scenes, bible)
+
+        plan["scenes"] = scenes
+        save_movie_plan(plan, OUTPUT_DIR)
+        self._sync_movie_plan_to_pipeline(plan)
+
+        self._send_json({"ok": True, "scenes": updated})
+
+    def _handle_movie_scene_lock(self, scene_index):
+        """Lock specific fields of a scene."""
+        body = json.loads(self._read_body())
+        plan = load_movie_plan(OUTPUT_DIR)
+        if not plan or not plan.get("scenes"):
+            self._send_json({"error": "No movie plan exists"}, 400)
+            return
+
+        scenes = plan["scenes"]
+        if scene_index < 0 or scene_index >= len(scenes):
+            self._send_json({"error": f"Scene index {scene_index} out of range"}, 400)
+            return
+
+        scene = scenes[scene_index]
+        locks = scene.get("locks", {})
+        fields = body.get("fields", [])
+
+        if fields == "all":
+            # Lock all editable fields
+            for key in scene:
+                if key not in ("id", "order", "locks", "status", "validation"):
+                    locks[key] = True
+        else:
+            for field in fields:
+                locks[field] = True
+
+        scene["locks"] = locks
+        scenes[scene_index] = scene
+        plan["scenes"] = scenes
+        save_movie_plan(plan, OUTPUT_DIR)
+
+        self._send_json({"ok": True, "scene": scene})
+
+    def _handle_movie_scene_unlock(self, scene_index):
+        """Unlock specific fields of a scene."""
+        body = json.loads(self._read_body())
+        plan = load_movie_plan(OUTPUT_DIR)
+        if not plan or not plan.get("scenes"):
+            self._send_json({"error": "No movie plan exists"}, 400)
+            return
+
+        scenes = plan["scenes"]
+        if scene_index < 0 or scene_index >= len(scenes):
+            self._send_json({"error": f"Scene index {scene_index} out of range"}, 400)
+            return
+
+        scene = scenes[scene_index]
+        locks = scene.get("locks", {})
+        fields = body.get("fields", [])
+
+        if fields == "all":
+            locks = {}
+        else:
+            for field in fields:
+                locks.pop(field, None)
+
+        scene["locks"] = locks
+        scenes[scene_index] = scene
+        plan["scenes"] = scenes
+        save_movie_plan(plan, OUTPUT_DIR)
+
+        self._send_json({"ok": True, "scene": scene})
+
+    def _handle_scene_preview(self, scene_index):
+        """Generate a preview for a single scene."""
+        plan = load_movie_plan(OUTPUT_DIR)
+        if not plan or not plan.get("scenes"):
+            self._send_json({"error": "No plan"}, 400)
+            return
+        scenes = plan["scenes"]
+        if scene_index < 0 or scene_index >= len(scenes):
+            self._send_json({"error": "Invalid index"}, 400)
+            return
+
+        scene = scenes[scene_index]
+        prompt = scene.get("shot_prompt", scene.get("prompt", ""))
+        notes = scene.get("notes", "")
+
+        # Generate preview using existing thumbnail infrastructure
+        result = _generate_scene_thumbnail(
+            scene_index, prompt, notes,
+            scene_data=scene
+        )
+
+        fingerprint = _compute_scene_fingerprint(scene)
+        engine_used = "runway" if scene.get("character_photo_path") else "grok"
+        # Detect engine from enriched data
+        enriched_copy = dict(scene)
+        _enrich_scene_with_assets(enriched_copy)
+        if enriched_copy.get("character_photo_path"):
+            engine_used = "runway"
+
+        if "error" in result:
+            scene["preview"] = {
+                "status": "failed",
+                "image_url": None,
+                "prompt_hash": fingerprint,
+                "last_generated_at": datetime.utcnow().isoformat(),
+                "engine": engine_used,
+                "error": result["error"],
+            }
+        else:
+            scene["preview"] = {
+                "status": "ready",
+                "image_url": result.get("preview_url", ""),
+                "prompt_hash": fingerprint,
+                "last_generated_at": datetime.utcnow().isoformat(),
+                "engine": engine_used,
+                "error": None,
+            }
+
+        scenes[scene_index] = scene
+        plan["scenes"] = scenes
+        save_movie_plan(plan, OUTPUT_DIR)
+
+        # Sync to pipeline
+        self._sync_movie_plan_to_pipeline(plan)
+
+        self._send_json({"ok": True, "preview": scene["preview"]})
+
+    def _handle_scenes_preview_batch(self):
+        """Generate previews for all missing/stale scenes in background."""
+        body = json.loads(self._read_body()) if self.headers.get("Content-Length") else {}
+        mode = body.get("mode", "missing_and_stale")
+
+        plan = load_movie_plan(OUTPUT_DIR)
+        if not plan or not plan.get("scenes"):
+            self._send_json({"error": "No plan"}, 400)
+            return
+
+        with scene_preview_lock:
+            if scene_preview_state["running"]:
+                self._send_json({"error": "Batch already running"}, 409)
+                return
+
+        scenes = plan["scenes"]
+        to_generate = []
+        for i, scene in enumerate(scenes):
+            preview = scene.get("preview", {})
+            status = preview.get("status", "none")
+            if mode == "all" or status in ("none", "stale", "failed"):
+                to_generate.append(i)
+
+        if not to_generate:
+            self._send_json({"ok": True, "message": "Nothing to generate", "queued": 0})
+            return
+
+        # Mark queued
+        for i in to_generate:
+            scenes[i].setdefault("preview", {})["status"] = "queued"
+        save_movie_plan(plan, OUTPUT_DIR)
+
+        with scene_preview_lock:
+            scene_preview_state["running"] = True
+            scene_preview_state["total"] = len(to_generate)
+            scene_preview_state["completed"] = 0
+            scene_preview_state["failed"] = 0
+            scene_preview_state["scenes"] = [
+                {"index": i, "preview": scenes[i].get("preview", {})} for i in range(len(scenes))
+            ]
+
+        def _run_batch():
+            try:
+                for idx in to_generate:
+                    current_plan = load_movie_plan(OUTPUT_DIR)
+                    if not current_plan:
+                        break
+                    sc = current_plan["scenes"][idx]
+                    sc.setdefault("preview", {})["status"] = "generating"
+                    save_movie_plan(current_plan, OUTPUT_DIR)
+
+                    with scene_preview_lock:
+                        scene_preview_state["scenes"][idx]["preview"] = dict(sc.get("preview", {}))
+
+                    prompt = sc.get("shot_prompt", sc.get("prompt", ""))
+                    notes = sc.get("notes", "")
+                    result = _generate_scene_thumbnail(idx, prompt, notes, scene_data=sc)
+                    fingerprint = _compute_scene_fingerprint(sc)
+
+                    enriched_copy = dict(sc)
+                    _enrich_scene_with_assets(enriched_copy)
+                    engine_used = "runway" if enriched_copy.get("character_photo_path") else "grok"
+
+                    if "error" in result:
+                        sc["preview"] = {
+                            "status": "failed",
+                            "image_url": None,
+                            "prompt_hash": fingerprint,
+                            "last_generated_at": datetime.utcnow().isoformat(),
+                            "engine": engine_used,
+                            "error": result["error"],
+                        }
+                        with scene_preview_lock:
+                            scene_preview_state["failed"] += 1
+                    else:
+                        sc["preview"] = {
+                            "status": "ready",
+                            "image_url": result.get("preview_url", ""),
+                            "prompt_hash": fingerprint,
+                            "last_generated_at": datetime.utcnow().isoformat(),
+                            "engine": engine_used,
+                            "error": None,
+                        }
+                        with scene_preview_lock:
+                            scene_preview_state["completed"] += 1
+
+                    current_plan["scenes"][idx] = sc
+                    save_movie_plan(current_plan, OUTPUT_DIR)
+
+                    with scene_preview_lock:
+                        scene_preview_state["scenes"][idx]["preview"] = dict(sc["preview"])
+            finally:
+                with scene_preview_lock:
+                    scene_preview_state["running"] = False
+
+        t = threading.Thread(target=_run_batch, daemon=True)
+        t.start()
+
+        self._send_json({"ok": True, "queued": len(to_generate)})
+
+    def _handle_scenes_preview_status(self):
+        """Return per-scene preview status for polling."""
+        with scene_preview_lock:
+            data = {
+                "running": scene_preview_state["running"],
+                "total": scene_preview_state["total"],
+                "completed": scene_preview_state["completed"],
+                "failed": scene_preview_state["failed"],
+                "scenes": list(scene_preview_state["scenes"]),
+            }
+        self._send_json(data)
+
+    def _sync_movie_plan_to_pipeline(self, plan):
+        """Sync movie plan scenes to the generation pipeline files."""
+        try:
+            compat_plan = {
+                "song_path": plan.get("bible", {}).get("song_path", ""),
+                "style": plan.get("bible", {}).get("style", ""),
+                "scenes": plan.get("scenes", []),
+            }
+            with open(AUTO_DIRECTOR_PLAN_PATH, "w") as f:
+                json.dump(compat_plan, f, indent=2)
+            _sync_auto_plan_to_scene_plan(compat_plan)
+        except Exception as e:
+            print(f"[MOVIE PLANNER] Sync to pipeline failed: {e}")
+
 
 def main():
     server = HTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"\n  Music Video Generator")
+    print(f"\n  LUMN Studio")
     print(f"  UI running at http://localhost:{PORT}")
     print(f"  Press Ctrl+C to stop\n")
     try:

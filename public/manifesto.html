@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LUMN</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@900&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:auto}
+body{background:#000;color:#fff;font-family:'Inter Tight',Helvetica,Arial,sans-serif;overflow:hidden;cursor:crosshair;-webkit-font-smoothing:antialiased}
+body.scrollable{overflow-y:auto;overflow-x:hidden}
+
+/* grain */
+body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");pointer-events:none;z-index:9999;opacity:0.5}
+
+/* gate */
+#gate{position:fixed;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:1000;background:#000;transition:opacity 0.8s ease,visibility 0.8s}
+#gate.gone{opacity:0;visibility:hidden;pointer-events:none}
+#gate h1{font-size:clamp(48px,14vw,160px);font-weight:900;letter-spacing:clamp(8px,3vw,40px);text-transform:uppercase;line-height:1;margin-bottom:40px;opacity:0;animation:fadein 1.5s ease 0.3s forwards}
+#gate .enter{font-size:11px;letter-spacing:8px;text-transform:uppercase;color:#555;cursor:pointer;padding:12px 20px;transition:all 0.4s;opacity:0;animation:fadein 1.2s ease 1.2s forwards}
+#gate .enter:hover{color:#FF5E00;letter-spacing:12px}
+@keyframes fadein{to{opacity:1}}
+
+/* sections */
+.s{min-height:100vh;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.s-inner{padding:28px;max-width:100%}
+
+/* text styles */
+.t-huge{font-size:clamp(40px,11vw,130px);font-weight:900;line-height:0.92;text-transform:uppercase;letter-spacing:-2px}
+.t-mid{font-size:clamp(28px,6vw,64px);font-weight:900;line-height:1.0;text-transform:uppercase;letter-spacing:-1px}
+.t-sm{font-size:11px;letter-spacing:6px;text-transform:uppercase;color:#444}
+.t-dim{color:#333}
+.t-o{color:#FF5E00}
+.t-blur{filter:blur(1.5px);opacity:0.5}
+.t-right{text-align:right}
+.t-off{margin-left:clamp(20px,8vw,120px)}
+.t-off-r{margin-right:clamp(20px,8vw,120px)}
+
+/* scroll reveal */
+.reveal{opacity:0;transform:translateY(20px);transition:opacity 0.9s ease,transform 0.9s ease}
+.reveal.visible{opacity:1;transform:translateY(0)}
+
+/* section specific */
+.s1{justify-content:flex-start;padding-left:clamp(40px,10vw,180px)}
+.s2{justify-content:center;text-align:center}
+.s3{justify-content:flex-end;padding-right:clamp(40px,10vw,180px);text-align:right}
+.s4{justify-content:center;text-align:left;padding-left:clamp(40px,12vw,200px)}
+
+/* stagger lines */
+.stagger>*{opacity:0;transform:translateY(30px);transition:opacity 0.6s ease,transform 0.6s ease}
+.stagger.visible>*:nth-child(1){opacity:1;transform:translateY(0);transition-delay:0s}
+.stagger.visible>*:nth-child(2){opacity:1;transform:translateY(0);transition-delay:0.15s}
+.stagger.visible>*:nth-child(3){opacity:1;transform:translateY(0);transition-delay:0.3s}
+.stagger.visible>*:nth-child(4){opacity:1;transform:translateY(0);transition-delay:0.45s}
+
+/* divider */
+.slash{height:100vh;display:flex;align-items:center;justify-content:center}
+.slash-line{width:1px;height:30vh;background:linear-gradient(180deg,transparent,#222,transparent)}
+
+/* cta section */
+.cta-s{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;position:relative}
+.cta-s::before{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:400px;height:400px;background:radial-gradient(circle,rgba(255,94,0,0.06) 0%,transparent 70%);pointer-events:none}
+.cta-enter{margin-top:48px;font-size:12px;letter-spacing:10px;text-transform:uppercase;color:#444;border:1px solid #222;padding:16px 40px;cursor:pointer;transition:all 0.4s;text-decoration:none;display:inline-block}
+.cta-enter:hover{color:#FF5E00;border-color:#FF5E00;letter-spacing:14px;box-shadow:0 0 40px rgba(255,94,0,0.15)}
+
+/* bottom mark */
+.mark{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);font-size:9px;letter-spacing:5px;text-transform:uppercase;color:#222;z-index:10;pointer-events:none;transition:opacity 0.5s}
+body:not(.scrollable) .mark{opacity:0}
+
+@media(max-width:600px){
+  .s1{padding-left:24px}
+  .s3{padding-right:24px}
+  .s4{padding-left:24px}
+}
+</style>
+</head>
+<body>
+
+<!-- GATE -->
+<div id="gate">
+  <h1>LUMN</h1>
+  <div class="enter" onclick="document.getElementById('gate').classList.add('gone');document.body.classList.add('scrollable');setTimeout(function(){document.getElementById('gate').style.display='none'},900);">ENTER</div>
+</div>
+
+<!-- MARK -->
+<div class="mark">LUMN STUDIO</div>
+
+<!-- S1: IDENTITY -->
+<section class="s s1">
+  <div class="s-inner reveal stagger">
+    <div class="t-sm" style="margin-bottom:24px;">STATEMENT</div>
+    <div class="t-huge">YOU ARE</div>
+    <div class="t-huge">NOT A <span class="t-dim">USER</span>.</div>
+    <div class="t-huge" style="margin-top:8px;">YOU ARE THE<br><span class="t-o">DIRECTOR</span>.</div>
+  </div>
+</section>
+
+<div class="slash"><div class="slash-line"></div></div>
+
+<!-- S2: MANTRA -->
+<section class="s s2">
+  <div class="s-inner reveal stagger">
+    <div class="t-huge t-blur">CREATE.</div>
+    <div class="t-huge">CREATE.</div>
+    <div class="t-huge t-o">CREATE.</div>
+  </div>
+</section>
+
+<div class="slash"><div class="slash-line"></div></div>
+
+<!-- S3: MANIFESTO -->
+<section class="s s3">
+  <div class="s-inner reveal stagger">
+    <div class="t-mid">NO PERMISSION.</div>
+    <div class="t-mid t-dim">NO LIMITS.</div>
+    <div class="t-mid">NO SYSTEM.</div>
+  </div>
+</section>
+
+<div class="slash"><div class="slash-line"></div></div>
+
+<!-- S4: FUNCTION -->
+<section class="s s4">
+  <div class="s-inner reveal stagger">
+    <div class="t-mid t-dim">DIRECT.</div>
+    <div class="t-mid">CUT.</div>
+    <div class="t-mid t-o">BUILD.</div>
+    <div class="t-mid t-dim">EXPORT.</div>
+  </div>
+</section>
+
+<div class="slash"><div class="slash-line"></div></div>
+
+<!-- S5: ABSENCE -->
+<section class="s s2">
+  <div class="s-inner reveal">
+    <div class="t-sm" style="margin-bottom:20px;color:#333;">NO CREW. NO BUDGET. NO APPROVAL.</div>
+    <div class="t-mid">JUST <span class="t-o">VISION</span><br>AND <span class="t-dim">EXECUTION</span>.</div>
+  </div>
+</section>
+
+<div class="slash"><div class="slash-line"></div></div>
+
+<!-- CTA -->
+<section class="cta-s">
+  <div class="reveal stagger">
+    <div class="t-huge">BUILD WHAT</div>
+    <div class="t-huge">YOU SEE</div>
+    <div class="t-huge t-o">IN YOUR</div>
+    <div class="t-huge t-o">HEAD.</div>
+  </div>
+  <a href="/" class="cta-enter reveal" style="transition-delay:0.6s;">ENTER STUDIO</a>
+</section>
+
+<div style="height:80px;"></div>
+
+<script>
+// Scroll reveal
+var reveals = document.querySelectorAll('.reveal');
+var observer = new IntersectionObserver(function(entries) {
+  entries.forEach(function(e) {
+    if (e.isIntersecting) {
+      e.target.classList.add('visible');
+    }
+  });
+}, {threshold: 0.15});
+reveals.forEach(function(el) { observer.observe(el); });
+</script>
+
+</body>
+</html>

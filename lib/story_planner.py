@@ -121,7 +121,7 @@ class StoryPlanner:
                 features = char.get("distinguishingFeatures", "")
                 if features:
                     desc_parts.append(features)
-                has_photo = "(has reference photo)" if char.get("referencePhoto") else ""
+                has_photo = "(has reference photo — use physical description, NOT names)" if char.get("referencePhoto") else ""
                 desc_str = ", ".join(desc_parts) if desc_parts else "no description"
                 parts.append(f"- {name}: {desc_str} {has_photo}".strip())
         else:

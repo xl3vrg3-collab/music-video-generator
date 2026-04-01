@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Music Video Generator - CLI Tool
+LUMN - CLI Tool
 
 Usage:
     python generate.py --song track.mp3 --style "cyberpunk neon city rain" --output my_video.mp4

@@ -604,7 +604,7 @@ def generate_credits(output_path: str, title: str = "", artist: str = "",
             lines.append(line.strip())
         lines.append("")
     lines.append("Made with AI")
-    lines.append("Music Video Generator")
+    lines.append("LUMN Studio")
 
     credits_text = "\\n".join(lines).replace("'", "\\'").replace(":", "\\:")
 
