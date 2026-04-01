@@ -580,40 +580,21 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
         "ratio": RUNWAY_RATIO_MAP.get(ratio, "1280:720"),
     }
 
-    # Image input strategy — prioritize strongest likeness:
-    # - Single character photo (not a sheet) → promptImage for maximum likeness
-    # - Character sheet → referenceImages (avoids showing the multi-angle sheet)
-    # - First frame → promptImage (overrides character if both set)
+    # ALWAYS use promptImage for character photos — strongest likeness.
+    # The AI generates video starting FROM the uploaded image.
     _use_i2v = False
-    _is_sheet = False
+    import sys as _sys_r
 
     if character_photo_path and os.path.isfile(character_photo_path):
-        photo_uri = _photo_to_data_uri(character_photo_path)
-        _is_sheet = is_character_sheet
-
-        if _is_sheet:
-            # Character sheet: use as referenceImages to avoid showing the sheet
-            payload["referenceImages"] = [
-                {"uri": photo_uri, "type": "character"}
-            ]
-            import sys as _sys_r
-            _sys_r.stderr.write(f"[RUNWAY] Character SHEET → referenceImages (identity reference)\n")
-            _sys_r.stderr.flush()
-        else:
-            # Single character photo: use as promptImage for maximum likeness
-            payload["promptImage"] = photo_uri
-            _use_i2v = True
-            import sys as _sys_r
-            _sys_r.stderr.write(f"[RUNWAY] Character photo → promptImage (maximum likeness)\n")
-            _sys_r.stderr.flush()
+        payload["promptImage"] = _photo_to_data_uri(character_photo_path)
+        _use_i2v = True
+        _sys_r.stderr.write(f"[RUNWAY] Character photo → promptImage (image-to-video)\n")
+        _sys_r.stderr.flush()
 
     if first_frame_path and os.path.isfile(first_frame_path):
-        # First frame overrides promptImage if set
         payload["promptImage"] = _photo_to_data_uri(first_frame_path)
         _use_i2v = True
-        # If character photo was also set as promptImage, move it to referenceImages
-        if character_photo_path and os.path.isfile(character_photo_path) and not _is_sheet:
-            photo_uri = _photo_to_data_uri(character_photo_path)
+        if character_photo_path and os.path.isfile(character_photo_path):
             payload["referenceImages"] = [
                 {"uri": photo_uri, "type": "character"}
             ]
@@ -1125,7 +1106,16 @@ def _describe_entity_photo(photo_path: str, entity_type: str) -> str:
         b64_data = base64.b64encode(photo_bytes).decode("ascii")
         data_uri = f"data:{mime};base64,{b64_data}"
 
-        if entity_type == "costume":
+        if entity_type == "character":
+            vision_text = (
+                "Describe this person's physical appearance in extreme detail for an artist to recreate them. "
+                "Include: face shape, eye shape/color, eyebrow style, nose shape, lip shape, skin tone, "
+                "exact hair style/color/texture/length, facial hair if any, jawline, body build, "
+                "clothing details and colors, accessories, tattoos, distinguishing features. "
+                "Be extremely specific about shapes and proportions. "
+                "Do NOT name or identify the person. Only describe physical appearance. Under 150 words."
+            )
+        elif entity_type == "costume":
             vision_text = (
                 "Describe the clothing and costume in this image for use as an AI video generation prompt. "
                 "Focus on: garment types (top, bottom, outerwear, footwear), colors, fabrics, patterns, accessories, overall style. "

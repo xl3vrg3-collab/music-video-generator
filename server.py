@@ -640,7 +640,8 @@ def _enrich_scene_with_assets(scene):
                 if pos_char:
                     if not char_description:
                         parts = []
-                        if pos_char.get("physical"): parts.append(pos_char["physical"])
+                        if pos_char.get("physicalDescription"): parts.append(pos_char["physicalDescription"])
+                        elif pos_char.get("physical"): parts.append(pos_char["physical"])
                         if pos_char.get("name"): parts.insert(0, pos_char["name"])
                         char_description = ", ".join(parts)
                     # Set character sheet flag from POS record
@@ -659,6 +660,22 @@ def _enrich_scene_with_assets(scene):
                                     if os.path.isfile(candidate):
                                         char_photo_path = candidate
                                         break
+                    # Auto-describe character from photo if no description exists
+                    if char_photo_path and (not char_description or char_description == pos_char.get("name", "")):
+                        try:
+                            from lib.video_generator import _describe_entity_photo
+                            vision_desc = _describe_entity_photo(char_photo_path, "character")
+                            if vision_desc:
+                                char_description = vision_desc
+                                # Save it back so we don't re-describe every time
+                                _prompt_os.update_character(char_id, {"physicalDescription": vision_desc})
+                                import sys as _esd
+                                _esd.stderr.write(f"[ENRICH] Auto-described character from photo ({len(vision_desc)} chars)\n")
+                                _esd.stderr.flush()
+                        except Exception as vd_err:
+                            import sys as _esd2
+                            _esd2.stderr.write(f"[ENRICH] Auto-describe failed: {vd_err}\n")
+                            _esd2.stderr.flush()
                     break  # Use first character as primary
 
     # Fallback: legacy characterId field
@@ -1146,35 +1163,9 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
 
             print(f"[PREVIEW][{index}] Using Runway preview with character photo: {char_photo}")
 
-            # Build preview prompt with strong character identity instruction
-            # Character photo is sent as referenceImages, not promptImage
-            # So the prompt needs to reinforce "use the reference for identity"
-            char_desc = ""
-            if scene_data:
-                char_desc = enriched.get("character_description", "")
-            if not char_desc:
-                try:
-                    char_desc = describe_photo(char_photo)
-                except Exception:
-                    pass
-
-            is_sheet = enriched.get("is_character_sheet", False)
-            if char_desc:
-                if is_sheet:
-                    preview_prompt = (
-                        f"The reference is a CHARACTER DESIGN SHEET showing one person from multiple angles. "
-                        f"Use this exact character: {char_desc}. "
-                        f"Same face, same proportions, same features. Do NOT create a different person. "
-                        f"{full_prompt}"
-                    )
-                else:
-                    preview_prompt = (
-                        f"The person in the reference: {char_desc}. "
-                        f"Match exactly — same face, same features, same build. "
-                        f"{full_prompt}"
-                    )
-            else:
-                preview_prompt = f"Use the character from the reference image exactly. {full_prompt}"
+            # Photo IS the promptImage — the AI will animate FROM it.
+            # Keep the prompt focused on the scene action, not character description.
+            preview_prompt = full_prompt
 
             # Add costume description if available (since costume photo can't be a second image input)
             costume_photo = enriched.get("costume_photo_path", "") if scene_data else ""
@@ -1209,14 +1200,11 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
             engine_map = {"runway": "gen4.5", "grok": "gen4.5"}
             preview_engine = engine_map.get(preview_engine, preview_engine)
 
-            # For PREVIEWS: always use referenceImages (not promptImage)
-            # so the scene renders naturally without starting from the character photo
             task_id = _runway_submit_text_to_video(
                 preview_prompt,
                 duration=5,
                 model=preview_engine,
                 character_photo_path=char_photo,
-                is_character_sheet=True,  # Force referenceImages mode for previews
             )
 
             print(f"[PREVIEW][{index}] Runway task submitted: {task_id[:16]}...")
