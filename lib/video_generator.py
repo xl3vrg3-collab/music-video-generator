@@ -573,6 +573,14 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
     """
     duration = 10 if duration > 7 else 5
 
+    # Map UI model names to Runway API model names
+    _MODEL_MAP = {
+        "runway": "gen4.5", "gen4_5": "gen4.5",
+        "kling_pro": "kling3.0_pro", "kling_standard": "kling3.0_standard",
+        "veo3_1": "veo3.1", "veo3_1_fast": "veo3.1_fast",
+    }
+    model = _MODEL_MAP.get(model, model)
+
     # Snap duration to valid values for the model
     valid_durations = MODEL_DURATION_OPTIONS.get(model, [4, 6, 8])
     if duration not in valid_durations:
