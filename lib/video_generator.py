@@ -556,7 +556,8 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
                                   model: str = "gen4.5",
                                   character_photo_path: str = None,
                                   first_frame_path: str = None,
-                                  last_frame_path: str = None) -> str:
+                                  last_frame_path: str = None,
+                                  is_character_sheet: bool = False) -> str:
     """
     Submit a text-to-video request to Runway.
     If character_photo_path is provided, the photo is used as a CHARACTER REFERENCE
@@ -579,33 +580,56 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
         "ratio": RUNWAY_RATIO_MAP.get(ratio, "1280:720"),
     }
 
-    # Image input strategy:
-    # - Character photo → referenceImages with type "character"
-    #   This tells Runway "this is what the character looks like" without
-    #   starting the video from the photo itself (avoids showing character sheet)
-    # - First frame → promptImage (image-to-video, starts from that frame)
-    # - Both → character as reference, first frame as promptImage
+    # Image input strategy — prioritize strongest likeness:
+    # - Single character photo (not a sheet) → promptImage for maximum likeness
+    # - Character sheet → referenceImages (avoids showing the multi-angle sheet)
+    # - First frame → promptImage (overrides character if both set)
     _use_i2v = False
+    _is_sheet = False
 
     if character_photo_path and os.path.isfile(character_photo_path):
         photo_uri = _photo_to_data_uri(character_photo_path)
-        payload["referenceImages"] = [
-            {"uri": photo_uri, "type": "character"}
-        ]
-        print(f"[RUNWAY] Character photo → referenceImages (character identity reference)")
+        _is_sheet = is_character_sheet
+
+        if _is_sheet:
+            # Character sheet: use as referenceImages to avoid showing the sheet
+            payload["referenceImages"] = [
+                {"uri": photo_uri, "type": "character"}
+            ]
+            import sys as _sys_r
+            _sys_r.stderr.write(f"[RUNWAY] Character SHEET → referenceImages (identity reference)\n")
+            _sys_r.stderr.flush()
+        else:
+            # Single character photo: use as promptImage for maximum likeness
+            payload["promptImage"] = photo_uri
+            _use_i2v = True
+            import sys as _sys_r
+            _sys_r.stderr.write(f"[RUNWAY] Character photo → promptImage (maximum likeness)\n")
+            _sys_r.stderr.flush()
 
     if first_frame_path and os.path.isfile(first_frame_path):
+        # First frame overrides promptImage if set
         payload["promptImage"] = _photo_to_data_uri(first_frame_path)
         _use_i2v = True
+        # If character photo was also set as promptImage, move it to referenceImages
+        if character_photo_path and os.path.isfile(character_photo_path) and not _is_sheet:
+            photo_uri = _photo_to_data_uri(character_photo_path)
+            payload["referenceImages"] = [
+                {"uri": photo_uri, "type": "character"}
+            ]
         print(f"[RUNWAY] Using first_frame as promptImage (image-to-video mode)")
 
     if last_frame_path and os.path.isfile(last_frame_path):
         payload["lastFrame"] = _photo_to_data_uri(last_frame_path)
         print(f"[RUNWAY] Including lastFrame keyframe")
 
-    print(f"[RUNWAY] Submitting {'image' if _use_i2v else 'text'}-to-video: model={model}, "
+    import sys as _rsys
+    has_ref = "referenceImages" in payload
+    _rsys.stderr.write(f"[RUNWAY] Submitting {'image' if _use_i2v else 'text'}-to-video: model={model}, "
           f"char_ref={'YES' if character_photo_path else 'NO'}, "
-          f"prompt={prompt[:80]}...")
+          f"has_referenceImages={has_ref}, "
+          f"prompt={prompt[:80]}...\n")
+    _rsys.stderr.flush()
 
     _endpoint = "image_to_video" if _use_i2v else "text_to_video"
     resp = requests.post(
@@ -811,12 +835,13 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
                     )
                 print(f"[RUNWAY/{model}][{index}] Using character description ({len(char_desc)} chars, sheet={is_sheet})")
 
-            _report(f"submitting text-to-video ({model}) with character reference...")
+            _report(f"submitting text-to-video ({model}) with character reference (sheet={is_sheet})...")
             task_id = _runway_submit_text_to_video(
                 gen_prompt, duration=duration, model=model,
                 character_photo_path=photo_path,
                 first_frame_path=scene.get("first_frame_path"),
                 last_frame_path=scene.get("last_frame_path"),
+                is_character_sheet=is_sheet,
             )
         else:
             _report(f"submitting text-to-video ({model})...")

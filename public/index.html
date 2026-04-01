@@ -12846,7 +12846,12 @@ document.addEventListener('DOMContentLoaded', function() {
       };
       var chipStyle = chipColors[previewStatus] || chipColors.none;
       statusChip.style.cssText = 'font-size:8px;padding:1px 6px;border-radius:3px;letter-spacing:1px;text-transform:uppercase;flex-shrink:0;border:1px solid ' + chipStyle.border + ';color:' + chipStyle.color + ';background:' + chipStyle.bg + ';';
-      statusChip.textContent = chipStyle.text;
+      if (previewStatus === 'generating' && scene.preview && scene.preview._startTime) {
+        var elapsed = Math.round((Date.now() - scene.preview._startTime) / 1000);
+        statusChip.textContent = elapsed + 's...';
+      } else {
+        statusChip.textContent = chipStyle.text;
+      }
       header.appendChild(statusChip);
 
       header.appendChild(arrow);
@@ -13131,12 +13136,13 @@ document.addEventListener('DOMContentLoaded', function() {
           previewBody.appendChild(staleBadge);
         }
       } else if (scene.preview && scene.preview.status === 'generating') {
-        previewBody.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:8px;">' +
-          '<div style="width:60%;height:3px;background:var(--border);border-radius:2px;overflow:hidden;">' +
-            '<div style="height:100%;width:100%;background:var(--cyan);border-radius:2px;animation:previewPulse 1.5s ease-in-out infinite;"></div>' +
+        var scIdx = scene.order != null ? scene.order : i;
+        previewBody.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 0;">' +
+          '<div style="width:70%;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">' +
+            '<div id="previewFill_' + scIdx + '" style="height:100%;width:0%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:2px;transition:width 1s;"></div>' +
           '</div>' +
-          '<div style="color:var(--cyan);font-size:11px;letter-spacing:1px;">Generating preview...</div>' +
-          '<div style="color:var(--text-dim);font-size:9px;">This typically takes 30-90 seconds</div>' +
+          '<div style="color:var(--cyan);font-size:12px;letter-spacing:1px;font-weight:700;">Generating preview...</div>' +
+          '<div id="previewTimer_' + scIdx + '" style="color:var(--text-dim);font-size:10px;font-variant-numeric:tabular-nums;">0s elapsed · ~0%</div>' +
         '</div>';
       } else if (scene.preview && scene.preview.status === 'failed') {
         previewBody.innerHTML = '<div style="color:var(--red);font-size:11px;">' + ((scene.preview.error || 'Preview generation failed').replace(/</g, '&lt;')) + '</div>';
@@ -13406,12 +13412,31 @@ document.addEventListener('DOMContentLoaded', function() {
     if (window._autoScenes && window._autoScenes[sceneIndex]) {
       if (!window._autoScenes[sceneIndex].preview) window._autoScenes[sceneIndex].preview = {};
       window._autoScenes[sceneIndex].preview.status = 'generating';
+      window._autoScenes[sceneIndex].preview._startTime = Date.now();
       window._refreshSceneCard(sceneIndex);
     }
+
+    // Start elapsed timer that updates the preview panel
+    var elapsedTimer = setInterval(function() {
+      var scene = window._autoScenes && window._autoScenes[sceneIndex];
+      if (!scene || !scene.preview || scene.preview.status !== 'generating') {
+        clearInterval(elapsedTimer);
+        return;
+      }
+      var elapsed = Math.round((Date.now() - scene.preview._startTime) / 1000);
+      var timerEl = document.getElementById('previewTimer_' + sceneIndex);
+      if (timerEl) {
+        var pct = Math.min(95, Math.round((elapsed / 75) * 100)); // estimate ~75s total
+        timerEl.textContent = elapsed + 's elapsed · ~' + pct + '%';
+        var fillEl = document.getElementById('previewFill_' + sceneIndex);
+        if (fillEl) fillEl.style.width = pct + '%';
+      }
+    }, 1000);
 
     fetch('/api/auto-director/scene/' + sceneIndex + '/preview', {
       method: 'POST'
     }).then(function(r){return r.json()}).then(function(data) {
+      clearInterval(elapsedTimer);
       if (data.ok && data.preview) {
         if (window._autoScenes && window._autoScenes[sceneIndex]) {
           window._autoScenes[sceneIndex].preview = data.preview;
@@ -13426,6 +13451,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       window._refreshSceneCard(sceneIndex);
     }).catch(function(err) {
+      clearInterval(elapsedTimer);
       if (window._autoScenes && window._autoScenes[sceneIndex]) {
         window._autoScenes[sceneIndex].preview = {
           status: 'failed',

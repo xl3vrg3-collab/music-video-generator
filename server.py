@@ -1193,11 +1193,13 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
             engine_map = {"runway": "gen4.5", "grok": "gen4.5"}
             preview_engine = engine_map.get(preview_engine, preview_engine)
 
+            is_sheet = bool(enriched.get("is_character_sheet", False))
             task_id = _runway_submit_text_to_video(
                 preview_prompt,
                 duration=5,
                 model=preview_engine,
                 character_photo_path=char_photo,
+                is_character_sheet=is_sheet,
             )
 
             print(f"[PREVIEW][{index}] Runway task submitted: {task_id[:16]}...")
