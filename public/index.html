@@ -9418,18 +9418,45 @@ document.addEventListener('DOMContentLoaded', function() {
       if (ds.filmTensionCurve && $('filmTensionCurve')) $('filmTensionCurve').value = ds.filmTensionCurve;
       if (ds.filmEndingType && $('filmEndingType')) $('filmEndingType').value = ds.filmEndingType;
     }).catch(()=>{});
-    // Load any existing plan
-    fetch('/api/auto-director/plan').then(r=>r.json()).then(data => {
-      if (data && data.scenes && data.scenes.length > 0) {
-        _adCurrentPlan = data;
-        _adRenderScenePlan(data);
-        if ($('adGoGenerate')) $('adGoGenerate').style.display = '';
-        $('adToManualBtn').style.display = '';
-        $('adScenePlanPanel').style.display = '';
-        var hasAnyClips = data.scenes.some(function(s){return s.has_clip;});
-        if (hasAnyClips && $('adRestitchBtn')) $('adRestitchBtn').style.display = '';
+    // Load existing movie plan (new structured plan)
+    fetch('/api/auto-director/movie-plan').then(function(r){
+      if (!r.ok) throw new Error('No movie plan');
+      return r.json();
+    }).then(function(plan) {
+      if (plan && plan.scenes && plan.scenes.length > 0) {
+        window._autoScenes = plan.scenes;
+        window._autoBible = plan.bible || null;
+        var container = document.getElementById('autoSceneCards');
+        var stats = document.getElementById('autoScenePlanStats');
+        if (container) {
+          window._renderAutoSceneCards(container, stats, plan.scenes);
+        }
+        // Determine state from scene data
+        var hasClips = plan.scenes.some(function(s){return s.clip_path || s.clip_url;});
+        var hasPreviews = plan.scenes.some(function(s){return s.preview && (s.preview.status === 'ready' || s.preview.video_url);});
+        if (hasClips) {
+          window._setAutoState('complete');
+        } else {
+          window._setAutoState('planned');
+        }
+        if (typeof window._updateCoverage === 'function') window._updateCoverage();
+        if (typeof window._updateValidation === 'function') window._updateValidation();
+        if (typeof window._updatePreviewSummary === 'function') window._updatePreviewSummary();
       }
-    }).catch(()=>{});
+    }).catch(function() {
+      // Fallback: try old plan format
+      fetch('/api/auto-director/plan').then(function(r){return r.json()}).then(function(data) {
+        if (data && data.scenes && data.scenes.length > 0) {
+          window._autoScenes = data.scenes;
+          var container = document.getElementById('autoSceneCards');
+          var stats = document.getElementById('autoScenePlanStats');
+          if (container) {
+            window._renderAutoSceneCards(container, stats, data.scenes);
+          }
+          window._setAutoState('planned');
+        }
+      }).catch(function(){});
+    });
     // Load existing entities into Quick References inline cards
     if (typeof window._dirLoadQuickRefs === 'function') window._dirLoadQuickRefs();
     // Populate library dropdowns
