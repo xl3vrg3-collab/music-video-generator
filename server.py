@@ -643,8 +643,8 @@ def _enrich_scene_with_assets(scene):
                         if pos_char.get("physical"): parts.append(pos_char["physical"])
                         if pos_char.get("name"): parts.insert(0, pos_char["name"])
                         char_description = ", ".join(parts)
-                    # Resolve photo
-                    ref_img = pos_char.get("referenceImagePath", "")
+                    # Resolve photo — characters use "referencePhoto", not "referenceImagePath"
+                    ref_img = pos_char.get("referencePhoto", "") or pos_char.get("referenceImagePath", "")
                     if ref_img and not char_photo_path:
                         if os.path.isfile(ref_img):
                             char_photo_path = ref_img
@@ -668,7 +668,7 @@ def _enrich_scene_with_assets(scene):
                 if pos_char.get("physical"): parts.append(pos_char["physical"])
                 if pos_char.get("name"): parts.insert(0, pos_char["name"])
                 char_description = ", ".join(parts)
-                ref_img = pos_char.get("referenceImagePath", "")
+                ref_img = pos_char.get("referencePhoto", "") or pos_char.get("referenceImagePath", "")
                 if ref_img:
                     if os.path.isfile(ref_img):
                         char_photo_path = ref_img
@@ -1116,12 +1116,14 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
         enriched = dict(scene_data)
         _enrich_scene_with_assets(enriched)
         char_photo = enriched.get("character_photo_path", "") or None
-        # Diagnostic logging
+        # Diagnostic logging (stderr to bypass HTTP handler)
+        import sys as _sys
         chars_in_scene = scene_data.get("characters", [])
-        print(f"[PREVIEW][{index}] Scene characters: {chars_in_scene}")
-        print(f"[PREVIEW][{index}] Resolved char_photo: {char_photo}")
-        print(f"[PREVIEW][{index}] costume_photo: {enriched.get('costume_photo_path', 'NONE')}")
-        print(f"[PREVIEW][{index}] env_photo: {enriched.get('environment_photo_path', 'NONE')}")
+        _sys.stderr.write(f"[PREVIEW][{index}] Scene characters: {chars_in_scene}\n")
+        _sys.stderr.write(f"[PREVIEW][{index}] Resolved char_photo: {char_photo}\n")
+        _sys.stderr.write(f"[PREVIEW][{index}] costume_photo: {enriched.get('costume_photo_path', 'NONE')}\n")
+        _sys.stderr.write(f"[PREVIEW][{index}] env_photo: {enriched.get('environment_photo_path', 'NONE')}\n")
+        _sys.stderr.flush()
     else:
         print(f"[PREVIEW][{index}] No scene_data provided")
 
@@ -1137,44 +1139,25 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
 
             print(f"[PREVIEW][{index}] Using Runway preview with character photo: {char_photo}")
 
-            # Build enriched prompt with character + costume + environment descriptions
+            # Build clean, concise preview prompt
+            # Runway has strict moderation — keep prompt short and visual
             preview_prompt = full_prompt
 
-            # Add character description
-            char_desc = ""
-            if scene_data:
-                char_desc = enriched.get("character_description", "")
-            if not char_desc:
-                try:
-                    char_desc = describe_photo(char_photo)
-                except Exception:
-                    pass
-            if char_desc:
-                preview_prompt = f"The exact person shown in the reference image: {char_desc}. Maintain exact likeness. {preview_prompt}"
+            # Truncate if too long (Runway moderation flags long prompts)
+            if len(preview_prompt) > 500:
+                preview_prompt = preview_prompt[:497] + "..."
 
-            # Add costume/environment descriptions from photos
-            costume_photo = enriched.get("costume_photo_path", "") if scene_data else ""
-            if costume_photo and os.path.isfile(costume_photo):
-                try:
-                    cos_desc = _describe_entity_photo(costume_photo, "costume")
-                    if cos_desc:
-                        preview_prompt = f"{preview_prompt} Costume: {cos_desc}."
-                except Exception:
-                    pass
+            # Prepend simple character reference instruction
+            preview_prompt = f"The person shown in the reference image. Maintain exact likeness throughout. {preview_prompt}"
 
-            env_photo = enriched.get("environment_photo_path", "") if scene_data else ""
-            if env_photo and os.path.isfile(env_photo):
-                try:
-                    env_desc = _describe_entity_photo(env_photo, "environment")
-                    if env_desc:
-                        preview_prompt = f"{preview_prompt} Setting: {env_desc}."
-                except Exception:
-                    pass
-
-            # Generate a short clip via Runway
-            engine = (scene_data or {}).get("engine", "gen4.5")
-            # Use fast engine for previews
-            preview_engine = "gen3a_turbo" if "turbo" not in engine else engine
+            # Generate a short clip via Runway — use the user's selected engine
+            preview_engine = (scene_data or {}).get("engine", "")
+            if not preview_engine:
+                settings = _load_settings()
+                preview_engine = settings.get("default_engine", "gen4.5")
+            # Map common names
+            engine_map = {"runway": "gen4.5", "grok": "gen4.5"}
+            preview_engine = engine_map.get(preview_engine, preview_engine)
 
             task_id = _runway_submit_text_to_video(
                 preview_prompt,
@@ -1208,7 +1191,12 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
                 print(f"[PREVIEW][{index}] Runway download failed, falling back to Grok")
 
         except Exception as e:
-            print(f"[PREVIEW][{index}] Runway preview failed ({e}), falling back to Grok")
+            import sys as _sys2, traceback as _tb
+            _sys2.stderr.write(f"[PREVIEW][{index}] Runway preview FAILED: {e}\n")
+            _tb.print_exc(file=_sys2.stderr)
+            _sys2.stderr.flush()
+            # Return the error instead of silently falling back
+            return {"error": f"Runway preview failed: {str(e)[:200]}"}
 
     # --- Strategy B: Grok image generation (text-only fallback) ---
     try:
