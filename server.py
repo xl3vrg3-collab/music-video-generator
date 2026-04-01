@@ -1186,29 +1186,26 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
             print(f"[PREVIEW][{index}] Runway task submitted: {task_id[:16]}...")
             video_info = _runway_poll(task_id)
 
-            # Download the video to a temp file
-            temp_video = os.path.join(SCENE_THUMBNAILS_DIR, f"scene_{index}_preview.mp4")
-            _download(video_info["url"], temp_video)
+            # Download the preview clip (keep it — it's the playable preview)
+            clip_path = os.path.join(SCENE_THUMBNAILS_DIR, f"scene_{index}_preview.mp4")
+            _download(video_info["url"], clip_path)
 
-            # Extract first frame with ffmpeg
-            result = subprocess.run(
-                ["ffmpeg", "-y", "-i", temp_video, "-vframes", "1", "-q:v", "2", out_path],
+            # Also extract first frame as thumbnail for collapsed card view
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", clip_path, "-vframes", "1", "-q:v", "2", out_path],
                 capture_output=True, timeout=30,
                 creationflags=0x08000000 if os.name == "nt" else 0,  # windowsHide
             )
 
-            # Clean up temp video
-            try:
-                os.unlink(temp_video)
-            except Exception:
-                pass
-
-            if result.returncode == 0 and os.path.isfile(out_path):
+            if os.path.isfile(clip_path):
                 _record_cost(f"thumb_{index}", "video_preview")
-                print(f"[PREVIEW][{index}] Runway preview extracted successfully")
-                return {"preview_url": f"/api/scene-thumbnails/scene_{index}.jpg"}
+                print(f"[PREVIEW][{index}] Runway preview clip saved: {clip_path}")
+                return {
+                    "preview_url": f"/api/scene-thumbnails/scene_{index}.jpg",
+                    "video_url": f"/api/scene-thumbnails/scene_{index}_preview.mp4",
+                }
             else:
-                print(f"[PREVIEW][{index}] ffmpeg frame extraction failed, falling back to Grok")
+                print(f"[PREVIEW][{index}] Runway download failed, falling back to Grok")
 
         except Exception as e:
             print(f"[PREVIEW][{index}] Runway preview failed ({e}), falling back to Grok")
@@ -9701,6 +9698,7 @@ class Handler(BaseHTTPRequestHandler):
             scene["preview"] = {
                 "status": "ready",
                 "image_url": result.get("preview_url", ""),
+                "video_url": result.get("video_url", ""),
                 "prompt_hash": fingerprint,
                 "last_generated_at": datetime.utcnow().isoformat(),
                 "engine": engine_used,
@@ -9794,6 +9792,7 @@ class Handler(BaseHTTPRequestHandler):
                         sc["preview"] = {
                             "status": "ready",
                             "image_url": result.get("preview_url", ""),
+                            "video_url": result.get("video_url", ""),
                             "prompt_hash": fingerprint,
                             "last_generated_at": datetime.utcnow().isoformat(),
                             "engine": engine_used,

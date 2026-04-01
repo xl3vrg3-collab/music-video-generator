@@ -12773,10 +12773,21 @@ document.addEventListener('DOMContentLoaded', function() {
       }
 
       // Preview thumbnail in header (collapsed view)
-      if (scene.preview && scene.preview.image_url) {
-        var prevThumb = document.createElement('img');
-        prevThumb.src = scene.preview.image_url;
-        prevThumb.style.cssText = 'width:40px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;';
+      if (scene.preview && (scene.preview.video_url || scene.preview.image_url)) {
+        var prevThumb;
+        if (scene.preview.video_url) {
+          prevThumb = document.createElement('video');
+          prevThumb.src = scene.preview.video_url;
+          prevThumb.muted = true;
+          prevThumb.preload = 'metadata';
+          prevThumb.addEventListener('loadeddata', function() { this.currentTime = 0.1; });
+          prevThumb.onmouseenter = function() { this.play().catch(function(){}); };
+          prevThumb.onmouseleave = function() { this.pause(); this.currentTime = 0.1; };
+        } else {
+          prevThumb = document.createElement('img');
+          prevThumb.src = scene.preview.image_url;
+        }
+        prevThumb.style.cssText = 'width:48px;height:32px;object-fit:cover;border-radius:3px;flex-shrink:0;cursor:pointer;';
         if (scene.preview.status === 'stale') {
           prevThumb.style.border = '2px solid var(--amber)';
           prevThumb.title = 'Preview out of date';
@@ -13052,18 +13063,37 @@ document.addEventListener('DOMContentLoaded', function() {
       var previewBody = document.createElement('div');
       previewBody.style.cssText = 'text-align:center;min-height:80px;display:flex;align-items:center;justify-content:center;';
 
-      if (scene.preview && scene.preview.image_url) {
-        var previewImg = document.createElement('img');
-        previewImg.src = scene.preview.image_url + '?t=' + Date.now();
-        previewImg.style.cssText = 'max-width:100%;max-height:200px;border-radius:var(--radius);border:1px solid var(--border);cursor:pointer;';
-        if (scene.preview.status === 'stale') {
-          previewImg.style.opacity = '0.6';
-          previewImg.style.borderColor = 'var(--amber)';
+      if (scene.preview && (scene.preview.video_url || scene.preview.image_url)) {
+        var hasVideo = !!scene.preview.video_url;
+        if (hasVideo) {
+          // Playable video clip
+          var previewVid = document.createElement('video');
+          previewVid.src = scene.preview.video_url + '?t=' + Date.now();
+          previewVid.style.cssText = 'max-width:100%;max-height:240px;border-radius:var(--radius);border:1px solid var(--border);cursor:pointer;';
+          previewVid.controls = true;
+          previewVid.muted = true;
+          previewVid.preload = 'metadata';
+          previewVid.loop = true;
+          if (scene.preview.status === 'stale') {
+            previewVid.style.opacity = '0.6';
+            previewVid.style.borderColor = 'var(--amber)';
+          }
+          // Auto-play on hover
+          previewVid.onmouseenter = function() { this.play().catch(function(){}); };
+          previewVid.onmouseleave = function() { this.pause(); };
+          previewBody.appendChild(previewVid);
+        } else {
+          // Fallback to still image
+          var previewImg = document.createElement('img');
+          previewImg.src = scene.preview.image_url + '?t=' + Date.now();
+          previewImg.style.cssText = 'max-width:100%;max-height:200px;border-radius:var(--radius);border:1px solid var(--border);cursor:pointer;';
+          if (scene.preview.status === 'stale') {
+            previewImg.style.opacity = '0.6';
+            previewImg.style.borderColor = 'var(--amber)';
+          }
+          previewImg.onclick = function() { window.open(scene.preview.image_url, '_blank'); };
+          previewBody.appendChild(previewImg);
         }
-        previewImg.onclick = function() {
-          window.open(scene.preview.image_url, '_blank');
-        };
-        previewBody.appendChild(previewImg);
 
         if (scene.preview.status === 'stale') {
           var staleBadge = document.createElement('div');
