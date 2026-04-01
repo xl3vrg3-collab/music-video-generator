@@ -2784,6 +2784,10 @@
             <input type="checkbox" id="autoDuckCheckbox" checked onchange="window._updateStitchSettings()">
             Audio Ducking
           </label>
+          <label class="stitch-checkbox-label" title="Apply face swap post-processing using character reference photos">
+            <input type="checkbox" id="faceSwapCheckbox" onchange="window._updateFaceSwapSetting(this.checked)">
+            Face Swap
+          </label>
           <div class="stitch-inline">
             <span class="msc-label">Color:</span>
             <select class="styled-select" id="globalColorGradeSelect" onchange="window._updateStitchSettings()">
@@ -3555,6 +3559,7 @@
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);">
             <button class="btn btn-tier-secondary" onclick="window._posSaveChar()" style="font-size:11px;padding:8px 20px;">Save Character</button>
             <button class="btn btn-small btn-tier-ghost" id="posCharGenPreviewBtn" onclick="window._posGenCharPreview()" style="display:none;">Generate Preview</button>
+            <button class="btn btn-small btn-tier-ghost" id="posCharGenSheetBtn" onclick="window._posGenCharSheet()" style="display:none;" title="Generate a multi-angle character design sheet">Generate Sheet</button>
             <button class="btn btn-small btn-tier-ghost" onclick="window._posCancelCharForm()">Cancel</button>
             <div style="flex:1;"></div>
             <button class="btn btn-small btn-tier-danger" onclick="var id=$('posCharEditId').value;if(id&&confirm('Delete this character?')){window._posDeleteChar(id);}" style="font-size:9px;">Delete</button>
@@ -6156,6 +6161,9 @@ document.addEventListener('DOMContentLoaded', function() {
       globalSettings = { default_engine: 'grok', character_references: {}, ...setData };
       const geSel = $('globalEngineSelect');
       if (geSel) geSel.value = globalSettings.default_engine;
+      // Sync face swap checkbox
+      var fsCb = $('faceSwapCheckbox');
+      if (fsCb) fsCb.checked = !!globalSettings.face_swap_enabled;
       renderCharacterReferences();
     } catch (e) { console.warn('Failed to load engines/settings:', e); }
   }
@@ -6595,6 +6603,11 @@ document.addEventListener('DOMContentLoaded', function() {
   window._updateGlobalEngine = async function(engine) {
     const data = await apiPost('/api/settings', { default_engine: engine });
     if (data.ok) { globalSettings.default_engine = engine; renderManualScenes(); }
+  };
+
+  window._updateFaceSwapSetting = async function(enabled) {
+    const data = await apiPost('/api/settings', { face_swap_enabled: enabled });
+    if (data.ok) { globalSettings.face_swap_enabled = enabled; }
   };
 
   // ---- Character references ----
@@ -7990,6 +8003,7 @@ document.addEventListener('DOMContentLoaded', function() {
       prevThumb.style.display = 'block'; prevPlaceholder.style.display = 'none';
     } else { prevThumb.style.display = 'none'; prevPlaceholder.style.display = 'block'; }
     $('posCharGenPreviewBtn').style.display = (d && d.id) ? '' : 'none';
+    $('posCharGenSheetBtn').style.display = (d && d.id && d.referencePhoto) ? '' : 'none';
     var _charAutoShow = (d && d.id && d.referencePhoto) ? '' : 'none';
     $('posCharAutoDescBtn').style.display = _charAutoShow;
     if ($('posCharAutoDescBtn2')) $('posCharAutoDescBtn2').style.display = _charAutoShow;
@@ -8087,6 +8101,24 @@ document.addEventListener('DOMContentLoaded', function() {
       } else { alert('Preview error: '+(data.error||'unknown')); }
     } catch(e) { alert('Preview failed: '+e.message); }
     btn.textContent = 'Generate Preview'; btn.disabled = false;
+  };
+
+  // Generate character sheet (multi-angle reference)
+  window._posGenCharSheet = async function() {
+    const editId = $('posCharEditId').value;
+    if (!editId) { alert('Save the character first.'); return; }
+    const btn = $('posCharGenSheetBtn');
+    btn.textContent = 'Generating Sheet...'; btn.disabled = true;
+    try {
+      const resp = await fetch('/api/pos/characters/'+editId+'/generate-sheet', {method:'POST'});
+      const data = await resp.json();
+      if (data.ok) {
+        $('posCharPreviewThumb').src = data.preview_url + '?t=' + Date.now();
+        $('posCharPreviewThumb').style.display = 'block';
+        $('posCharPreviewPlaceholder').style.display = 'none';
+      } else { alert('Sheet error: '+(data.error||'unknown')); }
+    } catch(e) { alert('Sheet generation failed: '+e.message); }
+    btn.textContent = 'Generate Sheet'; btn.disabled = false;
   };
 
   // Auto-describe character from photo — fills ALL form fields
@@ -9514,6 +9546,31 @@ document.addEventListener('DOMContentLoaded', function() {
         info.appendChild(descSpan);
       }
       card.appendChild(info);
+
+      // "Generate Sheet" button for characters with photos
+      if (type === 'char' && item.photoUrl && item.serverId) {
+        var sheetBtn = document.createElement('button');
+        sheetBtn.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);cursor:pointer;font-size:9px;padding:2px 6px;border-radius:3px;flex-shrink:0;opacity:0.7;transition:opacity 0.2s;';
+        sheetBtn.textContent = 'Sheet';
+        sheetBtn.title = 'Generate character design sheet';
+        sheetBtn.onmouseenter = function(){this.style.opacity='1';this.style.borderColor='var(--amber)'};
+        sheetBtn.onmouseleave = function(){this.style.opacity='0.7';this.style.borderColor='var(--border)'};
+        sheetBtn.onclick = function(e) {
+          e.stopPropagation();
+          var sid = item.serverId;
+          sheetBtn.textContent = '...';
+          sheetBtn.disabled = true;
+          fetch('/api/pos/characters/'+sid+'/generate-sheet', {method:'POST'})
+            .then(function(r){return r.json()})
+            .then(function(d){
+              if (d.ok && d.preview_url) { sheetBtn.textContent = 'Done'; }
+              else { sheetBtn.textContent = 'Err'; }
+            })
+            .catch(function(){ sheetBtn.textContent = 'Err'; })
+            .finally(function(){ setTimeout(function(){ sheetBtn.textContent = 'Sheet'; sheetBtn.disabled = false; }, 2000); });
+        };
+        card.appendChild(sheetBtn);
+      }
 
       var removeBtn = document.createElement('button');
       removeBtn.style.cssText = 'background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 4px;flex-shrink:0;opacity:0.5;transition:opacity 0.2s;';

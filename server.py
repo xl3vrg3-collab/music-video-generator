@@ -925,6 +925,8 @@ def _run_regen(scene_index: int, new_prompt: str):
         _enrich_scene_with_assets(scene)
         char_photo = scene.get("character_photo_path", "") or None
         clip_path = generate_scene(scene, scene_index, CLIPS_DIR, progress_cb=on_progress, cost_cb=_record_cost, photo_path=char_photo)
+        # Face swap post-processing if enabled
+        clip_path = _maybe_face_swap(clip_path, char_photo)
         scene["clip_path"] = clip_path
         plan["scenes"][scene_index] = scene
 
@@ -1041,6 +1043,8 @@ def _run_generation_approved():
                 clip_path = generate_scene(scene_copy, orig_i, CLIPS_DIR,
                                            progress_cb=_prog, cost_cb=_record_cost,
                                            photo_path=char_photo)
+                # Face swap post-processing if enabled
+                clip_path = _maybe_face_swap(clip_path, char_photo)
                 clip_paths[orig_i] = clip_path
                 on_progress(local_idx, "done")
                 _record_prompt_history(scene_copy.get("prompt", ""), scene_index=orig_i)
@@ -1486,6 +1490,47 @@ def _upscale_clip(clip_path: str) -> str:
     return clip_path
 
 
+# ---- Face swap post-processing ----
+
+_face_swap_initialized = False
+
+def _maybe_face_swap(clip_path: str, char_photo: str) -> str:
+    """Apply face swap post-processing if enabled in settings and a character photo exists.
+
+    Returns the (possibly swapped) clip path. If face swap fails or is disabled,
+    returns the original clip_path unchanged.
+    """
+    global _face_swap_initialized
+    if not clip_path or not os.path.isfile(clip_path):
+        return clip_path
+    if not char_photo or not os.path.isfile(char_photo):
+        return clip_path
+
+    settings = _load_settings()
+    if not settings.get("face_swap_enabled", False):
+        return clip_path
+
+    try:
+        from lib.face_swap import init as fs_init, swap_faces_in_video
+
+        if not _face_swap_initialized:
+            fs_init(OUTPUT_DIR, onnx_mode=settings.get("face_swap_onnx", False))
+            _face_swap_initialized = True
+
+        swapped_path = clip_path.replace(".mp4", "_swapped.mp4")
+        print(f"[FaceSwap] Starting face swap: {clip_path} with {char_photo}")
+        result = swap_faces_in_video(clip_path, char_photo, swapped_path)
+        if result and os.path.isfile(result):
+            print(f"[FaceSwap] Success: {result}")
+            return result
+        else:
+            print("[FaceSwap] Face swap returned no result, keeping original clip")
+            return clip_path
+    except Exception as e:
+        print(f"[FaceSwap] Error (keeping original): {e}")
+        return clip_path
+
+
 # ---- Manual scene plan helpers ----
 
 
@@ -1799,6 +1844,10 @@ def _run_manual_generate_scene(scene_id: str):
                                            photo_path=scene_photo_path)
             except Exception as retry_err:
                 raise RuntimeError(f"Failed after retry: {retry_err}") from retry_err
+
+        # Face swap post-processing if enabled
+        char_photo = scene.get("character_photo_path", "") or scene.get("photo_path", "") or None
+        clip_path = _maybe_face_swap(clip_path, char_photo)
 
         scene["clip_path"] = clip_path
         scene["has_clip"] = True
@@ -4040,6 +4089,11 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r'^/api/pos/environments/([^/]+)/generate-preview$', path)
             self._handle_pos_generate_preview(m.group(1), "environments")
 
+        # ──── Character Sheet Generation ────
+        elif re.match(r'^/api/pos/characters/([^/]+)/generate-sheet$', path):
+            m = re.match(r'^/api/pos/characters/([^/]+)/generate-sheet$', path)
+            self._handle_pos_generate_character_sheet(m.group(1))
+
         # ──── Feature 1: Project Browser ────
         elif path == "/api/projects":
             body = json.loads(self._read_body())
@@ -5565,6 +5619,12 @@ class Handler(BaseHTTPRequestHandler):
         if "director_state" in params:
             settings["director_state"] = params["director_state"]
 
+        if "face_swap_enabled" in params:
+            settings["face_swap_enabled"] = bool(params["face_swap_enabled"])
+
+        if "face_swap_onnx" in params:
+            settings["face_swap_onnx"] = bool(params["face_swap_onnx"])
+
         _save_settings(settings)
         self._send_json({"ok": True, "settings": settings})
 
@@ -6539,6 +6599,142 @@ class Handler(BaseHTTPRequestHandler):
 
             self._send_json({"ok": True, "preview_url": preview_url})
         except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    # ---- Character Sheet Generation ----
+
+    def _handle_pos_generate_character_sheet(self, char_id):
+        """Generate a multi-angle character design sheet from a character's photo.
+
+        POST /api/pos/characters/<id>/generate-sheet
+
+        Uses the Grok image API to create a character sheet showing
+        front view, 3/4 view, and side view on a clean white background.
+        Saves the result as the character's preview image.
+        """
+        try:
+            entity = _prompt_os.get_character(char_id)
+            if not entity:
+                self._send_json({"error": "Character not found"}, 404)
+                return
+
+            # Build description from character fields
+            parts = []
+            for field in ("physicalDescription", "hair", "skinTone", "bodyType",
+                          "ageRange", "distinguishingFeatures", "outfitDescription"):
+                val = entity.get(field, "")
+                if val:
+                    parts.append(val)
+            if entity.get("accessories"):
+                acc = entity["accessories"]
+                if isinstance(acc, list):
+                    acc = ", ".join(acc)
+                parts.append(acc)
+
+            desc = ", ".join(p for p in parts if p) or entity.get("name", "character")
+
+            # Resolve the character's reference photo
+            ref_photo = entity.get("referencePhoto", entity.get("referenceImagePath", ""))
+            ref_photo_path = None
+            if ref_photo:
+                m = re.search(r"/api/pos/characters/([^/]+)/photo", ref_photo)
+                if m:
+                    eid = m.group(1)
+                    for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                        candidate = os.path.join(POS_PHOTOS_CHARS_DIR, f"{eid}{ext}")
+                        if os.path.isfile(candidate):
+                            ref_photo_path = candidate
+                            break
+                elif os.path.isfile(ref_photo):
+                    ref_photo_path = ref_photo
+
+            # Build the character sheet prompt
+            sheet_prompt = (
+                f"Professional character design reference sheet showing three views of the same person: "
+                f"front view, three-quarter view, and side profile view. "
+                f"Character: {desc}. "
+                f"Clean white background, consistent proportions across all views, "
+                f"labeled 'FRONT', '3/4', 'SIDE' below each view. "
+                f"Professional illustration style, high detail, full body visible in each view."
+            )
+
+            # Generate using Grok image API (with photo reference if available)
+            from lib.video_generator import _get_api_key
+            import requests as _requests
+
+            api_key = _get_api_key()
+            preview_path = os.path.join(POS_PREVIEWS_CHARS_DIR, f"{char_id}_sheet.jpg")
+
+            if ref_photo_path and os.path.isfile(ref_photo_path):
+                # Use image-edit style generation with photo reference
+                import base64 as _b64
+                with open(ref_photo_path, "rb") as pf:
+                    photo_bytes = pf.read()
+                ext = os.path.splitext(ref_photo_path)[1].lower()
+                mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                            ".png": "image/png", ".webp": "image/webp"}
+                mime = mime_map.get(ext, "image/jpeg")
+                b64_data = _b64.b64encode(photo_bytes).decode("ascii")
+                data_uri = f"data:{mime};base64,{b64_data}"
+
+                edit_prompt = (
+                    f"Create a character design reference sheet based on this person. "
+                    f"Show three views: front view, three-quarter view, and side profile. "
+                    f"Maintain the exact likeness, facial features, and proportions of the person in the photo. "
+                    f"Clean white background, professional illustration, high detail. "
+                    f"Additional details: {desc}"
+                )
+
+                resp = _requests.post(
+                    "https://api.x.ai/v1/images/generations",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={
+                        "model": "grok-imagine-image",
+                        "prompt": edit_prompt,
+                        "n": 1,
+                        "image_url": data_uri,
+                    },
+                    timeout=90,
+                )
+            else:
+                # Text-only generation
+                resp = _requests.post(
+                    "https://api.x.ai/v1/images/generations",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={"model": "grok-imagine-image", "prompt": sheet_prompt, "n": 1},
+                    timeout=90,
+                )
+
+            if resp.status_code != 200:
+                print(f"[CHAR_SHEET] API error {resp.status_code}: {resp.text[:200]}")
+                self._send_json({"error": f"API error: {resp.status_code}"}, 500)
+                return
+
+            data = resp.json()
+            img_url = data.get("data", [{}])[0].get("url", "")
+            if not img_url:
+                self._send_json({"error": "No image URL in API response"}, 500)
+                return
+
+            img_resp = _requests.get(img_url, timeout=30)
+            if img_resp.status_code != 200:
+                self._send_json({"error": "Failed to download sheet image"}, 500)
+                return
+
+            with open(preview_path, "wb") as f:
+                f.write(img_resp.content)
+
+            _record_cost(f"char_sheet_{char_id}", "image")
+
+            # Update character with sheet path
+            sheet_url = f"/api/pos/characters/{char_id}/preview?sheet=1&t={int(time.time())}"
+            _prompt_os.update_character(char_id, {"previewImage": preview_path, "characterSheet": preview_path})
+
+            print(f"[CHAR_SHEET] Generated character sheet: {preview_path}")
+            self._send_json({"ok": True, "sheet_url": sheet_url, "preview_url": f"/api/pos/characters/{char_id}/preview"})
+
+        except Exception as e:
+            print(f"[CHAR_SHEET] Error: {e}")
             self._send_json({"error": str(e)}, 500)
 
     # ---- Lyrics Sync ----
