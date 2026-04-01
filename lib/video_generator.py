@@ -647,11 +647,11 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
 
     _sys_r.stderr.flush()
     has_ref = "referenceImages" in payload
-    _rsys.stderr.write(f"[RUNWAY] Submitting {'image' if _use_i2v else 'text'}-to-video: model={model}, "
-          f"char_ref={'YES' if character_photo_path else 'NO'}, "
+    _sys_r.stderr.write(f"[RUNWAY] Submitting {'image' if _use_i2v else 'text'}-to-video: model={model}, "
+          f"chars={len(all_char_photos)}, costumes={len(all_costume_photos)}, "
           f"has_referenceImages={has_ref}, "
           f"prompt={prompt[:80]}...\n")
-    _rsys.stderr.flush()
+    _sys_r.stderr.flush()
 
     _endpoint = "image_to_video" if _use_i2v else "text_to_video"
     resp = requests.post(
