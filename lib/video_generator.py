@@ -555,16 +555,21 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
                                   ratio: str = "16:9",
                                   model: str = "gen4.5",
                                   character_photo_path: str = None,
+                                  character_photo_paths: list = None,
+                                  costume_photo_paths: list = None,
+                                  environment_photo_path: str = None,
                                   first_frame_path: str = None,
                                   last_frame_path: str = None,
                                   is_character_sheet: bool = False) -> str:
     """
-    Submit a text-to-video request to Runway.
-    If character_photo_path is provided, the photo is used as a CHARACTER REFERENCE
-    (not as the first frame). The AI generates a new video but keeps the character
-    looking like the person in the photo.
-    If first_frame_path is provided, switches to image-to-video mode with that as promptImage.
-    If last_frame_path is provided, sets the end keyframe.
+    Submit a text/image-to-video request to Runway.
+
+    Multi-image strategy:
+    - environment_photo → promptImage (scene starts from this setting)
+    - character_photo(s) → referenceImages with type "character"
+    - costume_photo(s) → referenceImages with type "style"
+    - If no environment photo, first character photo becomes promptImage
+    - first_frame_path overrides promptImage if set
     """
     duration = 10 if duration > 7 else 5
 
@@ -580,31 +585,67 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
         "ratio": RUNWAY_RATIO_MAP.get(ratio, "1280:720"),
     }
 
-    # ALWAYS use promptImage for character photos — strongest likeness.
-    # The AI generates video starting FROM the uploaded image.
-    _use_i2v = False
     import sys as _sys_r
+    _use_i2v = False
+    reference_images = []
 
-    if character_photo_path and os.path.isfile(character_photo_path):
-        payload["promptImage"] = _photo_to_data_uri(character_photo_path)
+    # Collect all character photos
+    all_char_photos = []
+    if character_photo_paths:
+        all_char_photos = [p for p in character_photo_paths if p and os.path.isfile(p)]
+    elif character_photo_path and os.path.isfile(character_photo_path):
+        all_char_photos = [character_photo_path]
+
+    # Collect all costume photos
+    all_costume_photos = []
+    if costume_photo_paths:
+        all_costume_photos = [p for p in costume_photo_paths if p and os.path.isfile(p)]
+
+    # Determine promptImage priority:
+    # 1. Environment photo → promptImage (best: scene starts in the right setting)
+    # 2. First frame → promptImage
+    # 3. First character photo → promptImage (fallback: strong likeness)
+    if environment_photo_path and os.path.isfile(environment_photo_path):
+        payload["promptImage"] = _photo_to_data_uri(environment_photo_path)
         _use_i2v = True
-        _sys_r.stderr.write(f"[RUNWAY] Character photo → promptImage (image-to-video)\n")
-        _sys_r.stderr.flush()
+        _sys_r.stderr.write(f"[RUNWAY] Environment photo → promptImage\n")
+        # ALL character photos go to referenceImages
+        for cp in all_char_photos:
+            reference_images.append({"uri": _photo_to_data_uri(cp), "type": "character"})
+            _sys_r.stderr.write(f"[RUNWAY] Character photo → referenceImages\n")
+    elif all_char_photos:
+        # No environment photo — use first character as promptImage for strongest likeness
+        payload["promptImage"] = _photo_to_data_uri(all_char_photos[0])
+        _use_i2v = True
+        _sys_r.stderr.write(f"[RUNWAY] Character photo → promptImage (no env photo)\n")
+        # Additional characters go to referenceImages
+        for cp in all_char_photos[1:]:
+            reference_images.append({"uri": _photo_to_data_uri(cp), "type": "character"})
+            _sys_r.stderr.write(f"[RUNWAY] Additional character → referenceImages\n")
 
+    # Costume photos → referenceImages with type "style"
+    for cp in all_costume_photos:
+        reference_images.append({"uri": _photo_to_data_uri(cp), "type": "style"})
+        _sys_r.stderr.write(f"[RUNWAY] Costume photo → referenceImages (style)\n")
+
+    # First frame overrides promptImage
     if first_frame_path and os.path.isfile(first_frame_path):
+        # If we had a character as promptImage, move it to referenceImages
+        if "promptImage" in payload and all_char_photos and not environment_photo_path:
+            reference_images.insert(0, {"uri": payload["promptImage"], "type": "character"})
         payload["promptImage"] = _photo_to_data_uri(first_frame_path)
         _use_i2v = True
-        if character_photo_path and os.path.isfile(character_photo_path):
-            payload["referenceImages"] = [
-                {"uri": photo_uri, "type": "character"}
-            ]
-        print(f"[RUNWAY] Using first_frame as promptImage (image-to-video mode)")
+        _sys_r.stderr.write(f"[RUNWAY] First frame → promptImage (overrides)\n")
 
     if last_frame_path and os.path.isfile(last_frame_path):
         payload["lastFrame"] = _photo_to_data_uri(last_frame_path)
-        print(f"[RUNWAY] Including lastFrame keyframe")
+        _sys_r.stderr.write(f"[RUNWAY] Last frame keyframe included\n")
 
-    import sys as _rsys
+    # Attach referenceImages if any
+    if reference_images:
+        payload["referenceImages"] = reference_images
+
+    _sys_r.stderr.flush()
     has_ref = "referenceImages" in payload
     _rsys.stderr.write(f"[RUNWAY] Submitting {'image' if _use_i2v else 'text'}-to-video: model={model}, "
           f"char_ref={'YES' if character_photo_path else 'NO'}, "
@@ -817,18 +858,46 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
                     )
                 print(f"[RUNWAY/{model}][{index}] Using character description ({len(char_desc)} chars, sheet={is_sheet})")
 
-            _report(f"submitting text-to-video ({model}) with character reference (sheet={is_sheet})...")
+            # Collect all character photos from scene
+            all_char_photos = [photo_path] if photo_path else []
+            # Check for additional character photos in scene data
+            extra_char_photos = scene.get("character_photo_paths", [])
+            if extra_char_photos:
+                all_char_photos.extend([p for p in extra_char_photos if p and os.path.isfile(p) and p != photo_path])
+
+            # Collect costume photos
+            costume_photos = []
+            cp = scene.get("costume_photo_path", "")
+            if cp and os.path.isfile(cp):
+                costume_photos.append(cp)
+            extra_costume_photos = scene.get("costume_photo_paths", [])
+            if extra_costume_photos:
+                costume_photos.extend([p for p in extra_costume_photos if p and os.path.isfile(p) and p not in costume_photos])
+
+            # Environment photo
+            env_photo = scene.get("environment_photo_path", "")
+
+            _report(f"submitting with {len(all_char_photos)} char refs, {len(costume_photos)} costume refs, env={'YES' if env_photo else 'NO'}...")
             task_id = _runway_submit_text_to_video(
                 gen_prompt, duration=duration, model=model,
-                character_photo_path=photo_path,
+                character_photo_paths=all_char_photos,
+                costume_photo_paths=costume_photos,
+                environment_photo_path=env_photo if env_photo and os.path.isfile(env_photo) else None,
                 first_frame_path=scene.get("first_frame_path"),
                 last_frame_path=scene.get("last_frame_path"),
-                is_character_sheet=is_sheet,
             )
         else:
-            _report(f"submitting text-to-video ({model})...")
+            # No character photo — still pass costume/environment if available
+            costume_photos = []
+            cp = scene.get("costume_photo_path", "")
+            if cp and os.path.isfile(cp): costume_photos.append(cp)
+            env_photo = scene.get("environment_photo_path", "")
+
+            _report(f"submitting text-to-video ({model}), costume refs={len(costume_photos)}, env={'YES' if env_photo else 'NO'}...")
             task_id = _runway_submit_text_to_video(
                 gen_prompt, duration=duration, model=model,
+                costume_photo_paths=costume_photos,
+                environment_photo_path=env_photo if env_photo and os.path.isfile(env_photo) else None,
                 first_frame_path=scene.get("first_frame_path"),
                 last_frame_path=scene.get("last_frame_path"),
             )

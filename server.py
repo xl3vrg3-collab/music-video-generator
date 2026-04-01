@@ -800,20 +800,72 @@ def _enrich_scene_with_assets(scene):
                                     env_photo_path = candidate
                                     break
 
+    # Collect ALL character photos (not just the first)
+    all_char_photos = []
+    all_costume_photos = []
+    chars_list = scene.get("characters", [])
+    if chars_list and isinstance(chars_list, list):
+        for char_ref in chars_list:
+            cid = char_ref.get("id", "") if isinstance(char_ref, dict) else ""
+            if not cid:
+                continue
+            pc = _prompt_os.get_character(cid)
+            if not pc:
+                continue
+            ri = pc.get("referencePhoto", "") or pc.get("referenceImagePath", "")
+            if ri:
+                resolved = None
+                if os.path.isfile(ri):
+                    resolved = ri
+                else:
+                    m = re.search(r"/api/pos/characters/([^/]+)/photo", ri)
+                    if m:
+                        for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                            candidate = os.path.join(POS_PHOTOS_CHARS_DIR, f"{m.group(1)}{ext}")
+                            if os.path.isfile(candidate):
+                                resolved = candidate
+                                break
+                if resolved:
+                    all_char_photos.append(resolved)
+
+    costumes_list = scene.get("costumes", [])
+    if costumes_list and isinstance(costumes_list, list):
+        for cos_ref in costumes_list:
+            cid = cos_ref.get("id", "") if isinstance(cos_ref, dict) else ""
+            if not cid:
+                continue
+            pc = _prompt_os.get_costume(cid)
+            if not pc:
+                continue
+            ri = pc.get("referenceImagePath", "")
+            if ri:
+                resolved = None
+                if os.path.isfile(ri):
+                    resolved = ri
+                else:
+                    m = re.search(r"/api/pos/costumes/([^/]+)/photo", ri)
+                    if m:
+                        for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                            candidate = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{m.group(1)}{ext}")
+                            if os.path.isfile(candidate):
+                                resolved = candidate
+                                break
+                if resolved:
+                    all_costume_photos.append(resolved)
+
     # Apply resolved fields
     scene["character_description"] = char_description
-    scene["character_photo_path"] = char_photo_path
+    scene["character_photo_path"] = char_photo_path  # Primary (first) character
+    scene["character_photo_paths"] = all_char_photos  # ALL character photos
     scene["costume_description"] = costume_description
-    scene["costume_photo_path"] = costume_photo_path
+    scene["costume_photo_path"] = costume_photo_path  # Primary (first) costume
+    scene["costume_photo_paths"] = all_costume_photos  # ALL costume photos
     scene["environment_description"] = env_description
     scene["environment_photo_path"] = env_photo_path
 
-    if char_photo_path:
-        print(f"[ENRICH] Character photo: {char_photo_path}")
-    if costume_photo_path:
-        print(f"[ENRICH] Costume photo: {costume_photo_path}")
-    if env_photo_path:
-        print(f"[ENRICH] Environment photo: {env_photo_path}")
+    import sys as _enr_sys
+    _enr_sys.stderr.write(f"[ENRICH] {len(all_char_photos)} char photos, {len(all_costume_photos)} costume photos, env={'YES' if env_photo_path else 'NO'}\n")
+    _enr_sys.stderr.flush()
 
     return scene
 
@@ -1151,8 +1203,12 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
     else:
         print(f"[PREVIEW][{index}] No scene_data provided")
 
-    # --- Strategy A: Runway 5s clip + frame extraction (accurate) ---
-    if char_photo and os.path.isfile(char_photo):
+    # --- Strategy A: Runway clip + frame extraction ---
+    # Use Runway if ANY photos are available (character, costume, or environment)
+    has_any_photos = (char_photo and os.path.isfile(char_photo)) or \
+        (scene_data and any(scene_data.get("costume_photo_paths", []))) or \
+        (scene_data and scene_data.get("environment_photo_path") and os.path.isfile(scene_data.get("environment_photo_path", "")))
+    if has_any_photos:
         try:
             from lib.video_generator import (
                 _runway_submit_text_to_video, _runway_poll, _get_api_key,
@@ -1163,48 +1219,34 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
 
             print(f"[PREVIEW][{index}] Using Runway preview with character photo: {char_photo}")
 
-            # Photo IS the promptImage — the AI will animate FROM it.
-            # Keep the prompt focused on the scene action, not character description.
             preview_prompt = full_prompt
-
-            # Add costume description if available (since costume photo can't be a second image input)
-            costume_photo = enriched.get("costume_photo_path", "") if scene_data else ""
-            if costume_photo and os.path.isfile(costume_photo):
-                try:
-                    cos_desc = _describe_entity_photo(costume_photo, "costume")
-                    if cos_desc:
-                        preview_prompt = f"{preview_prompt}. Wearing: {cos_desc}"
-                except Exception:
-                    pass
-
-            # Add environment description if available
-            env_photo = enriched.get("environment_photo_path", "") if scene_data else ""
-            if env_photo and os.path.isfile(env_photo):
-                try:
-                    env_desc = _describe_entity_photo(env_photo, "environment")
-                    if env_desc:
-                        preview_prompt = f"{preview_prompt}. Setting: {env_desc}"
-                except Exception:
-                    pass
-
-            # Truncate if too long (Runway moderation flags long prompts)
             if len(preview_prompt) > 500:
                 preview_prompt = preview_prompt[:497] + "..."
 
-            # Generate a short clip via Runway — use the user's selected engine
+            # Get engine
             preview_engine = (scene_data or {}).get("engine", "")
             if not preview_engine:
                 settings = _load_settings()
                 preview_engine = settings.get("default_engine", "gen4.5")
-            # Map common names
             engine_map = {"runway": "gen4.5", "grok": "gen4.5"}
             preview_engine = engine_map.get(preview_engine, preview_engine)
+
+            # Collect ALL photos from enrichment
+            all_char_photos = enriched.get("character_photo_paths", [])
+            all_costume_photos = enriched.get("costume_photo_paths", [])
+            env_photo = enriched.get("environment_photo_path", "")
+
+            import sys as _prev_sys
+            _prev_sys.stderr.write(f"[PREVIEW][{index}] Sending {len(all_char_photos)} char photos, {len(all_costume_photos)} costume photos, env={'YES' if env_photo else 'NO'}\n")
+            _prev_sys.stderr.flush()
 
             task_id = _runway_submit_text_to_video(
                 preview_prompt,
                 duration=5,
                 model=preview_engine,
-                character_photo_path=char_photo,
+                character_photo_paths=all_char_photos,
+                costume_photo_paths=all_costume_photos,
+                environment_photo_path=env_photo if env_photo and os.path.isfile(env_photo) else None,
             )
 
             print(f"[PREVIEW][{index}] Runway task submitted: {task_id[:16]}...")
