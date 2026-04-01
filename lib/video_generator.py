@@ -601,13 +601,17 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
     if costume_photo_paths:
         all_costume_photos = [p for p in costume_photo_paths if p and os.path.isfile(p)]
 
-    # All photos go to referenceImages — the text prompt drives the scene.
-    # The AI composes the scene from the prompt while using photos as references.
-    # No promptImage unless explicitly set via first_frame.
+    # Character photo MUST be promptImage — it's the only way Runway respects likeness.
+    # referenceImages is too weak for character identity (tested and confirmed).
+    # Environment and costume go as referenceImages for style hints.
 
-    for cp in all_char_photos:
-        reference_images.append({"uri": _photo_to_data_uri(cp), "type": "character"})
-        _sys_r.stderr.write(f"[RUNWAY] Character → referenceImages (character)\n")
+    if all_char_photos:
+        payload["promptImage"] = _photo_to_data_uri(all_char_photos[0])
+        _use_i2v = True
+        _sys_r.stderr.write(f"[RUNWAY] Character → promptImage (only reliable likeness method)\n")
+        for cp in all_char_photos[1:]:
+            reference_images.append({"uri": _photo_to_data_uri(cp), "type": "character"})
+            _sys_r.stderr.write(f"[RUNWAY] Additional character → referenceImages\n")
 
     for cp in all_costume_photos:
         reference_images.append({"uri": _photo_to_data_uri(cp), "type": "style"})
@@ -840,9 +844,9 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
                     )
                 else:
                     gen_prompt = (
-                        f"The person in the reference image: {char_desc}. "
-                        f"Match this person exactly — same face, same eyes, same skin tone, same hair, same build. "
-                        f"Maintain consistent identity throughout the video. "
+                        f"Animate this person into a cinematic scene. "
+                        f"This person: {char_desc}. "
+                        f"Keep their exact appearance but place them naturally into the following scene: "
                         f"{gen_prompt}"
                     )
                 print(f"[RUNWAY/{model}][{index}] Using character description ({len(char_desc)} chars, sheet={is_sheet})")

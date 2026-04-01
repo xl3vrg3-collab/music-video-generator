@@ -1219,7 +1219,8 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
 
             print(f"[PREVIEW][{index}] Using Runway preview with character photo: {char_photo}")
 
-            preview_prompt = full_prompt
+            # Tell Runway to animate the character into the scene, not just show the photo
+            preview_prompt = f"Animate this person into a cinematic scene. Keep their exact appearance but place them naturally into the following scene: {full_prompt}"
 
             # Inject environment and costume descriptions into prompt
             env_desc = enriched.get("environment_description", "")
