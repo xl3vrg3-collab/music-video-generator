@@ -24,6 +24,7 @@ STYLE_LOCKS_PATH = os.path.join(PROMPT_OS_DIR, "style_locks.json")
 WORLD_RULES_PATH = os.path.join(PROMPT_OS_DIR, "world_rules.json")
 CONTINUITY_RULES_PATH = os.path.join(PROMPT_OS_DIR, "continuity_rules.json")
 PROPS_PATH = os.path.join(PROMPT_OS_DIR, "props.json")
+VOICES_PATH = os.path.join(PROMPT_OS_DIR, "voices.json")
 
 # Ensure directory exists
 os.makedirs(PROMPT_OS_DIR, exist_ok=True)
@@ -418,6 +419,56 @@ class PromptOS:
         if len(new) == len(props):
             return False
         _save_json(PROPS_PATH, new)
+        return True
+
+    # ───── Voices ─────
+
+    def create_voice(self, data):
+        voices = _load_json(VOICES_PATH)
+        record = {
+            "id": _gen_id(),
+            "name": data.get("name", "Untitled Voice"),
+            "characterId": data.get("characterId", ""),
+            "voicePresetId": data.get("voicePresetId", ""),
+            "description": data.get("description", ""),
+            "sampleAudioPath": data.get("sampleAudioPath", ""),
+            "tags": data.get("tags", []),
+            "createdAt": _now(),
+            "updatedAt": _now(),
+        }
+        voices.append(record)
+        _save_json(VOICES_PATH, voices)
+        return record
+
+    def get_voices(self):
+        return _load_json(VOICES_PATH)
+
+    def get_voice(self, vid):
+        for v in _load_json(VOICES_PATH):
+            if v["id"] == vid:
+                return v
+        return None
+
+    def update_voice(self, vid, data):
+        voices = _load_json(VOICES_PATH)
+        for i, v in enumerate(voices):
+            if v["id"] == vid:
+                for key in ("name", "characterId", "voicePresetId", "description",
+                             "sampleAudioPath", "tags"):
+                    if key in data:
+                        v[key] = data[key]
+                v["updatedAt"] = _now()
+                voices[i] = v
+                _save_json(VOICES_PATH, voices)
+                return v
+        return None
+
+    def delete_voice(self, vid):
+        voices = _load_json(VOICES_PATH)
+        new = [v for v in voices if v["id"] != vid]
+        if len(new) == len(voices):
+            return False
+        _save_json(VOICES_PATH, new)
         return True
 
     # ───── Scenes ─────

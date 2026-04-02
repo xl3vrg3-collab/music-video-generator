@@ -3352,6 +3352,22 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r'^/api/pos/props/([^/]+)/photo$', path)
             self._send_file(os.path.join(POS_PHOTOS_PROPS_DIR, m.group(1) + ".jpg"))
 
+        elif path == "/api/pos/voices":
+            self._send_json({"voices": _prompt_os.get_voices()})
+
+        elif re.match(r'^/api/pos/voices/([^/]+)$', path):
+            m = re.match(r'^/api/pos/voices/([^/]+)$', path)
+            rec = _prompt_os.get_voice(m.group(1))
+            if rec:
+                self._send_json(rec)
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif re.match(r'^/api/pos/voices/([^/]+)/sample$', path):
+            m = re.match(r'^/api/pos/voices/([^/]+)/sample$', path)
+            audio_dir = os.path.join(PROMPT_OS_DATA_DIR, "audio", "voices")
+            self._send_file(os.path.join(audio_dir, m.group(1) + ".mp3"))
+
         elif path == "/api/pos/scenes":
             self._send_json({"scenes": _prompt_os.get_scenes()})
 
@@ -4216,6 +4232,11 @@ class Handler(BaseHTTPRequestHandler):
             rec = _prompt_os.create_prop(body)
             self._send_json({"ok": True, "prop": rec})
 
+        elif path == "/api/pos/voices":
+            body = json.loads(self._read_body())
+            rec = _prompt_os.create_voice(body)
+            self._send_json({"ok": True, "voice": rec})
+
         elif path == "/api/pos/scenes":
             body = json.loads(self._read_body())
             rec = _prompt_os.create_scene(body)
@@ -4257,6 +4278,10 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/pos/props/([^/]+)/photo$', path):
             m = re.match(r'^/api/pos/props/([^/]+)/photo$', path)
             self._handle_pos_photo_upload(m.group(1), "props")
+
+        elif re.match(r'^/api/pos/voices/([^/]+)/sample$', path):
+            m = re.match(r'^/api/pos/voices/([^/]+)/sample$', path)
+            self._handle_voice_sample_upload(m.group(1))
 
         # ──── Auto-describe from photo ────
         elif re.match(r'^/api/pos/characters/([^/]+)/describe$', path):
@@ -4516,6 +4541,15 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": "Not found"}, 404)
 
+        elif re.match(r'^/api/pos/voices/([^/]+)$', path):
+            m = re.match(r'^/api/pos/voices/([^/]+)$', path)
+            body = json.loads(self._read_body())
+            rec = _prompt_os.update_voice(m.group(1), body)
+            if rec:
+                self._send_json({"ok": True, "voice": rec})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
         elif re.match(r'^/api/pos/scenes/([^/]+)$', path):
             m = re.match(r'^/api/pos/scenes/([^/]+)$', path)
             body = json.loads(self._read_body())
@@ -4571,6 +4605,13 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/pos/props/([^/]+)$', path):
             m = re.match(r'^/api/pos/props/([^/]+)$', path)
             if _prompt_os.delete_prop(m.group(1)):
+                self._send_json({"ok": True})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif re.match(r'^/api/pos/voices/([^/]+)$', path):
+            m = re.match(r'^/api/pos/voices/([^/]+)$', path)
+            if _prompt_os.delete_voice(m.group(1)):
                 self._send_json({"ok": True})
             else:
                 self._send_json({"error": "Not found"}, 404)
@@ -6631,6 +6672,39 @@ class Handler(BaseHTTPRequestHandler):
                 _prompt_os.update_prop(entity_id, {"referenceImagePath": photo_url})
 
             self._send_json({"ok": True, "photo_url": photo_url})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_voice_sample_upload(self, voice_id):
+        """Handle audio sample upload for a voice profile."""
+        try:
+            ct = self.headers.get("Content-Type", "")
+            if "multipart" not in ct:
+                self._send_json({"error": "Expected multipart upload"}, 400)
+                return
+            boundary = ct.split("boundary=")[-1].encode()
+            body = self._read_body()
+            parts = self._parse_multipart(body, boundary)
+            file_part = None
+            for p in parts:
+                if p.get("filename"):
+                    file_part = p
+                    break
+            if not file_part or not file_part["data"]:
+                self._send_json({"error": "No file uploaded"}, 400)
+                return
+
+            audio_dir = os.path.join(PROMPT_OS_DATA_DIR, "audio", "voices")
+            os.makedirs(audio_dir, exist_ok=True)
+            out_path = os.path.join(audio_dir, voice_id + ".mp3")
+
+            with open(out_path, "wb") as f:
+                f.write(file_part["data"])
+
+            sample_url = f"/api/pos/voices/{voice_id}/sample"
+            _prompt_os.update_voice(voice_id, {"sampleAudioPath": sample_url})
+
+            self._send_json({"ok": True, "sample_url": sample_url})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
@@ -10476,7 +10550,19 @@ class Handler(BaseHTTPRequestHandler):
         refs = select_refs_for_shot_type(shot_type, char_photos, costume_photos, env_photos, max_refs=3)
 
         if not refs:
-            self._send_json({"error": "No photos available for this scene. Add a character, costume, or environment with a photo."}, 400)
+            # Build specific guidance about what's missing
+            missing = []
+            if not char_photos:
+                missing.append("character photo")
+            if not costume_photos:
+                missing.append("costume photo")
+            if not env_photos:
+                missing.append("environment photo")
+            if missing:
+                guidance = "Missing: " + ", ".join(missing) + ". Upload reference photos in the ASSETS tab."
+            else:
+                guidance = "No reference photos available for this scene. Upload photos in the ASSETS tab."
+            self._send_json({"error": guidance}, 400)
             return
 
         print(f"[FIRST FRAME][{scene_index}] Shot type: {shot_type} | Selected refs: {[(r['tag'], r['priority']) for r in refs]}")

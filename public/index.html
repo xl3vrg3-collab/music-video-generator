@@ -2432,6 +2432,7 @@ document.addEventListener('keydown', function(e) {
       if (subTab === 'costumes' && typeof window._posLoadCostumes === 'function') window._posLoadCostumes();
       if (subTab === 'environments' && typeof window._posLoadEnvironments === 'function') window._posLoadEnvironments();
       if (subTab === 'props' && typeof window._posLoadProps === 'function') window._posLoadProps();
+      if (subTab === 'voices' && typeof window._posLoadVoices === 'function') window._posLoadVoices();
     };
 
     // Move entity content into asset panels once DOM is ready
@@ -2633,6 +2634,7 @@ document.addEventListener('keydown', function(e) {
               <optgroup label="─── Runway ───">
                 <option value="gen4_5" selected>Gen 4.5 — 📸📸 Multi-Photo+Keyframes | 12 cr/s | ~90s</option>
                 <option value="gen4_turbo">Gen 4 Turbo — 📸 Image-to-Video Only | 5 cr/s | ~45s</option>
+                <option value="gen4_aleph">Gen 4 Aleph — Video Transform (requires existing clip)</option>
               </optgroup>
               <optgroup label="─── Veo (via Runway) ───">
                 <option value="veo3">Veo 3 — 📸📸 Multi-Photo+Keyframes | 40 cr/s | ~2m</option>
@@ -2892,11 +2894,116 @@ document.addEventListener('keydown', function(e) {
 
     </div>
     <div id="assetPanelVoices" class="hidden">
-      <div style="text-align:center;padding:40px;color:var(--text-dim);">
-        <div style="font-size:14px;margin-bottom:8px;">Voice Profiles</div>
-        <div style="font-size:11px;">Create voice profiles for character dialogue and narration</div>
-        <div style="font-size:10px;margin-top:16px;color:var(--amber);">Coming soon — Voices can be generated or uploaded per character</div>
+
+      <!-- A. VOICES LIBRARY STRIP -->
+      <div style="margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div>
+            <span id="voiceLibCount" style="font-size:11px;color:var(--text-dim);">0 voices</span>
+          </div>
+          <button class="btn btn-tier-secondary" onclick="window._posShowVoiceForm()" style="font-size:11px;padding:6px 16px;">+ New Voice</button>
+        </div>
+        <div id="posVoiceList" class="pos-entity-list">
+          <div class="pos-empty">No voice profiles yet. Create your first voice profile.</div>
+        </div>
       </div>
+
+      <!-- B. VOICE EDITOR -->
+      <div id="posVoiceFormWrap" class="hidden">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;">
+          <input type="hidden" id="posVoiceEditId" value="">
+
+          <!-- Editor Header -->
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;background:var(--bg);">
+            <div style="flex:1;">
+              <div id="voiceEditorName" style="font-weight:700;font-size:14px;color:var(--text);">New Voice</div>
+            </div>
+          </div>
+
+          <div style="padding:16px;">
+            <div style="margin-bottom:20px;">
+              <h4 class="section-label section-label-cyan">Details</h4>
+              <div class="pos-form">
+                <div class="form-row">
+                  <div class="pos-field-group" style="flex:1;">
+                    <label>Name <span style="color:var(--red);font-size:8px;">required</span></label>
+                    <input type="text" id="posVoiceName" placeholder="e.g. Deep Narrator, Cheerful Hero">
+                  </div>
+                  <div class="pos-field-group" style="flex:1;">
+                    <label>Linked Character</label>
+                    <select id="posVoiceCharId" class="styled-select">
+                      <option value="">None (standalone voice)</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="pos-field-group">
+                  <label>Runway Voice Preset</label>
+                  <select id="posVoicePresetId" class="styled-select">
+                    <option value="">Select a preset...</option>
+                    <option value="Maya">Maya</option><option value="Arjun">Arjun</option>
+                    <option value="Serene">Serene</option><option value="Bernard">Bernard</option>
+                    <option value="Billy">Billy</option><option value="Mark">Mark</option>
+                    <option value="Clint">Clint</option><option value="Mabel">Mabel</option>
+                    <option value="Chad">Chad</option><option value="Leslie">Leslie</option>
+                    <option value="Eleanor">Eleanor</option><option value="Elias">Elias</option>
+                    <option value="Elliot">Elliot</option><option value="Grungle">Grungle</option>
+                    <option value="Brodie">Brodie</option><option value="Sandra">Sandra</option>
+                    <option value="Kirk">Kirk</option><option value="Kylie">Kylie</option>
+                    <option value="Lara">Lara</option><option value="Lisa">Lisa</option>
+                    <option value="Malachi">Malachi</option><option value="Marlene">Marlene</option>
+                    <option value="Martin">Martin</option><option value="Miriam">Miriam</option>
+                    <option value="Monster">Monster</option><option value="Paula">Paula</option>
+                    <option value="Pip">Pip</option><option value="Rusty">Rusty</option>
+                    <option value="Ragnar">Ragnar</option><option value="Xylar">Xylar</option>
+                    <option value="Maggie">Maggie</option><option value="Jack">Jack</option>
+                    <option value="Katie">Katie</option><option value="Noah">Noah</option>
+                    <option value="James">James</option><option value="Rina">Rina</option>
+                    <option value="Ella">Ella</option><option value="Mariah">Mariah</option>
+                    <option value="Frank">Frank</option><option value="Claudia">Claudia</option>
+                    <option value="Niki">Niki</option><option value="Vincent">Vincent</option>
+                    <option value="Kendrick">Kendrick</option><option value="Myrna">Myrna</option>
+                    <option value="Tom">Tom</option><option value="Wanda">Wanda</option>
+                    <option value="Benjamin">Benjamin</option><option value="Kiana">Kiana</option>
+                    <option value="Rachel">Rachel</option>
+                  </select>
+                </div>
+                <div class="pos-field-group">
+                  <label>Description</label>
+                  <textarea id="posVoiceDesc" rows="3" placeholder="Describe the voice quality, tone, accent..."></textarea>
+                </div>
+                <div class="pos-field-group">
+                  <label>Tags</label>
+                  <input type="text" id="posVoiceTags" placeholder="Comma-separated tags">
+                </div>
+              </div>
+            </div>
+
+            <!-- Audio Sample Upload -->
+            <div style="margin-bottom:20px;">
+              <h4 class="section-label section-label-cyan">Sample Audio</h4>
+              <div style="display:flex;gap:16px;align-items:flex-start;">
+                <div style="flex:1;">
+                  <audio id="posVoiceSamplePlayer" controls style="width:100%;display:none;margin-bottom:8px;"></audio>
+                  <div id="posVoiceSamplePlaceholder" style="font-size:10px;color:var(--text-dim);margin-bottom:8px;">No sample uploaded</div>
+                  <label class="btn btn-tier-secondary" style="font-size:10px;padding:6px 14px;cursor:pointer;display:inline-block;">
+                    Upload Audio Sample
+                    <input type="file" accept="audio/*" style="display:none;" onchange="window._posUploadVoiceSample(this)">
+                  </label>
+                  <div style="font-size:9px;color:var(--text-dim);margin-top:6px;">Upload an MP3 or WAV sample for this voice</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Actions -->
+            <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:12px;border-top:1px solid var(--border);">
+              <button class="btn btn-tier-secondary" onclick="window._posSaveVoice()" style="font-size:11px;padding:8px 20px;">Save Voice</button>
+              <button class="btn btn-small btn-tier-ghost" onclick="window._posCancelVoiceForm()">Cancel</button>
+              <button class="btn btn-small btn-tier-danger" onclick="var id=$('posVoiceEditId').value;if(id&&confirm('Delete this voice?')){window._posDeleteVoice(id);}" style="font-size:9px;">Delete</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -5926,18 +6033,19 @@ document.addEventListener('DOMContentLoaded', function() {
   const CAMERA_PRESETS = ['static','pan_left','pan_right','zoom_in','zoom_out','orbit','tracking'];
   const ENGINE_LABELS = {
     grok:'Grok Video', luma:'Luma Ray2', openai:'OpenAI GPT', runway:'Runway Gen 4.5',
-    gen4_5:'Gen 4.5', gen4_turbo:'Gen 4 Turbo',
+    gen4_5:'Gen 4.5', gen4_turbo:'Gen 4 Turbo', gen4_aleph:'Gen 4 Aleph',
     veo3:'Veo 3', veo3_1:'Veo 3.1', veo3_1_fast:'Veo 3.1 Fast',
   };
   const ENGINE_COLORS = {
     grok:'var(--cyan)', luma:'var(--magenta)', openai:'var(--green)',
-    runway:'#d4a017', gen4_5:'#d4a017', gen4_turbo:'#d4a017',
+    runway:'#d4a017', gen4_5:'#d4a017', gen4_turbo:'#d4a017', gen4_aleph:'#d4a017',
     veo3:'#4285f4', veo3_1:'#4285f4', veo3_1_fast:'#4285f4',
   };
   // Model duration limits (Area 3)
   const MODEL_DURATION_OPTIONS = {
     gen4_5: [4, 6, 8],
     gen4_turbo: [4, 6, 8],
+    gen4_aleph: [4, 6, 8],
     veo3: [4, 6, 8],
     veo3_1: [4, 6, 8],
     veo3_1_fast: [4, 6, 8],
@@ -5948,7 +6056,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Render time per clip (seconds) — matches server RENDER_TIME_ESTIMATES
   const MODEL_RENDER_TIMES = {
-    gen4_5: 90, gen4_turbo: 45,
+    gen4_5: 90, gen4_turbo: 45, gen4_aleph: 90,
     veo3: 120, veo3_1: 120, veo3_1_fast: 45,
     grok: 30, luma: 45, openai: 50,
   };
@@ -5957,6 +6065,7 @@ document.addEventListener('DOMContentLoaded', function() {
     { group:'─── Runway ───', models:[
       {id:'gen4_5', label:'Gen 4.5 📸📸 Multi-Photo', cost:'12 cr/s', photo:true, speed:'~90s', durations:[4,6,8]},
       {id:'gen4_turbo', label:'Gen 4 Turbo 📸 Img-to-Vid', cost:'5 cr/s', photo:true, speed:'~45s', durations:[4,6,8]},
+      {id:'gen4_aleph', label:'Gen 4 Aleph — Video Transform (requires existing clip)', cost:'TBD', photo:false, speed:'~90s', durations:[4,6,8]},
     ]},
     { group:'─── Veo (via Runway) ───', models:[
       {id:'veo3', label:'Veo 3 📸📸 Multi-Photo', cost:'40 cr/s', photo:true, speed:'~2m', durations:[4,6,8]},
@@ -8602,6 +8711,115 @@ document.addEventListener('DOMContentLoaded', function() {
         $('posPropPhotoThumb').src = data.photo_url + '?t=' + Date.now();
         $('posPropPhotoThumb').style.display = 'block';
         $('posPropPhotoPlaceholder').style.display = 'none';
+      } else { alert('Upload error: '+(data.error||'unknown')); }
+    } catch(e) { alert('Upload failed: '+e.message); }
+    input.value = '';
+  };
+
+  // ---- VOICES ----
+  window._posLoadVoices = async function() {
+    var data = await apiGet('/api/pos/voices');
+    var list = $('posVoiceList');
+    var voices = data.voices || [];
+    var countEl = $('voiceLibCount');
+    if (countEl) countEl.textContent = voices.length + ' voice' + (voices.length !== 1 ? 's' : '');
+    // Load characters for display
+    var charData = await apiGet('/api/pos/characters');
+    var chars = charData.characters || [];
+    var charMap = {};
+    chars.forEach(function(c) { charMap[c.id] = c.name; });
+    if (!voices.length) { list.innerHTML = '<div class="pos-empty">No voice profiles yet. Create your first voice profile.</div>'; return; }
+    list.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;">' + voices.map(function(v) {
+      var charName = v.characterId ? (charMap[v.characterId] || 'Unknown') : '—';
+      var preset = v.voicePresetId || '—';
+      return '<div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;cursor:pointer;transition:border-color 0.15s;padding:12px;" onmouseover="this.style.borderColor=\'#7c5cff\'" onmouseout="this.style.borderColor=\'\'" onclick="window._posEditVoice(\''+v.id+'\')">'
+        + '<div style="font-weight:700;font-size:12px;color:var(--text);margin-bottom:4px;">'+escHtml(v.name)+'</div>'
+        + '<div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">Character: '+escHtml(charName)+'</div>'
+        + '<div style="font-size:10px;color:var(--amber);margin-bottom:2px;">Preset: '+escHtml(preset)+'</div>'
+        + (v.description ? '<div style="font-size:9px;color:var(--text-dim);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">'+escHtml(v.description.substring(0,60))+'</div>' : '')
+        + (v.sampleAudioPath ? '<div style="font-size:9px;color:var(--green);margin-top:4px;">&#9835; Has audio sample</div>' : '')
+      + '</div>';
+    }).join('') + '</div>';
+  };
+
+  window._posShowVoiceForm = async function(d) {
+    $('posVoiceFormWrap').classList.remove('hidden');
+    $('posVoiceEditId').value = d?d.id:'';
+    $('posVoiceName').value = d?(d.name||''):'';
+    $('posVoiceDesc').value = d?(d.description||''):'';
+    $('posVoiceTags').value = d?(d.tags||[]).join(', '):'';
+    var eName = $('voiceEditorName');
+    if (eName) eName.textContent = (d && d.name) ? d.name : 'New Voice';
+    // Populate character dropdown
+    var charSelect = $('posVoiceCharId');
+    charSelect.innerHTML = '<option value="">None (standalone voice)</option>';
+    try {
+      var charData = await apiGet('/api/pos/characters');
+      (charData.characters || []).forEach(function(c) {
+        var opt = document.createElement('option');
+        opt.value = c.id; opt.textContent = c.name;
+        if (d && d.characterId === c.id) opt.selected = true;
+        charSelect.appendChild(opt);
+      });
+    } catch(e) {}
+    // Preset
+    _setSelectOrCustom('posVoicePresetId', d?(d.voicePresetId||''):'');
+    // Audio sample
+    var player = $('posVoiceSamplePlayer');
+    var placeholder = $('posVoiceSamplePlaceholder');
+    if (d && d.sampleAudioPath) {
+      player.src = d.sampleAudioPath + '?t=' + Date.now();
+      player.style.display = 'block';
+      placeholder.style.display = 'none';
+    } else {
+      player.style.display = 'none';
+      placeholder.style.display = 'block';
+    }
+  };
+  window._posCancelVoiceForm = function() { $('posVoiceFormWrap').classList.add('hidden'); };
+
+  window._posSaveVoice = async function() {
+    var editId = $('posVoiceEditId').value;
+    var body = {
+      name: $('posVoiceName').value,
+      characterId: $('posVoiceCharId').value,
+      voicePresetId: $('posVoicePresetId').value,
+      description: $('posVoiceDesc').value,
+      tags: posParseTags($('posVoiceTags').value),
+    };
+    var result;
+    if (editId) { result = await posApiPut('/api/pos/voices/'+editId, body); }
+    else { result = await apiPost('/api/pos/voices', body); }
+    if (result.error) { alert('Error: '+result.error); return; }
+    $('posVoiceFormWrap').classList.add('hidden');
+    window._posLoadVoices();
+  };
+
+  window._posEditVoice = async function(id) {
+    var data = await apiGet('/api/pos/voices/'+id);
+    if (data.error) { alert('Not found'); return; }
+    window._posShowVoiceForm(data);
+  };
+
+  window._posDeleteVoice = async function(id) {
+    if (!confirm('Delete this voice?')) return;
+    await posApiDelete('/api/pos/voices/'+id);
+    $('posVoiceFormWrap').classList.add('hidden');
+    window._posLoadVoices();
+  };
+
+  window._posUploadVoiceSample = async function(input) {
+    var editId = $('posVoiceEditId').value;
+    if (!editId) { alert('Save the voice first before uploading a sample.'); input.value=''; return; }
+    var file = input.files[0]; if (!file) return;
+    var fd = new FormData(); fd.append('sample', file);
+    try {
+      var resp = await fetch('/api/pos/voices/'+editId+'/sample', {method:'POST', body:fd});
+      var data = await resp.json();
+      if (data.ok) {
+        $('posVoiceSamplePlayer').src = data.sample_url + '?t=' + Date.now();
+        $('posVoiceSamplePlayer').style.display = 'block';
+        $('posVoiceSamplePlaceholder').style.display = 'none';
       } else { alert('Upload error: '+(data.error||'unknown')); }
     } catch(e) { alert('Upload failed: '+e.message); }
     input.value = '';
@@ -14084,6 +14302,19 @@ document.addEventListener('DOMContentLoaded', function() {
   // Generate preview for a single scene
   // Generate First Frame only (fast image, no video)
   window._generateFirstFrame = function(sceneIndex) {
+    // Before the fetch call, check if scene has required assets
+    var scene = window._autoScenes && window._autoScenes[sceneIndex];
+    if (scene) {
+      var chars = scene.characters || [];
+      var envs = scene.environments || [];
+      if (chars.length === 0 && envs.length === 0) {
+        window._toast('No characters or environments assigned to this scene. Add them in the PROJECT tab first.', 'warning', 5000);
+        return;
+      }
+      if (chars.length === 0) {
+        window._toast('No character assigned to scene ' + (sceneIndex+1) + '. The first frame will use environment only.', 'warning', 4000);
+      }
+    }
     // Create persistent progress toast
     var container = document.getElementById('toastContainer');
     var toastEl = document.createElement('div');

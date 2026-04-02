@@ -764,6 +764,80 @@ def _runway_generate_scene_image(prompt: str, reference_photos: list,
     return ""
 
 
+def _runway_video_to_video(video_path: str, prompt: str, reference_image_path: str = None) -> str:
+    """Transform an existing video using gen4_aleph with an optional image reference.
+
+    Per API spec: POST /v1/video_to_video
+    - model: gen4_aleph (required)
+    - videoUri: data URI of input video
+    - promptText: what to change
+    - references: optional [{type:"image", uri:"data:image/..."}] (max 1)
+
+    Returns path to output video, or raises on failure.
+    """
+    if not video_path or not os.path.isfile(video_path):
+        raise FileNotFoundError(f"Input video not found: {video_path}")
+
+    # Read video and convert to data URI
+    with open(video_path, "rb") as f:
+        video_bytes = f.read()
+    ext = os.path.splitext(video_path)[1].lower()
+    video_mime_map = {
+        ".mp4": "video/mp4", ".webm": "video/webm",
+        ".mov": "video/quicktime", ".avi": "video/x-msvideo",
+    }
+    video_mime = video_mime_map.get(ext, "video/mp4")
+    video_b64 = base64.b64encode(video_bytes).decode("ascii")
+    video_uri = f"data:{video_mime};base64,{video_b64}"
+
+    file_kb = len(video_bytes) / 1024
+    print(f"[RUNWAY/video_to_video] Input video: {os.path.basename(video_path)}, "
+          f"{file_kb:.0f}KB, prompt={prompt[:80]}...")
+
+    payload = {
+        "model": "gen4_aleph",
+        "videoUri": video_uri,
+        "promptText": prompt[:1000],
+    }
+
+    # Add optional image reference
+    if reference_image_path and os.path.isfile(reference_image_path):
+        ref_uri = _photo_to_data_uri(reference_image_path)
+        payload["references"] = [{"type": "image", "uri": ref_uri}]
+        print(f"[RUNWAY/video_to_video] Added image reference: {os.path.basename(reference_image_path)}")
+
+    resp = requests.post(
+        f"{RUNWAY_API_BASE}/video_to_video",
+        headers=_runway_headers(),
+        json=payload,
+        timeout=120,
+    )
+
+    if resp.status_code not in (200, 201):
+        err_body = resp.text[:500]
+        print(f"[RUNWAY/video_to_video] Error {resp.status_code}: {err_body}")
+        raise RuntimeError(f"video_to_video API {resp.status_code}: {err_body}")
+
+    data = resp.json()
+    task_id = data.get("id", "")
+    if not task_id:
+        print(f"[RUNWAY/video_to_video] No task ID returned: {data}")
+        raise RuntimeError("video_to_video returned no task ID")
+
+    # Poll for completion
+    result = _runway_poll(task_id)
+    video_url = result.get("url", "")
+    if not video_url:
+        raise RuntimeError(f"video_to_video completed but no output URL (task={task_id})")
+
+    # Download to output file
+    import tempfile
+    out_path = os.path.join(tempfile.gettempdir(), f"runway_v2v_{task_id[:8]}.mp4")
+    _download(video_url, out_path)
+    print(f"[RUNWAY/video_to_video] Output saved to {out_path}")
+    return out_path
+
+
 def _runway_submit_text_to_video(prompt: str, duration: int = 5,
                                   ratio: str = "16:9",
                                   model: str = "gen4.5",
