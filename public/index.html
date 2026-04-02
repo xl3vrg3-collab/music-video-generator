@@ -2609,6 +2609,16 @@ document.addEventListener('keydown', function(e) {
       </div>
     </div>
 
+    <!-- Continuity Rules -->
+    <div style="margin-top:16px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);">
+      <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:12px;">Continuity Rules</div>
+      <div id="continuityRulesList" style="margin-bottom:8px;"></div>
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="continuityRuleInput" class="styled-input" placeholder="e.g. Character always wears red jacket in outdoor scenes" style="flex:1;">
+        <button class="btn btn-small btn-green" onclick="window._addContinuityRule()">+ Add Rule</button>
+      </div>
+    </div>
+
     <!-- Hidden containers for JS compatibility with director reference functions (refs in ASSETS tab) -->
     <div style="display:none;">
       <div id="directorCharsInline"></div>
@@ -3216,6 +3226,43 @@ document.addEventListener('keydown', function(e) {
         </div>
         <div id="stsResult" style="margin-top:8px;display:none;">
           <audio id="stsPlayer" controls style="width:100%;height:36px;"></audio>
+        </div>
+      </div>
+
+      <!-- Voice Dubbing (Multi-Language) -->
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+        <div style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Voice Dubbing (Multi-Language)</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <label class="btn btn-small" style="cursor:pointer;">
+            Upload Audio <input type="file" accept=".mp3,.wav,.m4a" style="display:none;" id="dubAudioInput" onchange="document.getElementById('dubFilename').textContent=this.files[0]?this.files[0].name:'No file'">
+          </label>
+          <span id="dubFilename" style="font-size:10px;color:var(--text-dim);">No file</span>
+          <select id="dubTargetLang" class="styled-select" style="width:120px;font-size:10px;">
+            <option value="es">Spanish</option><option value="fr">French</option><option value="de">German</option>
+            <option value="pt">Portuguese</option><option value="zh">Chinese</option><option value="ja">Japanese</option>
+            <option value="ko">Korean</option><option value="ar">Arabic</option><option value="hi">Hindi</option>
+            <option value="ru">Russian</option><option value="it">Italian</option><option value="nl">Dutch</option>
+            <option value="tr">Turkish</option><option value="pl">Polish</option><option value="sv">Swedish</option>
+          </select>
+          <button class="btn btn-small btn-green" onclick="window._generateDubbing()">Dub</button>
+        </div>
+        <div id="dubResult" style="margin-top:8px;display:none;">
+          <audio id="dubPlayer" controls style="width:100%;height:36px;"></audio>
+        </div>
+      </div>
+
+      <!-- Voice Isolation (Remove Background) -->
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+        <div style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Voice Isolation (Remove Background)</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <label class="btn btn-small" style="cursor:pointer;">
+            Upload Audio <input type="file" accept=".mp3,.wav,.m4a" style="display:none;" id="isoAudioInput" onchange="document.getElementById('isoFilename').textContent=this.files[0]?this.files[0].name:'No file'">
+          </label>
+          <span id="isoFilename" style="font-size:10px;color:var(--text-dim);">No file</span>
+          <button class="btn btn-small btn-amber" onclick="window._generateIsolation()">Isolate Voice</button>
+        </div>
+        <div id="isoResult" style="margin-top:8px;display:none;">
+          <audio id="isoPlayer" controls style="width:100%;height:36px;"></audio>
         </div>
       </div>
 
@@ -9712,7 +9759,36 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   };
 
+  window._loadContinuityRules = function() {
+    fetch('/api/pos/continuity-rules').then(function(r){return r.json()}).then(function(rules) {
+      var list = document.getElementById('continuityRulesList');
+      if (!list) return;
+      if (!rules.length) { list.innerHTML = '<div style="font-size:10px;color:var(--text-dim);">No continuity rules yet</div>'; return; }
+      list.innerHTML = rules.map(function(r, i) {
+        return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);">' +
+          '<span style="flex:1;font-size:11px;color:var(--text);">' + (r.rule||'').replace(/</g,'&lt;') + '</span>' +
+          '<button class="btn btn-small" style="font-size:8px;padding:2px 6px;border-color:var(--red);color:var(--red);" onclick="window._deleteContinuityRule('+i+')">X</button></div>';
+      }).join('');
+    }).catch(function(e){ console.warn('[LUMN]', e.message); });
+  };
+
+  window._addContinuityRule = function() {
+    var input = document.getElementById('continuityRuleInput');
+    if (!input || !input.value.trim()) return;
+    fetch('/api/pos/continuity-rules', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({rule:input.value.trim()})})
+      .then(function(){input.value='';window._loadContinuityRules();window._toast('Rule added','success',2000);})
+      .catch(function(e){window._toast('Failed: '+e.message,'error');});
+  };
+
+  window._deleteContinuityRule = function(index) {
+    fetch('/api/pos/continuity-rules/'+index, {method:'DELETE'})
+      .then(function(){window._loadContinuityRules();window._toast('Rule removed','info',2000);})
+      .catch(function(e){window._toast('Failed: '+e.message,'error');});
+  };
+
   window._adInit = function() {
+    // Load continuity rules
+    if (typeof window._loadContinuityRules === 'function') window._loadContinuityRules();
     // Load saved Director state from settings
     fetch('/api/settings').then(r=>r.json()).then(settings => {
       var ds = settings.director_state || {};
@@ -14122,6 +14198,37 @@ document.addEventListener('DOMContentLoaded', function() {
       if (result) result.style.display = '';
       if (player) player.src = data.audio_url + '?t=' + Date.now();
     }).catch(function(e){ window._toast('STS error: ' + e.message, 'error'); });
+  };
+
+  window._generateDubbing = function() {
+    var input = document.getElementById('dubAudioInput');
+    var lang = document.getElementById('dubTargetLang').value;
+    if (!input || !input.files[0]) { window._toast('Upload audio first', 'warning'); return; }
+    var form = new FormData(); form.append('file', input.files[0]);
+    window._toast('Dubbing to ' + lang + '...', 'info', 60000);
+    fetch('/api/upload', {method:'POST', body:form}).then(function(r){return r.json()}).then(function(d) {
+      return fetch('/api/generate-voice-dubbing', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({audioFilename:d.filename||input.files[0].name, targetLang:lang})});
+    }).then(function(r){return r.json()}).then(function(d) {
+      if (d.error) { window._toast('Dubbing failed: '+d.error,'error',5000); return; }
+      window._toast('Dubbing complete!','success');
+      var r=document.getElementById('dubResult'), p=document.getElementById('dubPlayer');
+      if(r) r.style.display=''; if(p) p.src=d.audio_url+'?t='+Date.now();
+    }).catch(function(e){window._toast('Dubbing error: '+e.message,'error');});
+  };
+
+  window._generateIsolation = function() {
+    var input = document.getElementById('isoAudioInput');
+    if (!input || !input.files[0]) { window._toast('Upload audio first', 'warning'); return; }
+    var form = new FormData(); form.append('file', input.files[0]);
+    window._toast('Isolating voice...', 'info', 60000);
+    fetch('/api/upload', {method:'POST', body:form}).then(function(r){return r.json()}).then(function(d) {
+      return fetch('/api/generate-voice-isolation', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({audioFilename:d.filename||input.files[0].name})});
+    }).then(function(r){return r.json()}).then(function(d) {
+      if (d.error) { window._toast('Isolation failed: '+d.error,'error',5000); return; }
+      window._toast('Voice isolated!','success');
+      var r=document.getElementById('isoResult'), p=document.getElementById('isoPlayer');
+      if(r) r.style.display=''; if(p) p.src=d.audio_url+'?t='+Date.now();
+    }).catch(function(e){window._toast('Isolation error: '+e.message,'error');});
   };
 
   window._generateSFX = function() {

@@ -3395,6 +3395,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/pos/world-rules":
             self._send_json({"worldRules": _prompt_os.get_world_rules()})
 
+        elif path == "/api/pos/continuity-rules":
+            self._send_json(_prompt_os.get_continuity_rules())
+
         # ──── Auto Director GET routes ────
         elif path == "/api/auto-director/status":
             self._send_json(_auto_director.progress)
@@ -4502,6 +4505,23 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/generate-speech-to-speech":
             self._handle_generate_sts()
 
+        elif path == "/api/generate-voice-dubbing":
+            self._handle_generate_voice_dubbing()
+
+        elif path == "/api/generate-voice-isolation":
+            self._handle_generate_voice_isolation()
+
+        elif path == "/api/pos/continuity-rules":
+            body = json.loads(self._read_body())
+            rule_text = body.get("rule", "").strip()
+            if not rule_text:
+                self._send_json({"error": "rule is required"}, 400)
+            else:
+                rules = _prompt_os.get_continuity_rules()
+                rules.append({"rule": rule_text})
+                _prompt_os.set_continuity_rules(rules)
+                self._send_json({"ok": True})
+
         else:
             self.send_error(404)
 
@@ -4650,6 +4670,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"ok": True})
             else:
                 self._send_json({"error": "Not found"}, 404)
+
+        elif re.match(r'^/api/pos/continuity-rules/(\d+)$', path):
+            m = re.match(r'^/api/pos/continuity-rules/(\d+)$', path)
+            idx = int(m.group(1))
+            rules = _prompt_os.get_continuity_rules()
+            if 0 <= idx < len(rules):
+                rules.pop(idx)
+                _prompt_os.set_continuity_rules(rules)
+                self._send_json({"ok": True})
+            else:
+                self._send_json({"error": "Index out of range"}, 404)
 
         else:
             self.send_error(404)
@@ -5513,6 +5544,151 @@ class Handler(BaseHTTPRequestHandler):
                 })
             except Exception as e:
                 print(f"[AUDIO] STS generation failed: {e}")
+                self._send_json({"ok": False, "error": str(e)}, 500)
+
+        _run()
+
+    def _handle_generate_voice_dubbing(self):
+        """POST /api/generate-voice-dubbing -- Runway voice_dubbing API."""
+        try:
+            body = json.loads(self._read_body())
+        except Exception:
+            self._send_json({"ok": False, "error": "Invalid JSON body"}, 400)
+            return
+
+        audio_filename = body.get("audioFilename", "").strip()
+        target_lang = body.get("targetLang", "es").strip()
+
+        if not audio_filename:
+            self._send_json({"ok": False, "error": "audioFilename is required"}, 400)
+            return
+
+        SUPPORTED_LANGS = {"en","hi","pt","zh","es","fr","de","ja","ar","ru","ko","id","it","nl","tr","pl","sv","fil","ms","ro","uk","el","cs","da","fi","bg","hr","sk","ta"}
+        if target_lang not in SUPPORTED_LANGS:
+            self._send_json({"ok": False, "error": f"Unsupported language: {target_lang}"}, 400)
+            return
+
+        audio_path = os.path.join(UPLOADS_DIR, audio_filename)
+        if not os.path.isfile(audio_path):
+            self._send_json({"ok": False, "error": f"Audio file not found: {audio_filename}"}, 404)
+            return
+
+        def _run():
+            import requests, base64
+            try:
+                with open(audio_path, "rb") as f:
+                    audio_bytes = f.read()
+                ext = os.path.splitext(audio_filename)[1].lower().lstrip(".")
+                mime = {"mp3": "audio/mp3", "wav": "audio/wav", "m4a": "audio/m4a"}.get(ext, "audio/mp3")
+                data_uri = f"data:{mime};base64,{base64.b64encode(audio_bytes).decode()}"
+
+                payload = {
+                    "model": "eleven_voice_dubbing",
+                    "audioUri": data_uri,
+                    "targetLang": target_lang,
+                    "disableVoiceCloning": False,
+                    "dropBackgroundAudio": False,
+                }
+                resp = requests.post(
+                    f"{RUNWAY_API_BASE}/voice_dubbing",
+                    headers=_runway_headers(),
+                    json=payload,
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                task_id = data.get("id", "")
+                if not task_id:
+                    raise RuntimeError(f"No task ID returned: {data}")
+
+                print(f"[AUDIO] Voice dubbing task submitted: {task_id}")
+
+                result = _runway_poll(task_id)
+                audio_url = result["url"]
+
+                out_ext = ".mp3"
+                if ".wav" in audio_url:
+                    out_ext = ".wav"
+                filename = f"dub_{target_lang}_{task_id[:12]}_{int(time.time())}{out_ext}"
+                dest = os.path.join(AUDIO_GEN_DIR, filename)
+                _download(audio_url, dest)
+
+                print(f"[AUDIO] Voice dubbing saved: {dest}")
+                self._send_json({
+                    "ok": True,
+                    "audio_url": f"/api/audio/generated/{filename}",
+                    "filename": filename,
+                })
+            except Exception as e:
+                print(f"[AUDIO] Voice dubbing failed: {e}")
+                self._send_json({"ok": False, "error": str(e)}, 500)
+
+        _run()
+
+    def _handle_generate_voice_isolation(self):
+        """POST /api/generate-voice-isolation -- Runway voice_isolation API."""
+        try:
+            body = json.loads(self._read_body())
+        except Exception:
+            self._send_json({"ok": False, "error": "Invalid JSON body"}, 400)
+            return
+
+        audio_filename = body.get("audioFilename", "").strip()
+
+        if not audio_filename:
+            self._send_json({"ok": False, "error": "audioFilename is required"}, 400)
+            return
+
+        audio_path = os.path.join(UPLOADS_DIR, audio_filename)
+        if not os.path.isfile(audio_path):
+            self._send_json({"ok": False, "error": f"Audio file not found: {audio_filename}"}, 404)
+            return
+
+        def _run():
+            import requests, base64
+            try:
+                with open(audio_path, "rb") as f:
+                    audio_bytes = f.read()
+                ext = os.path.splitext(audio_filename)[1].lower().lstrip(".")
+                mime = {"mp3": "audio/mp3", "wav": "audio/wav", "m4a": "audio/m4a"}.get(ext, "audio/mp3")
+                data_uri = f"data:{mime};base64,{base64.b64encode(audio_bytes).decode()}"
+
+                payload = {
+                    "model": "eleven_voice_isolation",
+                    "audioUri": data_uri,
+                }
+                resp = requests.post(
+                    f"{RUNWAY_API_BASE}/voice_isolation",
+                    headers=_runway_headers(),
+                    json=payload,
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                task_id = data.get("id", "")
+                if not task_id:
+                    raise RuntimeError(f"No task ID returned: {data}")
+
+                print(f"[AUDIO] Voice isolation task submitted: {task_id}")
+
+                result = _runway_poll(task_id)
+                audio_url = result["url"]
+
+                out_ext = ".mp3"
+                if ".wav" in audio_url:
+                    out_ext = ".wav"
+                filename = f"iso_{task_id[:12]}_{int(time.time())}{out_ext}"
+                dest = os.path.join(AUDIO_GEN_DIR, filename)
+                _download(audio_url, dest)
+
+                print(f"[AUDIO] Voice isolation saved: {dest}")
+                self._send_json({
+                    "ok": True,
+                    "audio_url": f"/api/audio/generated/{filename}",
+                    "filename": filename,
+                })
+            except Exception as e:
+                print(f"[AUDIO] Voice isolation failed: {e}")
                 self._send_json({"ok": False, "error": str(e)}, 500)
 
         _run()
