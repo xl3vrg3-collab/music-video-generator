@@ -2431,6 +2431,7 @@ document.addEventListener('keydown', function(e) {
       if (subTab === 'characters' && typeof window._posLoadChars === 'function') window._posLoadChars();
       if (subTab === 'costumes' && typeof window._posLoadCostumes === 'function') window._posLoadCostumes();
       if (subTab === 'environments' && typeof window._posLoadEnvironments === 'function') window._posLoadEnvironments();
+      if (subTab === 'props' && typeof window._posLoadProps === 'function') window._posLoadProps();
     };
 
     // Move entity content into asset panels once DOM is ready
@@ -2804,11 +2805,91 @@ document.addEventListener('keydown', function(e) {
     <div id="assetPanelEnvironments" class="hidden">
     </div>
     <div id="assetPanelProps" class="hidden">
-      <div style="text-align:center;padding:40px;color:var(--text-dim);">
-        <div style="font-size:14px;margin-bottom:8px;">Props &amp; Accessories</div>
-        <div style="font-size:11px;">Upload or create reusable props for your scenes</div>
-        <div style="font-size:10px;margin-top:16px;color:var(--amber);">Coming soon — Props will be linkable to characters and scenes</div>
+
+      <!-- A. PROPS LIBRARY STRIP -->
+      <div style="margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div>
+            <span id="propLibCount" style="font-size:11px;color:var(--text-dim);">0 props</span>
+          </div>
+          <button class="btn btn-tier-secondary" onclick="window._posShowPropForm()" style="font-size:11px;padding:6px 16px;">+ New Prop</button>
+        </div>
+        <div id="posPropList" class="pos-entity-list">
+          <div class="pos-empty">No props yet. Create your first prop to use in scenes.</div>
+        </div>
       </div>
+
+      <!-- B. PROP EDITOR -->
+      <div id="posPropFormWrap" class="hidden">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;">
+          <input type="hidden" id="posPropEditId" value="">
+
+          <!-- Editor Header -->
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;background:var(--bg);">
+            <div style="flex:1;">
+              <div id="propEditorName" style="font-weight:700;font-size:14px;color:var(--text);">New Prop</div>
+            </div>
+          </div>
+
+          <div style="padding:16px;">
+            <div style="margin-bottom:20px;">
+              <h4 class="section-label section-label-cyan">Details</h4>
+              <div class="pos-form">
+                <div class="form-row">
+                  <div class="pos-field-group" style="flex:1;">
+                    <label>Name <span style="color:var(--red);font-size:8px;">required</span></label>
+                    <input type="text" id="posPropName" placeholder="e.g. Magic Sword, Golden Locket">
+                  </div>
+                  <div class="pos-field-group" style="flex:1;">
+                    <label>Category</label>
+                    <select id="posPropCategory" class="styled-select">
+                      <option value="">Select...</option>
+                      <option>weapon</option><option>tool</option><option>furniture</option>
+                      <option>vehicle</option><option>clothing</option><option>jewelry</option>
+                      <option>food</option><option>technology</option><option>nature</option>
+                      <option>decoration</option><option>other</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="pos-field-group">
+                  <label>Description</label>
+                  <textarea id="posPropDesc" rows="3" placeholder="Describe the prop's appearance, materials, condition..."></textarea>
+                </div>
+                <div class="pos-field-group">
+                  <label>Tags</label>
+                  <input type="text" id="posPropTags" placeholder="Comma-separated tags">
+                </div>
+              </div>
+            </div>
+
+            <!-- Photo Upload -->
+            <div style="margin-bottom:20px;">
+              <h4 class="section-label section-label-cyan">Reference Photo</h4>
+              <div style="display:flex;gap:16px;align-items:flex-start;">
+                <div style="width:120px;height:120px;background:var(--bg);border:1px dashed var(--border);border-radius:var(--radius);overflow:hidden;position:relative;">
+                  <img id="posPropPhotoThumb" style="width:100%;height:100%;object-fit:cover;display:none;" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+                  <div id="posPropPhotoPlaceholder" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--border);font-size:28px;">&#128230;</div>
+                </div>
+                <div style="flex:1;">
+                  <label class="btn btn-tier-secondary" style="font-size:10px;padding:6px 14px;cursor:pointer;display:inline-block;">
+                    Upload Photo
+                    <input type="file" accept="image/*" style="display:none;" onchange="window._posUploadPropPhoto(this)">
+                  </label>
+                  <div style="font-size:9px;color:var(--text-dim);margin-top:6px;">Upload a reference image for this prop</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Actions -->
+            <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:12px;border-top:1px solid var(--border);">
+              <button class="btn btn-tier-secondary" onclick="window._posSaveProp()" style="font-size:11px;padding:8px 20px;">Save Prop</button>
+              <button class="btn btn-small btn-tier-ghost" onclick="window._posCancelPropForm()">Cancel</button>
+              <button class="btn btn-small btn-tier-danger" onclick="var id=$('posPropEditId').value;if(id&&confirm('Delete this prop?')){window._posDeleteProp(id);}" style="font-size:9px;">Delete</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
     <div id="assetPanelVoices" class="hidden">
       <div style="text-align:center;padding:40px;color:var(--text-dim);">
@@ -2842,6 +2923,17 @@ document.addEventListener('keydown', function(e) {
         <button class="btn btn-small" onclick="window._filterShots('full')" id="shotFilterFull">Full</button>
         <button class="btn btn-small" onclick="window._filterShots('wide')" id="shotFilterWide">Wide</button>
         <button class="btn btn-small" onclick="window._filterShots('establishing')" id="shotFilterEstablishing">Establishing</button>
+      </div>
+
+      <!-- Approval status filter -->
+      <div id="approvalFilterRow" style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
+        <span style="font-size:9px;color:var(--text-dim);padding:4px 0;">Status:</span>
+        <button class="btn btn-small active" data-approval="all" onclick="window._filterByApproval('all')">All</button>
+        <button class="btn btn-small" data-approval="draft" onclick="window._filterByApproval('draft')">Draft</button>
+        <button class="btn btn-small" data-approval="generated" onclick="window._filterByApproval('generated')">Generated</button>
+        <button class="btn btn-small" data-approval="selected" onclick="window._filterByApproval('selected')">Selected</button>
+        <button class="btn btn-small" data-approval="approved" onclick="window._filterByApproval('approved')">Approved</button>
+        <button class="btn btn-small" data-approval="locked" onclick="window._filterByApproval('locked')">Locked</button>
       </div>
 
       <!-- Scene cards container (reuses existing rendering) -->
@@ -8429,6 +8521,92 @@ document.addEventListener('DOMContentLoaded', function() {
     btn.textContent = 'Generate Preview'; btn.disabled = false;
   };
 
+  // ---- PROPS ----
+  window._posLoadProps = async function() {
+    var data = await apiGet('/api/pos/props');
+    var list = $('posPropList');
+    var props = data.props || [];
+    var countEl = $('propLibCount');
+    if (countEl) countEl.textContent = props.length + ' prop' + (props.length !== 1 ? 's' : '');
+    if (!props.length) { list.innerHTML = '<div class="pos-empty">No props yet. Create your first prop to use in scenes.</div>'; return; }
+    list.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;">' + props.map(function(p) {
+      var imgSrc = p.referenceImagePath ? (p.referenceImagePath+'?t='+Date.now()) : '';
+      var tags = (p.tags || []);
+      var catLabel = p.category || '';
+      return '<div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;cursor:pointer;transition:border-color 0.15s;" onmouseover="this.style.borderColor=\'#7c5cff\'" onmouseout="this.style.borderColor=\'\'" onclick="window._posEditProp(\''+p.id+'\')">'
+        + (imgSrc ? '<img src="'+imgSrc+'" style="width:100%;height:120px;object-fit:cover;display:block;" onerror="this.style.display=\'none\'">' :
+           '<div style="width:100%;height:120px;background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--border);font-size:24px;">&#128230;</div>')
+        + '<div style="padding:8px 10px;">'
+          + '<div style="font-weight:700;font-size:12px;color:var(--text);margin-bottom:2px;">'+escHtml(p.name)+'</div>'
+          + (catLabel ? '<div style="font-size:9px;color:var(--amber);margin-bottom:2px;">'+escHtml(catLabel)+'</div>' : '')
+          + (p.description ? '<div style="font-size:9px;color:var(--text-dim);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">'+escHtml(p.description.substring(0,50))+'</div>' : '')
+        + '</div></div>';
+    }).join('') + '</div>';
+  };
+
+  window._posShowPropForm = function(d) {
+    $('posPropFormWrap').classList.remove('hidden');
+    $('posPropEditId').value = d?d.id:'';
+    $('posPropName').value = d?(d.name||''):'';
+    $('posPropDesc').value = d?(d.description||''):'';
+    _setSelectOrCustom('posPropCategory', d?(d.category||''):'');
+    $('posPropTags').value = d?(d.tags||[]).join(', '):'';
+    var eName = $('propEditorName');
+    if (eName) eName.textContent = (d && d.name) ? d.name : 'New Prop';
+    // Photo thumb
+    var pt = $('posPropPhotoThumb'), pp = $('posPropPhotoPlaceholder');
+    if (d && d.referenceImagePath) {
+      pt.src = '/api/pos/props/' + d.id + '/photo?t=' + Date.now(); pt.style.display='block'; pp.style.display='none';
+    } else { pt.style.display='none'; pp.style.display='flex'; }
+  };
+  window._posCancelPropForm = function() { $('posPropFormWrap').classList.add('hidden'); };
+
+  window._posSaveProp = async function() {
+    var editId = $('posPropEditId').value;
+    var body = {
+      name: $('posPropName').value,
+      description: $('posPropDesc').value,
+      category: $('posPropCategory').value,
+      tags: posParseTags($('posPropTags').value),
+    };
+    var result;
+    if (editId) { result = await posApiPut('/api/pos/props/'+editId, body); }
+    else { result = await apiPost('/api/pos/props', body); }
+    if (result.error) { alert('Error: '+result.error); return; }
+    $('posPropFormWrap').classList.add('hidden');
+    window._posLoadProps();
+  };
+
+  window._posEditProp = async function(id) {
+    var data = await apiGet('/api/pos/props/'+id);
+    if (data.error) { alert('Not found'); return; }
+    window._posShowPropForm(data);
+  };
+
+  window._posDeleteProp = async function(id) {
+    if (!confirm('Delete this prop?')) return;
+    await posApiDelete('/api/pos/props/'+id);
+    $('posPropFormWrap').classList.add('hidden');
+    window._posLoadProps();
+  };
+
+  window._posUploadPropPhoto = async function(input) {
+    var editId = $('posPropEditId').value;
+    if (!editId) { alert('Save the prop first before uploading a photo.'); input.value=''; return; }
+    var file = input.files[0]; if (!file) return;
+    var fd = new FormData(); fd.append('photo', file);
+    try {
+      var resp = await fetch('/api/pos/props/'+editId+'/photo', {method:'POST', body:fd});
+      var data = await resp.json();
+      if (data.ok) {
+        $('posPropPhotoThumb').src = data.photo_url + '?t=' + Date.now();
+        $('posPropPhotoThumb').style.display = 'block';
+        $('posPropPhotoPlaceholder').style.display = 'none';
+      } else { alert('Upload error: '+(data.error||'unknown')); }
+    } catch(e) { alert('Upload failed: '+e.message); }
+    input.value = '';
+  };
+
   // ---- Drag-and-drop for photo dropzones ----
   (function() {
     const zones = ['posCharPhotoDropzone', 'posCostumePhotoDropzone', 'posEnvPhotoDropzone'];
@@ -12646,6 +12824,28 @@ document.addEventListener('DOMContentLoaded', function() {
         var arrow = document.createElement('span');
         arrow.className = 'expand-arrow';
         arrow.textContent = '\u25BC';
+        // Approval status badge
+        var approvalStatus = scene.approval || 'draft';
+        var approvalColors = {
+          draft: {bg:'var(--surface2)', color:'var(--text-dim)', label:'Draft'},
+          generated: {bg:'var(--cyan-dim)', color:'var(--cyan)', label:'Generated'},
+          selected: {bg:'var(--amber-dim)', color:'var(--amber)', label:'Selected'},
+          approved: {bg:'var(--green-dim)', color:'var(--green)', label:'Approved'},
+          locked: {bg:'var(--violet)', color:'#fff', label:'Locked'},
+        };
+        var aStyle = approvalColors[approvalStatus] || approvalColors.draft;
+        var approvalBadge = document.createElement('span');
+        approvalBadge.style.cssText = 'font-size:8px;padding:2px 6px;border-radius:3px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;background:' + aStyle.bg + ';color:' + aStyle.color + ';';
+        approvalBadge.textContent = aStyle.label;
+        approvalBadge.title = 'Click to change approval status';
+        approvalBadge.onclick = (function(idx, currentStatus) {
+          return function(e) {
+            e.stopPropagation();
+            window._cycleApproval(idx, currentStatus);
+          };
+        })(i, approvalStatus);
+
+        header.appendChild(approvalBadge);
         header.appendChild(beatBadge);
         header.appendChild(title);
         header.appendChild(dur);
@@ -12815,6 +13015,28 @@ document.addEventListener('DOMContentLoaded', function() {
         };
       })(sceneIdx, scene);
 
+      // Approval status badge
+      var approvalStatus = scene.approval || 'draft';
+      var approvalColors = {
+        draft: {bg:'var(--surface2)', color:'var(--text-dim)', label:'Draft'},
+        generated: {bg:'var(--cyan-dim)', color:'var(--cyan)', label:'Generated'},
+        selected: {bg:'var(--amber-dim)', color:'var(--amber)', label:'Selected'},
+        approved: {bg:'var(--green-dim)', color:'var(--green)', label:'Approved'},
+        locked: {bg:'var(--violet)', color:'#fff', label:'Locked'},
+      };
+      var aStyle = approvalColors[approvalStatus] || approvalColors.draft;
+      var approvalBadge = document.createElement('span');
+      approvalBadge.style.cssText = 'font-size:8px;padding:2px 6px;border-radius:3px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;background:' + aStyle.bg + ';color:' + aStyle.color + ';';
+      approvalBadge.textContent = aStyle.label;
+      approvalBadge.title = 'Click to change approval status';
+      approvalBadge.onclick = (function(idx, currentStatus) {
+        return function(e) {
+          e.stopPropagation();
+          window._cycleApproval(idx, currentStatus);
+        };
+      })(sceneIdx, approvalStatus);
+
+      header.appendChild(approvalBadge);
       header.appendChild(beatBadge);
       header.appendChild(shotTypeSelect);
       header.appendChild(titleSpan);
@@ -13290,6 +13512,51 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   };
 
+  window._cycleApproval = function(sceneIndex, currentStatus) {
+    var order = ['draft', 'generated', 'selected', 'approved', 'locked'];
+    var nextIdx = (order.indexOf(currentStatus) + 1) % order.length;
+    var nextStatus = order[nextIdx];
+
+    if (window._autoScenes && window._autoScenes[sceneIndex]) {
+      window._autoScenes[sceneIndex].approval = nextStatus;
+    }
+
+    // Save to plan
+    fetch('/api/auto-director/scene/' + sceneIndex + '/edit', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({approval: nextStatus})
+    }).then(function(r){return r.json()}).then(function() {
+      window._toast('Scene ' + (sceneIndex+1) + ' \u2192 ' + nextStatus, 'info', 2000);
+      // Re-render cards
+      if (typeof window._initShotsWorkspace === 'function') window._initShotsWorkspace();
+      // Also re-render main scene cards
+      window._renderAutoSceneCards(
+        document.getElementById('autoSceneCards'),
+        document.getElementById('autoScenePlanStats'),
+        window._autoScenes
+      );
+    }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
+  };
+
+  window._filterByApproval = function(status) {
+    // Update filter button active states
+    var filterRow = document.getElementById('approvalFilterRow');
+    if (filterRow) {
+      var btns = filterRow.querySelectorAll('.btn');
+      btns.forEach(function(btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-approval') === status);
+      });
+    }
+    var cards = document.querySelectorAll('#shotsSceneCards .scene-card-structured');
+    cards.forEach(function(card, i) {
+      var scene = window._autoScenes && window._autoScenes[i];
+      if (!scene) return;
+      var approval = scene.approval || 'draft';
+      card.style.display = (status === 'all' || approval === status) ? '' : 'none';
+    });
+  };
+
   window._generateAllFirstFrames = function() {
     if (!window._autoScenes || !window._autoScenes.length) {
       window._toast && window._toast('No scenes to generate. Create a plan first.', 'warning');
@@ -13594,6 +13861,14 @@ document.addEventListener('DOMContentLoaded', function() {
         costEl.textContent = '$' + (d.total_cost || 0).toFixed(2);
       }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
     }
+
+    // Fetch real Runway credit balance
+    fetch('/api/runway/credits').then(function(r){return r.json()}).then(function(d) {
+      if (d.creditBalance !== undefined) {
+        var bal = document.getElementById('outputCostEstimate');
+        if (bal) bal.textContent = d.creditBalance + ' credits remaining';
+      }
+    }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
   };
 
   window._renderFinalVideo = function() {
@@ -13843,6 +14118,7 @@ document.addEventListener('DOMContentLoaded', function() {
         window._toast('First frame failed: ' + data.error, 'error', 6000);
       } else {
         window._toast('First frame ready for scene ' + (sceneIndex+1), 'success');
+        if (data.scene) data.scene.approval = data.scene.approval || 'generated';
         if (data.scene && window._autoScenes) {
           window._autoScenes[sceneIndex] = data.scene;
         }
@@ -13900,6 +14176,7 @@ document.addEventListener('DOMContentLoaded', function() {
         window._toast('Clip failed: ' + data.error, 'error', 6000);
       } else {
         window._toast('Clip ready for scene ' + (sceneIndex+1), 'success');
+        if (data.scene) data.scene.approval = data.scene.approval || 'generated';
         if (data.scene && window._autoScenes) {
           window._autoScenes[sceneIndex] = data.scene;
         }

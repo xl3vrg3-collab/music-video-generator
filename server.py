@@ -168,6 +168,7 @@ POS_PHOTOS_DIR = os.path.join(PROMPT_OS_DATA_DIR, "photos")
 POS_PHOTOS_CHARS_DIR = os.path.join(POS_PHOTOS_DIR, "characters")
 POS_PHOTOS_COSTUMES_DIR = os.path.join(POS_PHOTOS_DIR, "costumes")
 POS_PHOTOS_ENVS_DIR = os.path.join(POS_PHOTOS_DIR, "environments")
+POS_PHOTOS_PROPS_DIR = os.path.join(POS_PHOTOS_DIR, "props")
 POS_PREVIEWS_DIR = os.path.join(PROMPT_OS_DATA_DIR, "previews")
 POS_PREVIEWS_CHARS_DIR = os.path.join(POS_PREVIEWS_DIR, "characters")
 POS_PREVIEWS_COSTUMES_DIR = os.path.join(POS_PREVIEWS_DIR, "costumes")
@@ -222,6 +223,7 @@ os.makedirs(TAKES_DIR, exist_ok=True)
 os.makedirs(POS_PHOTOS_CHARS_DIR, exist_ok=True)
 os.makedirs(POS_PHOTOS_COSTUMES_DIR, exist_ok=True)
 os.makedirs(POS_PHOTOS_ENVS_DIR, exist_ok=True)
+os.makedirs(POS_PHOTOS_PROPS_DIR, exist_ok=True)
 os.makedirs(POS_PREVIEWS_CHARS_DIR, exist_ok=True)
 os.makedirs(POS_PREVIEWS_COSTUMES_DIR, exist_ok=True)
 os.makedirs(POS_PREVIEWS_ENVS_DIR, exist_ok=True)
@@ -3110,6 +3112,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/cost":
             self._handle_get_cost()
 
+        elif path == "/api/runway/credits":
+            self._handle_runway_credits()
+
         elif path.startswith("/api/storyboard/"):
             fname = os.path.basename(path[len("/api/storyboard/"):])
             self._send_file(os.path.join(STORYBOARD_DIR, fname))
@@ -3331,6 +3336,21 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/pos/environments/([^/]+)/preview$', path):
             m = re.match(r'^/api/pos/environments/([^/]+)/preview$', path)
             self._send_file(os.path.join(POS_PREVIEWS_ENVS_DIR, m.group(1) + ".jpg"))
+
+        elif path == "/api/pos/props":
+            self._send_json({"props": _prompt_os.get_props()})
+
+        elif re.match(r'^/api/pos/props/([^/]+)$', path):
+            m = re.match(r'^/api/pos/props/([^/]+)$', path)
+            rec = _prompt_os.get_prop(m.group(1))
+            if rec:
+                self._send_json(rec)
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif re.match(r'^/api/pos/props/([^/]+)/photo$', path):
+            m = re.match(r'^/api/pos/props/([^/]+)/photo$', path)
+            self._send_file(os.path.join(POS_PHOTOS_PROPS_DIR, m.group(1) + ".jpg"))
 
         elif path == "/api/pos/scenes":
             self._send_json({"scenes": _prompt_os.get_scenes()})
@@ -4191,6 +4211,11 @@ class Handler(BaseHTTPRequestHandler):
             rec = _prompt_os.create_environment(body)
             self._send_json({"ok": True, "environment": rec})
 
+        elif path == "/api/pos/props":
+            body = json.loads(self._read_body())
+            rec = _prompt_os.create_prop(body)
+            self._send_json({"ok": True, "prop": rec})
+
         elif path == "/api/pos/scenes":
             body = json.loads(self._read_body())
             rec = _prompt_os.create_scene(body)
@@ -4228,6 +4253,10 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/pos/environments/([^/]+)/photo$', path):
             m = re.match(r'^/api/pos/environments/([^/]+)/photo$', path)
             self._handle_pos_photo_upload(m.group(1), "environments")
+
+        elif re.match(r'^/api/pos/props/([^/]+)/photo$', path):
+            m = re.match(r'^/api/pos/props/([^/]+)/photo$', path)
+            self._handle_pos_photo_upload(m.group(1), "props")
 
         # ──── Auto-describe from photo ────
         elif re.match(r'^/api/pos/characters/([^/]+)/describe$', path):
@@ -4478,6 +4507,15 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": "Not found"}, 404)
 
+        elif re.match(r'^/api/pos/props/([^/]+)$', path):
+            m = re.match(r'^/api/pos/props/([^/]+)$', path)
+            body = json.loads(self._read_body())
+            rec = _prompt_os.update_prop(m.group(1), body)
+            if rec:
+                self._send_json({"ok": True, "prop": rec})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
         elif re.match(r'^/api/pos/scenes/([^/]+)$', path):
             m = re.match(r'^/api/pos/scenes/([^/]+)$', path)
             body = json.loads(self._read_body())
@@ -4526,6 +4564,13 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/pos/environments/([^/]+)$', path):
             m = re.match(r'^/api/pos/environments/([^/]+)$', path)
             if _prompt_os.delete_environment(m.group(1)):
+                self._send_json({"ok": True})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif re.match(r'^/api/pos/props/([^/]+)$', path):
+            m = re.match(r'^/api/pos/props/([^/]+)$', path)
+            if _prompt_os.delete_prop(m.group(1)):
                 self._send_json({"ok": True})
             else:
                 self._send_json({"error": "Not found"}, 404)
@@ -6457,6 +6502,28 @@ class Handler(BaseHTTPRequestHandler):
         tracker = _load_cost_tracker()
         self._send_json(tracker)
 
+    def _handle_runway_credits(self):
+        """Get real Runway credit balance."""
+        try:
+            import requests
+            resp = requests.get(
+                f"{RUNWAY_API_BASE}/organization",
+                headers=_runway_headers(),
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                self._send_json({
+                    "ok": True,
+                    "creditBalance": data.get("creditBalance", 0),
+                    "tier": data.get("tier", {}),
+                    "usage": data.get("usage", {}),
+                })
+            else:
+                self._send_json({"error": f"Runway API {resp.status_code}"}, resp.status_code)
+        except Exception as e:
+            self._send_json({"error": str(e)[:200]}, 500)
+
     def _handle_quick_preview(self, scene_id: str):
         """Feature 5: Generate a 1-second preview or first frame for a scene."""
         plan = _load_manual_plan()
@@ -6532,6 +6599,7 @@ class Handler(BaseHTTPRequestHandler):
                 "characters": POS_PHOTOS_CHARS_DIR,
                 "costumes": POS_PHOTOS_COSTUMES_DIR,
                 "environments": POS_PHOTOS_ENVS_DIR,
+                "props": POS_PHOTOS_PROPS_DIR,
             }
             out_dir = dirs_map[entity_type]
             os.makedirs(out_dir, exist_ok=True)  # Ensure dir exists after resets
@@ -6559,6 +6627,8 @@ class Handler(BaseHTTPRequestHandler):
                 _prompt_os.update_costume(entity_id, {"referenceImagePath": photo_url})
             elif entity_type == "environments":
                 _prompt_os.update_environment(entity_id, {"referenceImagePath": photo_url})
+            elif entity_type == "props":
+                _prompt_os.update_prop(entity_id, {"referenceImagePath": photo_url})
 
             self._send_json({"ok": True, "photo_url": photo_url})
         except Exception as e:

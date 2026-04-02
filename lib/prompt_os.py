@@ -23,6 +23,7 @@ SCENES_PATH = os.path.join(PROMPT_OS_DIR, "scenes.json")
 STYLE_LOCKS_PATH = os.path.join(PROMPT_OS_DIR, "style_locks.json")
 WORLD_RULES_PATH = os.path.join(PROMPT_OS_DIR, "world_rules.json")
 CONTINUITY_RULES_PATH = os.path.join(PROMPT_OS_DIR, "continuity_rules.json")
+PROPS_PATH = os.path.join(PROMPT_OS_DIR, "props.json")
 
 # Ensure directory exists
 os.makedirs(PROMPT_OS_DIR, exist_ok=True)
@@ -368,6 +369,55 @@ class PromptOS:
         if len(new) == len(envs):
             return False
         _save_json(ENVIRONMENTS_PATH, new)
+        return True
+
+    # ───── Props ─────
+
+    def create_prop(self, data):
+        props = _load_json(PROPS_PATH)
+        record = {
+            "id": _gen_id(),
+            "name": data.get("name", "Untitled Prop"),
+            "description": data.get("description", ""),
+            "category": data.get("category", ""),
+            "referenceImagePath": data.get("referenceImagePath", ""),
+            "tags": data.get("tags", []),
+            "createdAt": _now(),
+            "updatedAt": _now(),
+        }
+        props.append(record)
+        _save_json(PROPS_PATH, props)
+        return record
+
+    def get_props(self):
+        return _load_json(PROPS_PATH)
+
+    def get_prop(self, pid):
+        for p in _load_json(PROPS_PATH):
+            if p["id"] == pid:
+                return p
+        return None
+
+    def update_prop(self, pid, data):
+        props = _load_json(PROPS_PATH)
+        for i, p in enumerate(props):
+            if p["id"] == pid:
+                for key in ("name", "description", "category",
+                             "referenceImagePath", "tags"):
+                    if key in data:
+                        p[key] = data[key]
+                p["updatedAt"] = _now()
+                props[i] = p
+                _save_json(PROPS_PATH, props)
+                return p
+        return None
+
+    def delete_prop(self, pid):
+        props = _load_json(PROPS_PATH)
+        new = [p for p in props if p["id"] != pid]
+        if len(new) == len(props):
+            return False
+        _save_json(PROPS_PATH, new)
         return True
 
     # ───── Scenes ─────
