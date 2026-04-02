@@ -34,6 +34,18 @@ RUNWAY_POLL_TIMEOUT = 600  # max seconds to wait for Runway
 RUNWAY_COST_PER_SEC = 0.05 # ~$0.05 per second (5 credits/sec for turbo)
 MAX_CONCURRENT = 3      # max parallel video generations
 
+# ---- Moderation detection ----
+_MODERATION_KEYWORDS = [
+    "content_moderation", "moderation", "safety", "policy",
+    "flagged", "nsfw", "inappropriate", "prohibited",
+    "violates", "not allowed", "rejected",
+]
+
+def _is_moderation_error(error_str: str) -> bool:
+    """Check if an error message indicates a content moderation rejection."""
+    lower = error_str.lower()
+    return any(kw in lower for kw in _MODERATION_KEYWORDS)
+
 # ---- Engine names ----
 ENGINE_GROK = "grok"
 ENGINE_LUMA = "luma"
@@ -42,18 +54,17 @@ ENGINE_RUNWAY = "runway"
 SUPPORTED_ENGINES = [ENGINE_GROK, ENGINE_LUMA, ENGINE_OPENAI, ENGINE_RUNWAY]
 
 # ---- Model duration options (Area 3) ----
-# Each model supports specific clip durations (seconds).
-# Values determined from API testing.
+# Per Runway API spec: duration is integer 2-10 for all Runway-hosted models.
+# Luma and other engines may have different ranges.
 MODEL_DURATION_OPTIONS = {
-    "gen4_5": [4, 6, 8],           # Confirmed from API error: expects 4, 6, or 8
-    "gen3a_turbo": [5, 10],        # Gen3 uses different durations
-    "kling_pro": [5, 10],
-    "kling_standard": [5, 10],
-    "veo3": [4, 6, 8],
-    "veo3.1": [4, 6, 8],
-    "veo3_1": [4, 6, 8],
-    "veo3.1_fast": [4, 6, 8],
-    "veo3_1_fast": [4, 6, 8],
+    "gen4_5": [2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "gen4.5": [2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "gen4_turbo": [2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "veo3": [2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "veo3.1": [2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "veo3_1": [2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "veo3.1_fast": [2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "veo3_1_fast": [2, 3, 4, 5, 6, 7, 8, 9, 10],
     "grok": [8],
     "luma": [5, 9],
     "openai": [3, 4, 5, 6, 7, 8, 9, 10, 12, 15],
@@ -353,7 +364,20 @@ def _photo_to_data_uri(photo_path: str) -> str:
     }
     mime = mime_map.get(ext, "image/jpeg")
     b64_data = base64.b64encode(photo_bytes).decode("ascii")
-    return f"data:{mime};base64,{b64_data}"
+    data_uri = f"data:{mime};base64,{b64_data}"
+    # Diagnostic: log actual dimensions and size being sent
+    file_kb = len(photo_bytes) / 1024
+    uri_chars = len(data_uri)
+    try:
+        from PIL import Image
+        import io
+        with Image.open(io.BytesIO(photo_bytes)) as img:
+            print(f"[REF ASSET] {os.path.basename(photo_path)}: {img.width}x{img.height}, {file_kb:.0f}KB file, {uri_chars:,} chars data URI")
+    except Exception:
+        print(f"[REF ASSET] {os.path.basename(photo_path)}: {file_kb:.0f}KB file, {uri_chars:,} chars data URI")
+    if uri_chars > 5242880:
+        print(f"[REF ASSET] WARNING: data URI exceeds 5.2M char limit! {uri_chars:,} chars")
+    return data_uri
 
 
 def _luma_generate_scene(scene: dict, output_dir: str, index: int,
@@ -486,195 +510,177 @@ def _runway_headers() -> dict:
     }
 
 # Runway uses pixel dimensions as ratio, not aspect ratio strings
-RUNWAY_RATIO_MAP = {
+# Ratios accepted by image_to_video (Gen 4.5, Veo, etc.)
+IMAGE_TO_VIDEO_RATIO_MAP = {
     "16:9": "1280:720",
     "9:16": "720:1280",
+    "4:3": "1104:832",
     "1:1": "960:960",
     "4:5": "832:1104",
+    "21:9": "1584:672",
+    "1280:720": "1280:720",
+    "720:1280": "720:1280",
+    "1104:832": "1104:832",
+    "960:960": "960:960",
+    "832:1104": "832:1104",
+    "1584:672": "1584:672",
+}
+
+# text_to_video ONLY accepts these two ratios per API spec
+TEXT_TO_VIDEO_RATIO_MAP = {
+    "16:9": "1280:720",
+    "9:16": "720:1280",
     "1280:720": "1280:720",
     "720:1280": "720:1280",
 }
 
-# Kling and Veo require different resolutions
-KLING_RATIO_MAP = {
-    "16:9": "1920:1080",
-    "9:16": "1080:1920",
-    "1:1": "1440:1440",
-    "1920:1080": "1920:1080",
-    "1080:1920": "1080:1920",
-    "1440:1440": "1440:1440",
-}
-
-def _get_ratio_for_model(model, ratio="16:9"):
-    """Return the correct ratio string for the given model."""
-    kling_veo_models = {"kling3.0_pro", "kling3.0_standard", "kling_pro", "kling_standard",
-                        "veo3", "veo3.1", "veo3.1_fast", "veo3_1", "veo3_1_fast"}
-    if model in kling_veo_models:
-        return KLING_RATIO_MAP.get(ratio, "1920:1080")
-    return RUNWAY_RATIO_MAP.get(ratio, "1280:720")
+def _get_ratio_for_endpoint(endpoint: str, ratio: str = "16:9") -> str:
+    """Return the correct ratio string based on endpoint type."""
+    if endpoint == "text_to_video":
+        return TEXT_TO_VIDEO_RATIO_MAP.get(ratio, "1280:720")
+    return IMAGE_TO_VIDEO_RATIO_MAP.get(ratio, "1280:720")
 
 
-def _runway_submit_image_to_video(prompt: str, image_path: str,
-                                   duration: int = 5,
-                                   ratio: str = "16:9",
-                                   model: str = "gen4.5",
-                                   last_frame_path: str = None) -> str:
+
+def _runway_generate_scene_image(prompt: str, reference_photos: list,
+                                  ratio: str = "1280:720",
+                                  model: str = "gen4_image") -> str:
     """
-    Submit an image-to-video request to Runway Gen-3 Alpha Turbo.
+    Generate a scene image using text_to_image with @tag referenceImages.
+
+    Per API spec: text_to_image supports up to 3 referenceImages with tags.
+    Use @Tag in promptText to reference specific photos.
 
     Args:
-        prompt: text description of what should happen in the video
-        image_path: local path to image file (will be base64-encoded)
-        duration: 5 or 10 seconds
-        ratio: "16:9" or "9:16"
-        last_frame_path: optional path to last frame image (end keyframe)
+        prompt: scene description with @Tag mentions (e.g. "A cinematic shot of @Character...")
+        reference_photos: list of dicts [{path, tag, type}, ...] max 3
+            - path: local file path
+            - tag: 3-16 char tag for @mention (e.g. "Character", "Costume", "Setting")
+        ratio: output ratio (many options, default 1280:720)
+        model: gen4_image (quality) or gen4_image_turbo (fast/cheap)
 
     Returns:
-        task ID string
+        path to downloaded image, or "" on failure
     """
-    # Duration already snapped to valid values by caller
+    if not reference_photos:
+        return ""
 
-    prompt_image = _photo_to_data_uri(image_path)
+    ref_images = []
+    for ref in reference_photos[:3]:  # API max 3
+        path = ref.get("path", "")
+        tag = ref.get("tag", "")
+        if not path or not os.path.isfile(path):
+            continue
+        entry = {"uri": _photo_to_data_uri(path)}
+        if tag:
+            # Tag must be 3-16 chars
+            tag = tag[:16]
+            if len(tag) < 3:
+                tag = tag + "Ref"
+            entry["tag"] = tag
+        ref_images.append(entry)
+
+    if not ref_images:
+        return ""
 
     payload = {
         "model": model,
-        "promptImage": prompt_image,
-        "promptText": prompt,
-        "duration": duration,
-        "ratio": _get_ratio_for_model(model, ratio),
+        "promptText": prompt[:1000],
+        "ratio": ratio,
+        "referenceImages": ref_images,
+        "contentModeration": {"publicFigureThreshold": "low"},
     }
 
-    # Add last frame (end keyframe) if provided
-    if last_frame_path and os.path.isfile(last_frame_path):
-        payload["lastFrame"] = _photo_to_data_uri(last_frame_path)
-        print(f"[RUNWAY] Including lastFrame keyframe from {last_frame_path}")
-
-    print(f"[RUNWAY] Submitting image-to-video: model={model}, prompt={prompt[:80]}..., "
-          f"duration={duration}s, ratio={_get_ratio_for_model(model, ratio)}")
+    print(f"[RUNWAY/text_to_image] Generating scene image with {len(ref_images)} references, "
+          f"tags={[r.get('tag','') for r in ref_images]}, prompt={prompt[:80]}...")
 
     resp = requests.post(
-        f"{RUNWAY_API_BASE}/image_to_video",
+        f"{RUNWAY_API_BASE}/text_to_image",
         headers=_runway_headers(),
         json=payload,
-        timeout=60,
+        timeout=120,
     )
 
     if resp.status_code not in (200, 201):
         err_body = resp.text[:500]
-        print(f"[RUNWAY] Submit error {resp.status_code}: {err_body}")
-        print(f"[RUNWAY] Payload: model={payload.get('model')}, duration={payload.get('duration')}, ratio={payload.get('ratio')}")
-        raise RuntimeError(f"Runway API {resp.status_code}: {err_body}")
+        print(f"[RUNWAY/text_to_image] Error {resp.status_code}: {err_body}")
+        raise RuntimeError(f"text_to_image API {resp.status_code}: {err_body}")
 
     data = resp.json()
     task_id = data.get("id", "")
-    print(f"[RUNWAY] Task submitted: id={task_id}")
-    return task_id
+    if not task_id:
+        print(f"[RUNWAY/text_to_image] No task ID returned: {data}")
+        return ""
+
+    # Poll for completion (reuse existing poll function)
+    try:
+        result = _runway_poll(task_id)
+        image_url = result.get("url", "")
+        if image_url:
+            # Download to temp file
+            import tempfile
+            img_path = os.path.join(tempfile.gettempdir(), f"runway_scene_{task_id[:8]}.png")
+            _download(image_url, img_path)
+            print(f"[RUNWAY/text_to_image] Scene image saved to {img_path}")
+            return img_path
+    except Exception as e:
+        print(f"[RUNWAY/text_to_image] Poll/download failed: {e}")
+
+    return ""
 
 
 def _runway_submit_text_to_video(prompt: str, duration: int = 5,
                                   ratio: str = "16:9",
                                   model: str = "gen4.5",
-                                  character_photo_path: str = None,
-                                  character_photo_paths: list = None,
-                                  costume_photo_paths: list = None,
-                                  environment_photo_path: str = None,
                                   first_frame_path: str = None,
-                                  last_frame_path: str = None,
-                                  is_character_sheet: bool = False) -> str:
+                                  **_kwargs) -> str:
     """
-    Submit a text/image-to-video request to Runway.
+    Submit a text-to-video or image-to-video request to Runway.
 
-    Multi-image strategy:
-    - environment_photo → promptImage (scene starts from this setting)
-    - character_photo(s) → referenceImages with type "character"
-    - costume_photo(s) → referenceImages with type "style"
-    - If no environment photo, first character photo becomes promptImage
-    - first_frame_path overrides promptImage if set
+    Per API spec (see references/runway_api_reference.md):
+    - text_to_video: promptText + ratio (1280:720 or 720:1280 only) + duration (2-10)
+    - image_to_video: adds promptImage (always first frame, position="first")
+    - NO referenceImages for video — that's text_to_image only
+    - gen4_turbo is image_to_video ONLY (requires promptImage)
     """
-    duration = 10 if duration > 7 else 5
-
     # Map UI model names to Runway API model names
     _MODEL_MAP = {
         "runway": "gen4.5", "gen4_5": "gen4.5",
-        "kling_pro": "kling3.0_pro", "kling_standard": "kling3.0_standard",
+        "gen4_turbo": "gen4_turbo",
         "veo3_1": "veo3.1", "veo3_1_fast": "veo3.1_fast",
     }
     model = _MODEL_MAP.get(model, model)
 
-    # Snap duration to valid values for the model
-    valid_durations = MODEL_DURATION_OPTIONS.get(model, [4, 6, 8])
-    if duration not in valid_durations:
-        duration = min(valid_durations, key=lambda d: abs(d - duration))
+    # Duration: API accepts integer 2-10, snap to nearest valid
+    duration = max(2, min(10, int(duration)))
+
+    # Determine endpoint: image_to_video if we have a first frame, else text_to_video
+    # gen4_turbo REQUIRES image_to_video (no text-only mode)
+    _use_i2v = False
+    if first_frame_path and os.path.isfile(first_frame_path):
+        _use_i2v = True
+    elif model == "gen4_turbo":
+        print(f"[RUNWAY] WARNING: gen4_turbo requires promptImage but none provided, will likely fail")
+
+    _endpoint = "image_to_video" if _use_i2v else "text_to_video"
 
     payload = {
         "model": model,
-        "promptText": prompt,
+        "promptText": prompt[:1000],  # API max 1000 chars
         "duration": duration,
-        "ratio": _get_ratio_for_model(model, ratio),
+        "ratio": _get_ratio_for_endpoint(_endpoint, ratio),
+        "contentModeration": {"publicFigureThreshold": "low"},
     }
 
-    import sys as _sys_r
-    _use_i2v = False
-    reference_images = []
-
-    # Collect all character photos
-    all_char_photos = []
-    if character_photo_paths:
-        all_char_photos = [p for p in character_photo_paths if p and os.path.isfile(p)]
-    elif character_photo_path and os.path.isfile(character_photo_path):
-        all_char_photos = [character_photo_path]
-
-    # Collect all costume photos
-    all_costume_photos = []
-    if costume_photo_paths:
-        all_costume_photos = [p for p in costume_photo_paths if p and os.path.isfile(p)]
-
-    # Character photo MUST be promptImage — it's the only way Runway respects likeness.
-    # referenceImages is too weak for character identity (tested and confirmed).
-    # Environment and costume go as referenceImages for style hints.
-
-    if all_char_photos:
-        payload["promptImage"] = _photo_to_data_uri(all_char_photos[0])
-        _use_i2v = True
-        _sys_r.stderr.write(f"[RUNWAY] Character → promptImage (only reliable likeness method)\n")
-        for cp in all_char_photos[1:]:
-            reference_images.append({"uri": _photo_to_data_uri(cp), "type": "character"})
-            _sys_r.stderr.write(f"[RUNWAY] Additional character → referenceImages\n")
-
-    for cp in all_costume_photos:
-        reference_images.append({"uri": _photo_to_data_uri(cp), "type": "style"})
-        _sys_r.stderr.write(f"[RUNWAY] Costume → referenceImages (style)\n")
-
-    if environment_photo_path and os.path.isfile(environment_photo_path):
-        reference_images.append({"uri": _photo_to_data_uri(environment_photo_path), "type": "style"})
-        _sys_r.stderr.write(f"[RUNWAY] Environment → referenceImages (style)\n")
-
-    # First frame overrides promptImage
-    if first_frame_path and os.path.isfile(first_frame_path):
-        if "promptImage" in payload and all_char_photos:
-            # Move character from promptImage to referenceImages
-            reference_images.insert(0, {"uri": payload["promptImage"], "type": "character"})
+    # Only image_to_video gets promptImage
+    if _use_i2v and first_frame_path:
         payload["promptImage"] = _photo_to_data_uri(first_frame_path)
-        _use_i2v = True
-        _sys_r.stderr.write(f"[RUNWAY] First frame → promptImage (overrides)\n")
 
-    if last_frame_path and os.path.isfile(last_frame_path):
-        payload["lastFrame"] = _photo_to_data_uri(last_frame_path)
-        _sys_r.stderr.write(f"[RUNWAY] Last frame keyframe included\n")
+    print(f"[RUNWAY] Submitting {_endpoint}: model={model}, "
+          f"duration={duration}s, ratio={payload['ratio']}, "
+          f"publicFigureThreshold=low, "
+          f"prompt={prompt[:80]}...")
 
-    # Attach referenceImages if any
-    if reference_images:
-        payload["referenceImages"] = reference_images
-
-    _sys_r.stderr.flush()
-    has_ref = "referenceImages" in payload
-    _sys_r.stderr.write(f"[RUNWAY] Submitting {'image' if _use_i2v else 'text'}-to-video: model={model}, "
-          f"chars={len(all_char_photos)}, costumes={len(all_costume_photos)}, "
-          f"has_referenceImages={has_ref}, "
-          f"prompt={prompt[:80]}...\n")
-    _sys_r.stderr.flush()
-
-    _endpoint = "image_to_video" if _use_i2v else "text_to_video"
     resp = requests.post(
         f"{RUNWAY_API_BASE}/{_endpoint}",
         headers=_runway_headers(),
@@ -771,11 +777,7 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
         "runway": "gen4.5",
         "gen4_5": "gen4.5",         # UI uses underscores
         "gen4.5": "gen4.5",         # API uses dots
-        "gen3a_turbo": "gen3a_turbo",
-        "kling_pro": "kling3.0_pro",
-        "kling3.0_pro": "kling3.0_pro",
-        "kling_standard": "kling3.0_standard",
-        "kling3.0_standard": "kling3.0_standard",
+        "gen4_turbo": "gen4_turbo",
         "veo3": "veo3",
         "veo3_1": "veo3.1",          # UI uses underscores
         "veo3.1": "veo3.1",
@@ -842,86 +844,76 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
             print(f"[RUNWAY/{model}][{index}] Injected costume text description ({len(costume_desc)} chars)")
 
     try:
-        if has_photo:
-            # USE CHARACTER REFERENCE — photo is NOT the first frame
-            # Instead, Runway uses it to learn what the person looks like
-            # and generates a brand new video keeping that character consistent
-            _report(f"using photo as CHARACTER REFERENCE (not first frame)...")
+        # ---- TWO-STEP PIPELINE: Generate scene image with @tag refs, then animate ----
+        # Collect all available reference photos for text_to_image @tag system
+        reference_photos = []
+        if has_photo and photo_path:
+            reference_photos.append({"path": photo_path, "tag": "Character"})
+        costume_photo = scene.get("costume_photo_path", "")
+        if costume_photo and os.path.isfile(costume_photo):
+            reference_photos.append({"path": costume_photo, "tag": "Costume"})
+        env_photo_path = scene.get("environment_photo_path", "")
+        if env_photo_path and os.path.isfile(env_photo_path):
+            reference_photos.append({"path": env_photo_path, "tag": "Setting"})
 
-            # Use pre-stored character description if available (consistent across all clips)
-            # Otherwise fall back to describing the photo (less consistent but better than nothing)
-            char_desc = scene.get("character_description", "")
-            if not char_desc:
-                try:
-                    char_desc = describe_photo(photo_path)
-                    import re as _re
-                    char_desc = _re.sub(r'(?i)(looks like|resembles|appears to be)\s+\w+(\s+\w+)?', 'a person', char_desc)
-                    print(f"[RUNWAY/{model}][{index}] Described photo (no cached desc available)")
-                except Exception as desc_err:
-                    print(f"[RUNWAY/{model}][{index}] Photo describe skipped: {desc_err}")
+        # PIPELINE: When photos exist, generate a scene image first using text_to_image
+        # with @tag references (preserves likeness), then animate that scene image.
+        # This way the video starts IN the scene, not from the raw uploaded photo.
+        reference_photos = []
+        if has_photo and photo_path:
+            reference_photos.append({"path": photo_path, "tag": "Character"})
+        costume_photo = scene.get("costume_photo_path", "")
+        if costume_photo and os.path.isfile(costume_photo):
+            reference_photos.append({"path": costume_photo, "tag": "Costume"})
+        env_photo_path = scene.get("environment_photo_path", "")
+        if env_photo_path and os.path.isfile(env_photo_path):
+            reference_photos.append({"path": env_photo_path, "tag": "Setting"})
 
-            is_sheet = scene.get("is_character_sheet", False)
-            if char_desc:
-                if is_sheet:
-                    gen_prompt = (
-                        f"The reference image is a CHARACTER DESIGN SHEET showing the same person from multiple angles. "
-                        f"This is ONE single character: {char_desc}. "
-                        f"You MUST use this exact character in the video — same face, same proportions, same features, same hair, same skin tone. "
-                        f"Do NOT create a different person. The character sheet IS the character. "
-                        f"{gen_prompt}"
-                    )
-                else:
-                    gen_prompt = (
-                        f"Animate this person into a cinematic scene. "
-                        f"This person: {char_desc}. "
-                        f"Keep their exact appearance but place them naturally into the following scene: "
-                        f"{gen_prompt}"
-                    )
-                print(f"[RUNWAY/{model}][{index}] Using character description ({len(char_desc)} chars, sheet={is_sheet})")
+        first_frame = None
+        if reference_photos:
+            # Build prompt with @tag mentions
+            tag_prompt = gen_prompt
+            if any(r["tag"] == "Character" for r in reference_photos):
+                if "@Character" not in tag_prompt:
+                    tag_prompt = f"@Character in a cinematic scene. {tag_prompt}"
+            if any(r["tag"] == "Costume" for r in reference_photos):
+                if "@Costume" not in tag_prompt:
+                    tag_prompt = f"{tag_prompt} Wearing the outfit from @Costume."
+            if any(r["tag"] == "Setting" for r in reference_photos):
+                if "@Setting" not in tag_prompt:
+                    tag_prompt = f"{tag_prompt} Set in the location from @Setting."
 
-            # Collect all character photos from scene
-            all_char_photos = [photo_path] if photo_path else []
-            # Check for additional character photos in scene data
-            extra_char_photos = scene.get("character_photo_paths", [])
-            if extra_char_photos:
-                all_char_photos.extend([p for p in extra_char_photos if p and os.path.isfile(p) and p != photo_path])
-
-            # Collect costume photos
-            costume_photos = []
-            cp = scene.get("costume_photo_path", "")
-            if cp and os.path.isfile(cp):
-                costume_photos.append(cp)
-            extra_costume_photos = scene.get("costume_photo_paths", [])
-            if extra_costume_photos:
-                costume_photos.extend([p for p in extra_costume_photos if p and os.path.isfile(p) and p not in costume_photos])
-
-            # Environment photo
-            env_photo = scene.get("environment_photo_path", "")
-
-            _report(f"submitting with {len(all_char_photos)} char refs, {len(costume_photos)} costume refs, env={'YES' if env_photo else 'NO'}...")
-            task_id = _runway_submit_text_to_video(
-                gen_prompt, duration=duration, model=model,
-                character_photo_paths=all_char_photos,
-                costume_photo_paths=costume_photos,
-                environment_photo_path=env_photo if env_photo and os.path.isfile(env_photo) else None,
-                first_frame_path=scene.get("first_frame_path"),
-                last_frame_path=scene.get("last_frame_path"),
+            _report(f"generating scene image with {len(reference_photos)} photo refs (@tags)...")
+            scene_image = _runway_generate_scene_image(
+                tag_prompt, reference_photos,
+                ratio="1280:720",
+                model="gen4_image",
             )
-        else:
-            # No character photo — still pass costume/environment if available
-            costume_photos = []
-            cp = scene.get("costume_photo_path", "")
-            if cp and os.path.isfile(cp): costume_photos.append(cp)
-            env_photo = scene.get("environment_photo_path", "")
+            if scene_image:
+                first_frame = scene_image
+                _report(f"scene image ready — animating into video ({model}, {duration}s)...")
+            else:
+                _report(f"scene image failed — falling back to text-only video...")
 
-            _report(f"submitting text-to-video ({model}), costume refs={len(costume_photos)}, env={'YES' if env_photo else 'NO'}...")
-            task_id = _runway_submit_text_to_video(
-                gen_prompt, duration=duration, model=model,
-                costume_photo_paths=costume_photos,
-                environment_photo_path=env_photo if env_photo and os.path.isfile(env_photo) else None,
-                first_frame_path=scene.get("first_frame_path"),
-                last_frame_path=scene.get("last_frame_path"),
-            )
+        # Fallback to explicit keyframe if no scene image generated
+        if not first_frame and scene.get("first_frame_path") and os.path.isfile(scene.get("first_frame_path", "")):
+            first_frame = scene["first_frame_path"]
+
+        # Also inject text descriptions to reinforce
+        char_desc = scene.get("character_description", "")
+        if has_photo and not char_desc:
+            try:
+                char_desc = describe_photo(photo_path)
+            except Exception:
+                char_desc = ""
+        if char_desc:
+            gen_prompt = f"This person: {char_desc}. Keep their EXACT appearance. {gen_prompt}"
+
+        _report(f"submitting {'image' if first_frame else 'text'}-to-video ({model}, {duration}s)...")
+        task_id = _runway_submit_text_to_video(
+            gen_prompt, duration=duration, model=model,
+            first_frame_path=first_frame,
+        )
 
         _report(f"polling Runway (task={task_id[:12]}...)")
         video_info = _runway_poll(task_id, progress_cb=lambda msg: _report(msg))
@@ -941,10 +933,16 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
         return clip_path
 
     except Exception as e:
+        if _is_moderation_error(str(e)):
+            _report(f"MODERATION BLOCK ({model}): celebrity likeness rejected. Try a different engine manually.")
+            raise RuntimeError(
+                f"Scene {index} blocked by {model} moderation (celebrity likeness). "
+                f"Try switching this scene to a different engine (Kling, Veo, Luma) in the scene settings."
+            ) from e
+
         _report(f"Runway generation failed: {e}")
         import traceback
         traceback.print_exc()
-        # NO FALLBACK TO IMAGES — user wants video only
         raise RuntimeError(f"Scene {index} video generation failed: {e}") from e
 
 
@@ -1599,11 +1597,15 @@ def describe_photo(photo_path: str) -> str:
                         {
                             "type": "text",
                             "text": (
-                                "Describe the person in this image in vivid physical detail for use as an AI video generation prompt. "
-                                "If this is a character sheet showing the SAME person from multiple angles, combine ALL angles into ONE description. "
-                                "Focus on: face shape, skin tone, eye color, hair, build, distinguishing features, outfit. "
-                                "Write as comma-separated visual descriptors. Do NOT mention 'multiple views' or 'character sheet' — "
-                                "just describe the ONE person. Be specific about facial features. Under 150 words."
+                                "Describe this person in EXTREME physical detail for an AI video generator that has never seen this image. "
+                                "The video AI needs to recreate this EXACT person from text alone. "
+                                "PRIORITIZE FACE: exact face shape (round/oval/square/heart), jawline, cheekbones, brow ridge, nose shape and size, "
+                                "lip shape and fullness, eye shape and color, eyebrow thickness and arch, forehead size, chin shape. "
+                                "Then: exact skin tone (be very specific — light olive, deep brown, pale porcelain, etc.), "
+                                "hair color, style, length, texture. Build, height impression, posture. "
+                                "Then: outfit, accessories, distinctive marks/tattoos/piercings. "
+                                "If character sheet with multiple angles, merge into ONE unified description. "
+                                "Write as dense comma-separated descriptors. NO filler words. Under 200 words."
                             ),
                         },
                     ],
@@ -1699,10 +1701,10 @@ def generate_scene(scene: dict, index: int, output_dir: str,
 
     # All Runway-hosted models (use underscore versions from UI dropdown)
     RUNWAY_ENGINES = {
-        "runway", "gen4_5", "gen3a_turbo", "kling_pro", "kling_standard",
+        "runway", "gen4_5", "gen4_turbo",
         "veo3", "veo3_1", "veo3_1_fast",
         # Also accept dot-separated versions from the API
-        "gen4.5", "kling3.0_pro", "kling3.0_standard", "veo3.1", "veo3.1_fast",
+        "gen4.5", "veo3.1", "veo3.1_fast",
     }
 
     # Dispatch to engine
@@ -1776,11 +1778,6 @@ def _grok_generate_scene(scene: dict, output_dir: str, index: int,
         if not char_photo_desc:
             try:
                 char_photo_desc = describe_photo(photo_path)
-                import re as _re_grok
-                char_photo_desc = _re_grok.sub(
-                    r'(?i)(looks like|resembles|appears to be)\s+\w+(\s+\w+)?',
-                    'a person', char_photo_desc
-                )
                 if char_photo_desc and char_photo_desc.lower() not in gen_prompt.lower():
                     gen_prompt = f"{char_photo_desc}. {gen_prompt}"
                     print(f"[GROK][{index}] Vision-described character photo and prepended to prompt")
@@ -2034,8 +2031,8 @@ def get_available_engines() -> list:
     runway_available = bool(os.environ.get("RUNWAY_API_KEY", ""))
     engines.append({
         "id": ENGINE_RUNWAY,
-        "name": "Runway Gen-3 Alpha Turbo",
-        "description": "Fast image-to-video and text-to-video — best for scenes with photos",
+        "name": "Runway (Gen 4.5, Gen 4 Turbo, Veo)",
+        "description": "Multi-photo text/image-to-video — Gen 4.5, Gen 4 Turbo, Veo 3/3.1",
         "available": runway_available,
         "missing_key": "RUNWAY_API_KEY" if not runway_available else None,
     })

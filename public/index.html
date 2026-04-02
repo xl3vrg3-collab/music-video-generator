@@ -2070,9 +2070,105 @@
     color: var(--text-dim);
     font-size: 10px;
   }
+
+  /* ===== TOAST NOTIFICATIONS ===== */
+  .toast-container {
+    position: fixed; top: 20px; right: 20px; z-index: 99999;
+    display: flex; flex-direction: column; gap: 8px;
+    pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto;
+    padding: 12px 20px; border-radius: var(--radius-lg);
+    font: 500 13px/1.4 'Inter Tight', sans-serif;
+    color: var(--text); backdrop-filter: blur(12px);
+    background: var(--surface); border: 1px solid var(--border);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+    display: flex; align-items: center; gap: 10px;
+    max-width: 380px; cursor: pointer;
+    animation: toastIn 0.3s ease forwards;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+  .toast.toast-out {
+    opacity: 0; transform: translateX(40px);
+  }
+  .toast-icon { font-size: 16px; flex-shrink: 0; }
+  .toast-success { border-color: var(--green); }
+  .toast-success .toast-icon { color: var(--green); }
+  .toast-error { border-color: var(--red); }
+  .toast-error .toast-icon { color: var(--red); }
+  .toast-info { border-color: var(--cyan); }
+  .toast-info .toast-icon { color: var(--cyan); }
+  .toast-warning { border-color: var(--amber); }
+  .toast-warning .toast-icon { color: var(--amber); }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateX(40px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  /* ===== FULLSCREEN PREVIEW MODAL ===== */
+  .fs-preview-overlay {
+    position: fixed; inset: 0; z-index: 99998;
+    background: rgba(0,0,0,0.92); backdrop-filter: blur(8px);
+    display: none; align-items: center; justify-content: center;
+    cursor: pointer;
+  }
+  .fs-preview-overlay.open { display: flex; }
+  .fs-preview-overlay video {
+    max-width: 92vw; max-height: 88vh;
+    border-radius: 8px; box-shadow: 0 0 60px rgba(0,0,0,0.6);
+  }
+  .fs-preview-close {
+    position: absolute; top: 20px; right: 28px;
+    font-size: 28px; color: var(--text-dim); cursor: pointer;
+    background: none; border: none; font-family: inherit;
+    transition: color 0.2s;
+  }
+  .fs-preview-close:hover { color: var(--text); }
 </style>
 </head>
 <body>
+<div class="toast-container" id="toastContainer"></div>
+<div class="fs-preview-overlay" id="fsPreviewOverlay" onclick="window._closeFsPreview()">
+  <button class="fs-preview-close">&times;</button>
+  <video id="fsPreviewVideo" controls autoplay onclick="event.stopPropagation()"></video>
+</div>
+<script>
+// ===== TOAST NOTIFICATION SYSTEM =====
+window._toast = function(message, type, durationMs) {
+  type = type || 'info';
+  durationMs = durationMs || 4000;
+  var icons = {success: '\u2713', error: '\u2717', info: '\u2139', warning: '\u26A0'};
+  var container = document.getElementById('toastContainer');
+  var el = document.createElement('div');
+  el.className = 'toast toast-' + type;
+  el.innerHTML = '<span class="toast-icon">' + (icons[type]||'\u2139') + '</span><span>' + message + '</span>';
+  el.onclick = function(){ dismiss(); };
+  container.appendChild(el);
+  var timer = setTimeout(dismiss, durationMs);
+  function dismiss() {
+    clearTimeout(timer);
+    el.classList.add('toast-out');
+    setTimeout(function(){ el.remove(); }, 300);
+  }
+};
+window._openFsPreview = function(src) {
+  var v = document.getElementById('fsPreviewVideo');
+  v.src = src;
+  document.getElementById('fsPreviewOverlay').classList.add('open');
+};
+window._closeFsPreview = function() {
+  var overlay = document.getElementById('fsPreviewOverlay');
+  var v = document.getElementById('fsPreviewVideo');
+  overlay.classList.remove('open');
+  v.pause(); v.src = '';
+};
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape' && document.getElementById('fsPreviewOverlay').classList.contains('open')) {
+    window._closeFsPreview();
+  }
+});
+</script>
 <script>
 // Apply saved theme immediately to prevent flash
 (function(){
@@ -2751,19 +2847,17 @@
           <span class="msc-label">Default Engine:</span>
           <select class="styled-select" id="globalEngineSelect" onchange="window._updateGlobalEngine(this.value)">
             <optgroup label="─── Runway ───">
-              <option value="gen4_5" selected>Gen 4.5 (Best) [$0.10/5s]</option>
-            </optgroup>
-            <optgroup label="─── Kling ───">
-              <option value="kling_pro">Kling 3.0 Pro [$0.08/5s]</option>
-              <option value="kling_standard">Kling 3.0 Std [$0.04/5s]</option>
+              <option value="gen4_5" selected>Gen 4.5 — 📸📸 Multi-Photo | 12 cr/s</option>
+              <option value="gen4_turbo">Gen 4 Turbo — 📸 Image-to-Video | 5 cr/s</option>
             </optgroup>
             <optgroup label="─── Veo ───">
-              <option value="veo3">Veo 3 [$0.15/5s]</option>
-              <option value="veo3_1">Veo 3.1 [$0.15/5s]</option>
-              <option value="veo3_1_fast">Veo 3.1 Fast [$0.08/5s]</option>
+              <option value="veo3">Veo 3 — 📸📸 Multi-Photo | 40 cr/s</option>
+              <option value="veo3_1">Veo 3.1 — 📸📸 Multi-Photo | 40 cr/s</option>
+              <option value="veo3_1_fast">Veo 3.1 Fast — 📸📸 Multi-Photo | 15 cr/s</option>
             </optgroup>
-            <optgroup label="─── Luma ───">
-              <option value="luma">Luma Ray2 [$0.50/5s]</option>
+            <optgroup label="─── Other ───">
+              <option value="luma">Luma Ray2 — 📸 1 Photo | $0.50/5s</option>
+              <option value="grok">Grok — ❌ Text Only</option>
             </optgroup>
           </select>
         </div>
@@ -3117,9 +3211,6 @@
             <input type="text" class="styled-input" id="dirQuickCharName" placeholder="Or create new — Name" style="width:120px;">
             <input type="text" class="styled-input" id="dirQuickCharDesc" placeholder="Description..." style="flex:1;">
             <label class="btn btn-small" style="cursor:pointer;">Photo<input type="file" accept="image/*" id="dirQuickCharPhoto" style="display:none;" onchange="window._dirAddQuickChar()"></label>
-            <label style="display:flex;align-items:center;gap:3px;font-size:9px;color:var(--text-dim);cursor:pointer;white-space:nowrap;" title="Check if uploading a multi-angle character sheet">
-              <input type="checkbox" id="dirQuickCharIsSheet" style="accent-color:var(--amber);"> Sheet
-            </label>
             <button class="btn btn-small btn-green" onclick="window._dirAddQuickChar()">+</button>
           </div>
         </div>
@@ -3170,10 +3261,19 @@
           <div>
             <label class="section-label section-label-dim">Engine</label>
             <select class="styled-select" id="adEngineSelect" style="width:100%;">
-              <option value="gen4_5" selected>Runway Gen 4.5</option>
-              <option value="veo3_1">Veo 3.1</option>
-              <option value="veo3_1_fast">Veo 3.1 Fast</option>
-              <option value="luma">Luma Ray2</option>
+              <optgroup label="─── Runway ───">
+                <option value="gen4_5" selected>Gen 4.5 — 📸📸 Multi-Photo+Keyframes | 12 cr/s | ~90s</option>
+                <option value="gen4_turbo">Gen 4 Turbo — 📸 Image-to-Video Only | 5 cr/s | ~45s</option>
+              </optgroup>
+              <optgroup label="─── Veo (via Runway) ───">
+                <option value="veo3">Veo 3 — 📸📸 Multi-Photo+Keyframes | 40 cr/s | ~2m</option>
+                <option value="veo3_1">Veo 3.1 — 📸📸 Multi-Photo+Keyframes | 40 cr/s | ~2m</option>
+                <option value="veo3_1_fast">Veo 3.1 Fast — 📸📸 Multi-Photo+Keyframes | 15 cr/s | ~45s</option>
+              </optgroup>
+              <optgroup label="─── Other ───">
+                <option value="luma">Luma Ray2 — 📸 1 Photo+Keyframes | ~45s | $0.50/5s</option>
+                <option value="grok">Grok Video — ❌ Text Only | ~30s | $0.10/5s</option>
+              </optgroup>
             </select>
           </div>
           <div>
@@ -6024,24 +6124,21 @@ document.addEventListener('DOMContentLoaded', function() {
   const CAMERA_PRESETS = ['static','pan_left','pan_right','zoom_in','zoom_out','orbit','tracking'];
   const ENGINE_LABELS = {
     grok:'Grok Video', luma:'Luma Ray2', openai:'OpenAI GPT', runway:'Runway Gen 4.5',
-    gen3a_turbo:'Gen 3 Turbo', gen4_5:'Gen 4.5', kling_pro:'Kling 3.0 Pro',
-    kling_standard:'Kling 3.0 Std', veo3:'Veo 3', veo3_1:'Veo 3.1', veo3_1_fast:'Veo 3.1 Fast',
+    gen4_5:'Gen 4.5', gen4_turbo:'Gen 4 Turbo',
+    veo3:'Veo 3', veo3_1:'Veo 3.1', veo3_1_fast:'Veo 3.1 Fast',
   };
   const ENGINE_COLORS = {
     grok:'var(--cyan)', luma:'var(--magenta)', openai:'var(--green)',
-    runway:'#d4a017', gen3a_turbo:'#d4a017', gen4_5:'#d4a017',
-    kling_pro:'#e06030', kling_standard:'#e06030',
+    runway:'#d4a017', gen4_5:'#d4a017', gen4_turbo:'#d4a017',
     veo3:'#4285f4', veo3_1:'#4285f4', veo3_1_fast:'#4285f4',
   };
   // Model duration limits (Area 3)
   const MODEL_DURATION_OPTIONS = {
     gen4_5: [4, 6, 8],
-    gen3a_turbo: [5, 10],
-    kling_pro: [5, 10],
-    kling_standard: [5, 10],
-    veo3: [5, 8],
-    veo3_1: [5, 8],
-    veo3_1_fast: [5, 8],
+    gen4_turbo: [4, 6, 8],
+    veo3: [4, 6, 8],
+    veo3_1: [4, 6, 8],
+    veo3_1_fast: [4, 6, 8],
     grok: [8],
     luma: [5, 9],
     openai: [3, 4, 5, 6, 7, 8, 9, 10, 12, 15],
@@ -6049,31 +6146,24 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Render time per clip (seconds) — matches server RENDER_TIME_ESTIMATES
   const MODEL_RENDER_TIMES = {
-    gen4_5: 90, gen3a_turbo: 45,
-    kling_pro: 120, kling_standard: 60,
+    gen4_5: 90, gen4_turbo: 45,
     veo3: 120, veo3_1: 120, veo3_1_fast: 45,
     grok: 30, luma: 45, openai: 50,
   };
 
   const ENGINE_GROUPS = [
-    { group:'─── xAI ───', models:[
-      {id:'grok', label:'Grok Video', cost:'$0.10', photo:false, speed:'~30s', durations:[8]},
-    ]},
     { group:'─── Runway ───', models:[
-      {id:'gen4_5', label:'Gen 4.5 (Best Quality)', cost:'$0.50', photo:true, speed:'~90s', durations:[4,6,8]},
-      {id:'gen3a_turbo', label:'Gen 3 Turbo (Fast)', cost:'$0.25', photo:true, speed:'~45s', durations:[5,10]},
+      {id:'gen4_5', label:'Gen 4.5 📸📸 Multi-Photo', cost:'12 cr/s', photo:true, speed:'~90s', durations:[4,6,8]},
+      {id:'gen4_turbo', label:'Gen 4 Turbo 📸 Img-to-Vid', cost:'5 cr/s', photo:true, speed:'~45s', durations:[4,6,8]},
     ]},
-    { group:'─── Kling (via Runway) ───', models:[
-      {id:'kling_pro', label:'Kling 3.0 Pro', cost:'$0.30', photo:true, speed:'~2m', durations:[5,10]},
-      {id:'kling_standard', label:'Kling 3.0 Standard', cost:'$0.15', photo:true, speed:'~60s', durations:[5,10]},
-    ]},
-    { group:'─── Google Veo (via Runway) ───', models:[
-      {id:'veo3', label:'Veo 3', cost:'$0.50', photo:true, speed:'~2m', durations:[5,8]},
-      {id:'veo3_1', label:'Veo 3.1 (Latest)', cost:'$0.50', photo:true, speed:'~2m', durations:[5,8]},
-      {id:'veo3_1_fast', label:'Veo 3.1 Fast', cost:'$0.25', photo:true, speed:'~45s', durations:[5,8]},
+    { group:'─── Veo (via Runway) ───', models:[
+      {id:'veo3', label:'Veo 3 📸📸 Multi-Photo', cost:'40 cr/s', photo:true, speed:'~2m', durations:[4,6,8]},
+      {id:'veo3_1', label:'Veo 3.1 📸📸 Multi-Photo', cost:'40 cr/s', photo:true, speed:'~2m', durations:[4,6,8]},
+      {id:'veo3_1_fast', label:'Veo 3.1 Fast 📸📸 Multi-Photo', cost:'15 cr/s', photo:true, speed:'~45s', durations:[4,6,8]},
     ]},
     { group:'─── Other ───', models:[
-      {id:'luma', label:'Luma Ray2', cost:'$0.20', photo:true, speed:'~45s', durations:[5,9]},
+      {id:'luma', label:'Luma Ray2 📸 1 Photo', cost:'$0.50/5s', photo:true, speed:'~45s', durations:[5,9]},
+      {id:'grok', label:'Grok Video ❌ Text Only', cost:'$0.10/5s', photo:false, speed:'~30s', durations:[8]},
       {id:'openai', label:'OpenAI GPT (Still Only)', cost:'$0.15', photo:true, speed:'~50s', durations:[3,4,5,6,7,8,9,10,12,15]},
     ]},
   ];
@@ -6283,9 +6373,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
       let clipHtml = '';
       if (hasClip) {
-        clipHtml = `<div class="msc-clip-preview"><video src="${s.clip_url}" controls preload="metadata"></video></div>`;
+        clipHtml = `<div class="msc-clip-preview"><video src="${s.clip_url}" controls preload="metadata" ondblclick="window._openFsPreview(this.src)"></video>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:4px;font-size:10px;color:var(--text-dim);">
+            <label>In <input type="number" step="0.1" min="0" value="${s.trim_in||0}" style="width:52px;font-size:10px;padding:2px 4px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:3px;" onchange="window._setTrim('${s.id}',parseFloat(this.value),null)">s</label>
+            <label>Out <input type="number" step="0.1" min="0" value="${s.trim_out||0}" style="width:52px;font-size:10px;padding:2px 4px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:3px;" onchange="window._setTrim('${s.id}',null,parseFloat(this.value))">s</label>
+            <span style="opacity:0.5;">0 = no trim</span>
+          </div>
+        </div>`;
       } else if (s.has_video && s.video_url) {
-        clipHtml = `<div class="msc-clip-preview"><video src="${s.video_url}?t=${Date.now()}" controls preload="metadata"></video></div>`;
+        clipHtml = `<div class="msc-clip-preview"><video src="${s.video_url}?t=${Date.now()}" controls preload="metadata" ondblclick="window._openFsPreview(this.src)"></video></div>`;
       }
 
       const isLast = i >= manualScenes.length - 1;
@@ -6372,6 +6468,7 @@ document.addEventListener('DOMContentLoaded', function() {
             <input type="file" style="display:none" id="msc-vocal-input-${s.id}" accept=".mp3,.wav,.m4a,.ogg"
                    onchange="window._manualUploadVocal('${s.id}', this.files[0])">
             ${(window._sceneCosts && window._sceneCosts[s.id]) ? `<span class="msc-cost-badge">$` + window._sceneCosts[s.id].toFixed(2) + `</span>` : ''}
+            <button class="msc-delete-btn" style="border-color:var(--cyan);color:var(--cyan);" onclick="window._manualDuplicateScene('${s.id}')">Duplicate</button>
             <button class="msc-delete-btn" onclick="window._manualDeleteScene('${s.id}')">Delete</button>
           </div>
           <div class="msc-body">
@@ -6532,6 +6629,40 @@ document.addEventListener('DOMContentLoaded', function() {
         body: JSON.stringify(fields),
       });
     } catch (e) { /* ignore */ }
+  };
+
+  // ---- Trim clip ----
+  window._setTrim = async function(sceneId, trimIn, trimOut) {
+    // Find current values from scene data
+    var scene = manualScenes.find(s => s.id === sceneId);
+    var body = {
+      trim_in: trimIn !== null ? trimIn : (scene ? scene.trim_in || 0 : 0),
+      trim_out: trimOut !== null ? trimOut : (scene ? scene.trim_out || 0 : 0),
+    };
+    var resp = await fetch('/api/manual/scene/' + sceneId + '/trim', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    var data = await resp.json();
+    if (data.ok) {
+      if (scene) { scene.trim_in = data.trim_in; scene.trim_out = data.trim_out; }
+      window._toast('Trim set: in=' + data.trim_in + 's out=' + data.trim_out + 's', 'info', 2000);
+    }
+  };
+
+  // ---- Duplicate scene ----
+  window._manualDuplicateScene = async function(sceneId) {
+    try {
+      const resp = await fetch(`/api/manual/scene/${sceneId}/duplicate`, { method: 'POST' });
+      const data = await resp.json();
+      if (data.ok) {
+        await loadManualScenes();
+        window._toast('Scene duplicated', 'success');
+      } else {
+        window._toast('Duplicate failed: ' + (data.error || 'unknown'), 'error');
+      }
+    } catch (e) { window._toast('Duplicate failed: ' + e.message, 'error'); }
   };
 
   // ---- Delete scene ----
@@ -6714,6 +6845,8 @@ document.addEventListener('DOMContentLoaded', function() {
         clearInterval(poll);
         manualGenerateAllBtn.disabled = false; manualGenerateAllBtn.classList.remove('loading');
         manualPhaseLabel.textContent = pd.phase === 'done' ? 'ALL CLIPS GENERATED' : 'ERROR: ' + (pd.error || '');
+        if (pd.phase === 'done') window._toast('All clips generated!', 'success');
+        else window._toast('Generation failed: ' + (pd.error || 'unknown'), 'error', 6000);
         await loadManualScenes();
       }
     }, 2000);
@@ -6741,10 +6874,12 @@ document.addEventListener('DOMContentLoaded', function() {
         manualPreviewVideo.src = '/api/download?t=' + Date.now();
         if (manualDownloadBtn) { manualDownloadBtn.classList.remove('hidden'); manualDownloadBtn.href = '/api/download'; }
         flashSuccess(manualPreviewPanel);
+        window._toast('Video stitched and ready!', 'success');
       } else if (pd.phase === 'error') {
         clearInterval(poll);
         manualStitchBtn.disabled = false; manualStitchBtn.textContent = 'STITCH VIDEO'; manualStitchBtn.classList.remove('loading');
         manualPhaseLabel.textContent = 'ERROR: ' + (pd.error || '');
+        window._toast('Stitch failed: ' + (pd.error || 'unknown'), 'error', 6000);
       }
     }, 2000);
   });
@@ -9069,6 +9204,8 @@ document.addEventListener('DOMContentLoaded', function() {
       clearInterval(batchQueuePollTimer);
       batchQueuePollTimer = null;
       await loadManualScenes();
+      if (data.failed > 0) window._toast(completed + ' scenes done, ' + data.failed + ' failed', 'warning');
+      else window._toast('All ' + completed + ' scenes generated!', 'success');
     }
   };
 
@@ -9632,10 +9769,8 @@ document.addEventListener('DOMContentLoaded', function() {
     var nameEl = document.getElementById('dirQuickCharName');
     var descEl = document.getElementById('dirQuickCharDesc');
     var photoEl = document.getElementById('dirQuickCharPhoto');
-    var sheetEl = document.getElementById('dirQuickCharIsSheet');
     var name = nameEl ? nameEl.value.trim() : '';
     var desc = descEl ? descEl.value.trim() : '';
-    var isSheet = sheetEl ? sheetEl.checked : false;
     if (!name) { alert('Character name is required.'); return; }
     // Read photo file BEFORE clearing input
     var photoFile = null;
@@ -9646,17 +9781,16 @@ document.addEventListener('DOMContentLoaded', function() {
       photoFile.name = origFile.name;
       localPhotoUrl = URL.createObjectURL(origFile);
     }
-    var entry = { name: name, description: desc, photoUrl: localPhotoUrl, serverId: null, isCharacterSheet: isSheet };
+    var entry = { name: name, description: desc, photoUrl: localPhotoUrl, serverId: null };
     window._dirQuickChars.push(entry);
     _dirRenderCards('char', window._dirQuickChars, 'directorCharsInline');
     // Clear inputs
     if (nameEl) nameEl.value = '';
     if (descEl) descEl.value = '';
     if (photoEl) photoEl.value = '';
-    if (sheetEl) sheetEl.checked = false;
     // Create entity then upload photo
     fetch('/api/pos/characters', { method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ name: name, physical: desc, isCharacterSheet: isSheet })
+      body: JSON.stringify({ name: name, physical: desc })
     }).then(function(r){ return r.json(); }).then(function(data){
       var id = data.id || (data.character && data.character.id);
       if (id) {
@@ -10604,9 +10738,10 @@ document.addEventListener('DOMContentLoaded', function() {
             _adRenderScenePlan(updatedPlan);
           }
         }).catch(()=>{});
+        window._toast('Auto Director complete!', 'success');
       } else if (phase === 'error') {
         clearInterval(_adPollTimer);
-        alert('Auto Director error: ' + (data.error || 'Unknown'));
+        window._toast('Auto Director error: ' + (data.error || 'Unknown'), 'error', 6000);
       }
     } catch (e) {
       // Polling error, continue
@@ -13221,60 +13356,59 @@ document.addEventListener('DOMContentLoaded', function() {
       previewHeader.appendChild(previewMeta);
       previewSection.appendChild(previewHeader);
 
+      // SIDE-BY-SIDE: First Frame (left) + Generated Clip (right)
       var previewBody = document.createElement('div');
-      previewBody.style.cssText = 'text-align:center;min-height:80px;display:flex;align-items:center;justify-content:center;';
+      previewBody.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;min-height:80px;';
 
-      // Check generating FIRST — show progress bar, not old video
-      if (scene.preview && scene.preview.status === 'generating') {
-        var scIdx = scene.order != null ? scene.order : i;
-        previewBody.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 0;">' +
-          '<div style="width:70%;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">' +
-            '<div id="previewFill_' + scIdx + '" style="height:100%;width:0%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:2px;transition:width 1s;"></div>' +
-          '</div>' +
-          '<div style="color:var(--cyan);font-size:12px;letter-spacing:1px;font-weight:700;">Generating preview...</div>' +
-          '<div id="previewTimer_' + scIdx + '" style="color:var(--text-dim);font-size:10px;font-variant-numeric:tabular-nums;">0s elapsed · ~0%</div>' +
-        '</div>';
-      } else if (scene.preview && scene.preview.status === 'failed') {
-        previewBody.innerHTML = '<div style="color:var(--red);font-size:11px;">' + ((scene.preview.error || 'Preview generation failed').replace(/</g, '&lt;')) + '</div>';
-      } else if (scene.preview && (scene.preview.video_url || scene.preview.image_url)) {
-        // Show video/image when ready or stale
-        var hasVideo = !!scene.preview.video_url;
-        if (hasVideo) {
-          var previewVid = document.createElement('video');
-          previewVid.src = scene.preview.video_url + '?t=' + Date.now();
-          previewVid.style.cssText = 'max-width:100%;max-height:240px;border-radius:var(--radius);border:1px solid var(--border);cursor:pointer;';
-          previewVid.controls = true;
-          previewVid.muted = true;
-          previewVid.preload = 'metadata';
-          previewVid.loop = true;
-          if (scene.preview.status === 'stale') {
-            previewVid.style.opacity = '0.6';
-            previewVid.style.borderColor = 'var(--amber)';
-          }
-          previewVid.onmouseenter = function() { this.play().catch(function(){}); };
-          previewVid.onmouseleave = function() { this.pause(); };
-          previewBody.appendChild(previewVid);
-        } else {
-          var previewImg = document.createElement('img');
-          previewImg.src = scene.preview.image_url + '?t=' + Date.now();
-          previewImg.style.cssText = 'max-width:100%;max-height:200px;border-radius:var(--radius);border:1px solid var(--border);cursor:pointer;';
-          if (scene.preview.status === 'stale') {
-            previewImg.style.opacity = '0.6';
-            previewImg.style.borderColor = 'var(--amber)';
-          }
-          previewImg.onclick = function() { window.open(scene.preview.image_url, '_blank'); };
-          previewBody.appendChild(previewImg);
-        }
-        if (scene.preview.status === 'stale') {
-          var staleBadge = document.createElement('div');
-          staleBadge.style.cssText = 'position:absolute;top:8px;right:8px;font-size:8px;padding:2px 8px;background:var(--amber);color:#000;border-radius:3px;letter-spacing:1px;text-transform:uppercase;font-weight:700;';
-          staleBadge.textContent = 'Out of Date';
-          previewBody.style.position = 'relative';
-          previewBody.appendChild(staleBadge);
-        }
+      // LEFT: First Frame
+      var ffPanel = document.createElement('div');
+      ffPanel.style.cssText = 'text-align:center;';
+      var ffLabel = document.createElement('div');
+      ffLabel.style.cssText = 'font-size:9px;color:var(--cyan);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;font-weight:600;';
+      ffLabel.textContent = 'First Frame';
+      ffPanel.appendChild(ffLabel);
+
+      if (scene.preview && scene.preview.image_url) {
+        var ffImg = document.createElement('img');
+        ffImg.src = scene.preview.image_url + '?t=' + Date.now();
+        ffImg.style.cssText = 'max-width:100%;max-height:200px;border-radius:var(--radius);border:1px solid var(--cyan);cursor:pointer;';
+        ffImg.onclick = function() { window._openFsPreview && window.open(scene.preview.image_url, '_blank'); };
+        ffPanel.appendChild(ffImg);
       } else {
-        previewBody.innerHTML = '<div style="color:var(--text-dim);font-size:11px;letter-spacing:1px;">No preview generated yet</div>';
+        var ffPlaceholder = document.createElement('div');
+        ffPlaceholder.style.cssText = 'height:120px;display:flex;align-items:center;justify-content:center;border:1px dashed var(--border);border-radius:var(--radius);color:var(--text-dim);font-size:10px;';
+        ffPlaceholder.textContent = 'Click "Generate First Frame"';
+        ffPanel.appendChild(ffPlaceholder);
       }
+      previewBody.appendChild(ffPanel);
+
+      // RIGHT: Generated Clip
+      var clipPanel = document.createElement('div');
+      clipPanel.style.cssText = 'text-align:center;';
+      var clipLabel = document.createElement('div');
+      clipLabel.style.cssText = 'font-size:9px;color:var(--green);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;font-weight:600;';
+      clipLabel.textContent = 'Generated Clip';
+      clipPanel.appendChild(clipLabel);
+
+      var clipUrl = scene.clip_path ? ('/api/clips/' + scene.clip_path.replace(/\\\\/g,'/').split('/').pop()) : (scene.preview && scene.preview.video_url);
+      if (clipUrl) {
+        var clipVid = document.createElement('video');
+        clipVid.src = clipUrl + '?t=' + Date.now();
+        clipVid.style.cssText = 'max-width:100%;max-height:200px;border-radius:var(--radius);border:1px solid var(--green);cursor:pointer;';
+        clipVid.controls = true;
+        clipVid.muted = true;
+        clipVid.preload = 'metadata';
+        clipVid.loop = true;
+        clipVid.ondblclick = function() { window._openFsPreview && window._openFsPreview(this.src); };
+        clipPanel.appendChild(clipVid);
+      } else {
+        var clipPlaceholder = document.createElement('div');
+        clipPlaceholder.style.cssText = 'height:120px;display:flex;align-items:center;justify-content:center;border:1px dashed var(--border);border-radius:var(--radius);color:var(--text-dim);font-size:10px;';
+        clipPlaceholder.textContent = 'Click "Generate Clip"';
+        clipPanel.appendChild(clipPlaceholder);
+      }
+      previewBody.appendChild(clipPanel);
+
       previewSection.appendChild(previewBody);
 
       // Reference indicators — show which assets will be used for preview
@@ -13319,21 +13453,35 @@ document.addEventListener('DOMContentLoaded', function() {
       var _isFailed = scene.preview && scene.preview.status === 'failed';
       var _hasPreview = scene.preview && scene.preview.status === 'ready';
       if (_isStale) {
-        genPreviewBtn.textContent = 'Refresh Preview';
+        genPreviewBtn.textContent = 'Regen Clip';
         genPreviewBtn.style.cssText += 'border-color:var(--amber);color:var(--amber);';
       } else if (_isFailed) {
-        genPreviewBtn.textContent = 'Retry Preview';
+        genPreviewBtn.textContent = 'Retry Clip';
         genPreviewBtn.style.cssText += 'border-color:var(--red);color:var(--red);';
       } else if (_hasPreview) {
-        genPreviewBtn.textContent = 'Regenerate Preview';
+        genPreviewBtn.textContent = 'Regen Clip';
       } else {
-        genPreviewBtn.textContent = 'Generate Preview';
+        genPreviewBtn.textContent = 'Generate Clip';
         genPreviewBtn.style.cssText += 'border-color:var(--green);color:var(--green);';
       }
+      // "Generate First Frame" button — fast image only, no video (LEFT)
+      var genFirstFrameBtn = document.createElement('button');
+      genFirstFrameBtn.className = 'btn btn-small btn-tier-ghost';
+      genFirstFrameBtn.textContent = scene.first_frame_path ? 'Regen First Frame' : 'Generate First Frame';
+      genFirstFrameBtn.style.cssText = 'font-size:9px;padding:3px 8px;border-color:var(--cyan);color:var(--cyan);';
+      genFirstFrameBtn.onclick = (function(idx) {
+        return function(e) {
+          e.stopPropagation();
+          window._generateFirstFrame(idx);
+        };
+      })(sceneIdx);
+      previewActions.appendChild(genFirstFrameBtn);
+
+      // "Generate Clip" video button (RIGHT)
       genPreviewBtn.onclick = (function(idx) {
         return function(e) {
           e.stopPropagation();
-          window._generateScenePreview(idx);
+          window._generateSceneClip(idx);
         };
       })(sceneIdx);
       previewActions.appendChild(genPreviewBtn);
@@ -13533,6 +13681,116 @@ document.addEventListener('DOMContentLoaded', function() {
   // ---- Scene Preview Functions ----
 
   // Generate preview for a single scene
+  // Generate First Frame only (fast image, no video)
+  window._generateFirstFrame = function(sceneIndex) {
+    // Create persistent progress toast
+    var container = document.getElementById('toastContainer');
+    var toastEl = document.createElement('div');
+    toastEl.className = 'toast toast-info';
+    toastEl.style.animation = 'none'; toastEl.style.opacity = '1';
+    var startTime = Date.now();
+    toastEl.innerHTML = '<span class="toast-icon">\u23F3</span><div style="flex:1;">'
+      + '<div>Scene ' + (sceneIndex+1) + ' — Generating first frame...</div>'
+      + '<div style="margin-top:4px;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">'
+      + '<div id="ffProgress' + sceneIndex + '" style="height:100%;width:0%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:2px;transition:width 0.5s;"></div></div>'
+      + '<div id="ffTimer' + sceneIndex + '" style="font-size:10px;color:var(--text-dim);margin-top:2px;">0s elapsed</div>'
+      + '</div>';
+    container.appendChild(toastEl);
+
+    // Animate progress bar
+    var timer = setInterval(function() {
+      var elapsed = Math.round((Date.now() - startTime) / 1000);
+      var pct = Math.min(90, Math.round((elapsed / 30) * 100)); // estimate ~30s
+      var fill = document.getElementById('ffProgress' + sceneIndex);
+      var timerEl = document.getElementById('ffTimer' + sceneIndex);
+      if (fill) fill.style.width = pct + '%';
+      if (timerEl) timerEl.textContent = elapsed + 's elapsed · ~' + pct + '%';
+    }, 1000);
+
+    fetch('/api/auto-director/scene/' + sceneIndex + '/first-frame', {
+      method: 'POST'
+    }).then(function(r){return r.json()}).then(function(data) {
+      clearInterval(timer);
+      toastEl.classList.add('toast-out');
+      setTimeout(function(){ toastEl.remove(); }, 300);
+      if (data.error) {
+        window._toast('First frame failed: ' + data.error, 'error', 6000);
+      } else {
+        window._toast('First frame ready for scene ' + (sceneIndex+1), 'success');
+        if (data.scene && window._autoScenes) {
+          window._autoScenes[sceneIndex] = data.scene;
+        }
+        window._renderAutoSceneCards(
+          document.getElementById('autoSceneCards'),
+          document.getElementById('autoScenePlanStats'),
+          window._autoScenes
+        );
+      }
+    }).catch(function(e) {
+      clearInterval(timer);
+      toastEl.classList.add('toast-out');
+      setTimeout(function(){ toastEl.remove(); }, 300);
+      window._toast('First frame error: ' + e.message, 'error', 5000);
+    });
+  };
+
+  // Generate Clip — actual video using image_to_video with first frame
+  window._generateSceneClip = function(sceneIndex) {
+    var scene = window._autoScenes && window._autoScenes[sceneIndex];
+    if (scene && !scene.first_frame_path) {
+      window._toast('Generate a first frame first before generating the clip', 'warning', 4000);
+      return;
+    }
+    // Persistent progress toast
+    var container = document.getElementById('toastContainer');
+    var toastEl = document.createElement('div');
+    toastEl.className = 'toast toast-info';
+    toastEl.style.animation = 'none'; toastEl.style.opacity = '1';
+    var startTime = Date.now();
+    toastEl.innerHTML = '<span class="toast-icon">\uD83C\uDFAC</span><div style="flex:1;">'
+      + '<div>Scene ' + (sceneIndex+1) + ' — Generating clip...</div>'
+      + '<div style="margin-top:4px;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">'
+      + '<div id="clipProgress' + sceneIndex + '" style="height:100%;width:0%;background:linear-gradient(90deg,var(--amber),var(--green));border-radius:2px;transition:width 0.5s;"></div></div>'
+      + '<div id="clipTimer' + sceneIndex + '" style="font-size:10px;color:var(--text-dim);margin-top:2px;">0s elapsed</div>'
+      + '</div>';
+    container.appendChild(toastEl);
+
+    var timer = setInterval(function() {
+      var elapsed = Math.round((Date.now() - startTime) / 1000);
+      var pct = Math.min(95, Math.round((elapsed / 90) * 100));
+      var fill = document.getElementById('clipProgress' + sceneIndex);
+      var timerEl = document.getElementById('clipTimer' + sceneIndex);
+      if (fill) fill.style.width = pct + '%';
+      if (timerEl) timerEl.textContent = elapsed + 's elapsed · ~' + pct + '%';
+    }, 1000);
+
+    fetch('/api/auto-director/scene/' + sceneIndex + '/generate-clip', {
+      method: 'POST'
+    }).then(function(r){return r.json()}).then(function(data) {
+      clearInterval(timer);
+      toastEl.classList.add('toast-out');
+      setTimeout(function(){ toastEl.remove(); }, 300);
+      if (data.error) {
+        window._toast('Clip failed: ' + data.error, 'error', 6000);
+      } else {
+        window._toast('Clip ready for scene ' + (sceneIndex+1), 'success');
+        if (data.scene && window._autoScenes) {
+          window._autoScenes[sceneIndex] = data.scene;
+        }
+        window._renderAutoSceneCards(
+          document.getElementById('autoSceneCards'),
+          document.getElementById('autoScenePlanStats'),
+          window._autoScenes
+        );
+      }
+    }).catch(function(e) {
+      clearInterval(timer);
+      toastEl.classList.add('toast-out');
+      setTimeout(function(){ toastEl.remove(); }, 300);
+      window._toast('Clip error: ' + e.message, 'error', 5000);
+    });
+  };
+
   window._generateScenePreview = function(sceneIndex) {
     // Update local state
     if (window._autoScenes && window._autoScenes[sceneIndex]) {

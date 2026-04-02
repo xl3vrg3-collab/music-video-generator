@@ -183,7 +183,7 @@ class PromptOS:
     def create_character(self, data):
         chars = _load_json(CHARACTERS_PATH)
         # Accept both field name formats
-        desc = data.get("description", data.get("physicalDescription", ""))
+        desc = data.get("description", data.get("physicalDescription", data.get("physical", "")))
         record = {
             "id": _gen_id(),
             "name": data.get("name", "Unnamed"),
@@ -209,6 +209,7 @@ class PromptOS:
             "createdAt": _now(),
             "updatedAt": _now(),
             "notes": data.get("notes", ""),
+            "isCharacterSheet": bool(data.get("isCharacterSheet", False)),
         }
         chars.append(record)
         _save_json(CHARACTERS_PATH, chars)
@@ -229,7 +230,8 @@ class PromptOS:
             if c["id"] == cid:
                 for key in ("name", "physicalDescription", "hair", "skinTone", "bodyType",
                              "distinguishingFeatures", "defaultExpression", "ageRange",
-                             "referencePhoto", "previewImage", "costumes", "tags", "notes"):
+                             "referencePhoto", "previewImage", "costumes", "tags", "notes",
+                             "isCharacterSheet"):
                     if key in data:
                         c[key] = data[key]
                 c["updatedAt"] = _now()

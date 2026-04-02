@@ -5,6 +5,7 @@ Plans an entire music video by analyzing audio, auto-assigning characters
 and environments to sections, building prompts, and executing batch generation.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -964,6 +965,22 @@ class AutoDirector:
 
     # ---- Full Video Generation ----
 
+    @staticmethod
+    def _scene_gen_hash(scene: dict) -> str:
+        """Hash generation-relevant fields for cache comparison."""
+        parts = [
+            scene.get("prompt", ""),
+            str(scene.get("duration", 8)),
+            scene.get("camera_movement", ""),
+            scene.get("engine", ""),
+            scene.get("characterId", ""),
+            scene.get("costumeId", ""),
+            scene.get("environmentId", ""),
+            scene.get("character_photo_path", ""),
+        ]
+        raw = "||".join(str(p) for p in parts)
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
     def generate_full_video(self, plan: dict, cost_cb=None) -> str:
         """
         Execute the full plan:
@@ -1003,6 +1020,20 @@ class AutoDirector:
         def generate_one(scene):
             scene_id = scene["id"]
             idx = scene["index"]
+
+            # Cache check: skip if clip exists and settings unchanged
+            cur_hash = self._scene_gen_hash(scene)
+            clip_file = scene.get("clip_path", "")
+            if (scene.get("has_clip") and clip_file
+                    and os.path.isfile(clip_file)
+                    and scene.get("gen_hash") == cur_hash):
+                with self._lock:
+                    self._progress["completed_scenes"] += 1
+                    for sq in self._progress["scenes"]:
+                        if sq["id"] == scene_id:
+                            sq["status"] = "cached"
+                            break
+                return scene_id, True, None
 
             # Update status
             with self._lock:
@@ -1072,6 +1103,35 @@ class AutoDirector:
                             c_parts.append(costume_data["accessories"])
                         costume_description = ", ".join(c_parts)
 
+            # Resolve photo paths from entity data for vision API descriptions
+            _env_photo_path = ""
+            if env_id and env_data:
+                _eref = env_data.get("referenceImagePath", "")
+                if _eref and os.path.isfile(_eref):
+                    _env_photo_path = _eref
+                else:
+                    _em = re.search(r"/api/pos/environments/([^/]+)/photo", _eref or "")
+                    if _em:
+                        for _ext in (".jpg", ".jpeg", ".png", ".webp"):
+                            _cand = os.path.join(self.output_dir, "prompt_os", "photos", "environments", f"{_em.group(1)}{_ext}")
+                            if os.path.isfile(_cand):
+                                _env_photo_path = _cand
+                                break
+
+            _cos_photo_path = ""
+            if costume_id and costume_data:
+                _cref = costume_data.get("referenceImagePath", "")
+                if _cref and os.path.isfile(_cref):
+                    _cos_photo_path = _cref
+                else:
+                    _cm = re.search(r"/api/pos/costumes/([^/]+)/photo", _cref or "")
+                    if _cm:
+                        for _ext in (".jpg", ".jpeg", ".png", ".webp"):
+                            _cand = os.path.join(self.output_dir, "prompt_os", "photos", "costumes", f"{_cm.group(1)}{_ext}")
+                            if os.path.isfile(_cand):
+                                _cos_photo_path = _cand
+                                break
+
             gen_scene = {
                 "prompt": scene["prompt"],
                 "duration": scene.get("duration", 8),
@@ -1082,6 +1142,8 @@ class AutoDirector:
                 "is_character_sheet": bool(char_data and char_data.get("isCharacterSheet")),
                 "environment_description": env_description,
                 "costume_description": costume_description,
+                "environment_photo_path": _env_photo_path,
+                "costume_photo_path": _cos_photo_path,
             }
 
             photo_path = scene.get("character_photo_path")
@@ -1101,6 +1163,7 @@ class AutoDirector:
                 scene["clip_path"] = clip_path
                 scene["has_clip"] = True
                 scene["status"] = "done"
+                scene["gen_hash"] = cur_hash
 
                 with self._lock:
                     self._progress["completed_scenes"] += 1
@@ -1121,6 +1184,7 @@ class AutoDirector:
                     scene["clip_path"] = clip_path
                     scene["has_clip"] = True
                     scene["status"] = "done"
+                    scene["gen_hash"] = cur_hash
 
                     with self._lock:
                         self._progress["completed_scenes"] += 1
@@ -1133,6 +1197,7 @@ class AutoDirector:
                 except Exception as e2:
                     scene["status"] = "failed"
                     scene["error"] = str(e2)
+                    scene.pop("gen_hash", None)
 
                     with self._lock:
                         self._progress["failed_scenes"] += 1
