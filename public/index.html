@@ -762,8 +762,8 @@
   .mode-btn:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
   .mode-btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
   .mode-btn.active {
-    background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.2);
-    color: var(--text); box-shadow: none;
+    background: rgba(124,92,255,0.15); border-color: rgba(124,92,255,0.5);
+    color: #fff; box-shadow: 0 0 12px rgba(124,92,255,0.15); font-weight: 600;
   }
   .pipeline-status {
     display: inline-block; width: 6px; height: 6px; border-radius: 50%;
@@ -773,8 +773,16 @@
   .pipeline-status.warning { background: #ffa500; }
   .pipeline-status.empty { background: var(--border); }
   /* ---- Unified Button Tiers ---- */
-  .btn-tier-primary { background: #FF5E00 !important; border: none !important; color: #000 !important; font-family: 'Inter Tight',sans-serif !important; font-weight: 800 !important; font-size: 12px !important; padding: 10px 24px !important; letter-spacing: 2px; }
+  .btn-tier-primary { background: #FF5E00 !important; border: none !important; color: #000 !important; font-family: 'Inter Tight',sans-serif !important; font-weight: 800 !important; font-size: 12px !important; padding: 10px 24px !important; letter-spacing: 2px; animation: btnPulse 2s ease-in-out infinite; }
   .btn-tier-primary:hover { box-shadow: 0 0 24px rgba(255,94,0,0.3) !important; }
+  @keyframes btnPulse {
+    0%, 100% { box-shadow: 0 0 8px rgba(255,94,0,0.3); }
+    50% { box-shadow: 0 0 20px rgba(255,94,0,0.5); }
+  }
+  @keyframes confettiFall {
+    0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+    100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+  }
   .btn-tier-secondary { background: rgba(255,255,255,0.08) !important; border-color: rgba(255,255,255,0.15) !important; color: var(--text) !important; }
   .btn-tier-secondary:hover { background: rgba(255,255,255,0.12) !important; }
   .btn-tier-ghost { background: transparent !important; border-color: var(--border) !important; color: var(--text-dim) !important; }
@@ -2175,6 +2183,37 @@ document.addEventListener('keydown', function(e) {
   var t = localStorage.getItem('lumn-theme') || 'dark';
   document.documentElement.setAttribute('data-theme', t);
 })();
+
+// ===== CONFETTI CELEBRATION =====
+window._celebrate = function() {
+  var colors = ['#00E5FF','#FF5E00','#FFD600','#00E5A0','#6A5CFF'];
+  for (var i = 0; i < 50; i++) {
+    var confetti = document.createElement('div');
+    confetti.style.cssText = 'position:fixed;width:8px;height:8px;border-radius:50%;pointer-events:none;z-index:99999;' +
+      'left:' + (Math.random()*100) + 'vw;top:-10px;background:' + colors[Math.floor(Math.random()*colors.length)] + ';' +
+      'animation:confettiFall ' + (2+Math.random()*3) + 's ease-out forwards;';
+    document.body.appendChild(confetti);
+    setTimeout(function(el){el.remove()}, 5000, confetti);
+  }
+};
+
+// ===== GETTING STARTED CHECKLIST =====
+window._updateChecklist = function() {
+  var p = document.getElementById('checkProject');
+  var a = document.getElementById('checkAssets');
+  var s = document.getElementById('checkShots');
+  var e = document.getElementById('checkEdit');
+  if (!p) return;
+  var hasProject = (document.getElementById('adStorylineInput')&&document.getElementById('adStorylineInput').value.trim()) || (document.getElementById('adUploadFilename')&&document.getElementById('adUploadFilename').textContent!=='');
+  p.textContent = hasProject ? '\u2705' : '\u2B1C';
+  var hasAssets = window._dirQuickChars && window._dirQuickChars.length > 0;
+  a.textContent = hasAssets ? '\u2705' : '\u2B1C';
+  var hasShots = window._autoScenes && window._autoScenes.length > 0;
+  s.textContent = hasShots ? '\u2705' : '\u2B1C';
+  var hasClips = window._autoScenes && window._autoScenes.some(function(sc){return sc.clip_path || sc.has_clip;});
+  e.textContent = hasClips ? '\u2705' : '\u2B1C';
+};
+setInterval(function(){ window._updateChecklist(); }, 3000);
 </script>
 <div class="glow-tl"></div>
 <div class="glow-br"></div>
@@ -2214,7 +2253,7 @@ document.addEventListener('keydown', function(e) {
 
   <div class="header">
     <h1 style="font-family:'Inter Tight',sans-serif;font-weight:900;letter-spacing:8px;margin-bottom:0;font-size:18px;">LUMN <span style="color:var(--amber);">STUDIO</span></h1>
-    <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--text-dim);letter-spacing:3px;margin-bottom:8px;opacity:0.5;">DIRECT. BUILD. EXPORT.</div>
+    <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--text-dim);letter-spacing:3px;margin-bottom:8px;opacity:0.5;">PLAN. CREATE. GENERATE. EXPORT.</div>
     <div class="sub" style="display:flex;align-items:center;gap:12px;">
       <span>Project:</span>
       <input type="text" id="projectTitleInput" placeholder="Untitled Project"
@@ -2268,12 +2307,12 @@ document.addEventListener('keydown', function(e) {
 
   <!-- Workspace Navigation -->
   <div class="mode-toggle" id="workspaceNav" style="flex-wrap:nowrap;overflow-x:auto;gap:0;padding:4px 8px;">
-    <button class="mode-btn active" id="wsProjectBtn" onclick="window._switchWorkspace('project')" style="font-size:11px;padding:8px 18px;">PROJECT</button>
-    <button class="mode-btn" id="wsAssetsBtn" onclick="window._switchWorkspace('assets')" style="font-size:11px;padding:8px 18px;">ASSETS</button>
-    <button class="mode-btn" id="wsShotsBtn" onclick="window._switchWorkspace('shots')" style="font-size:11px;padding:8px 18px;">SHOTS</button>
-    <button class="mode-btn" id="wsEditBtn" onclick="window._switchWorkspace('edit')" style="font-size:11px;padding:8px 18px;">EDIT</button>
-    <button class="mode-btn" id="wsAudioBtn" onclick="window._switchWorkspace('audio')" style="font-size:11px;padding:8px 18px;">AUDIO</button>
-    <button class="mode-btn" id="wsOutputBtn" onclick="window._switchWorkspace('output')" style="font-size:11px;padding:8px 18px;">OUTPUT</button>
+    <button class="mode-btn active" id="wsProjectBtn" onclick="window._switchWorkspace('project')" style="font-size:11px;padding:8px 18px;">&#127916; Project</button>
+    <button class="mode-btn" id="wsAssetsBtn" onclick="window._switchWorkspace('assets')" style="font-size:11px;padding:8px 18px;">&#127917; Assets</button>
+    <button class="mode-btn" id="wsShotsBtn" onclick="window._switchWorkspace('shots')" style="font-size:11px;padding:8px 18px;">&#128248; Shots</button>
+    <button class="mode-btn" id="wsEditBtn" onclick="window._switchWorkspace('edit')" style="font-size:11px;padding:8px 18px;">&#9986;&#65039; Edit</button>
+    <button class="mode-btn" id="wsAudioBtn" onclick="window._switchWorkspace('audio')" style="font-size:11px;padding:8px 18px;">&#127925; Audio</button>
+    <button class="mode-btn" id="wsOutputBtn" onclick="window._switchWorkspace('output')" style="font-size:11px;padding:8px 18px;">&#127902;&#65039; Output</button>
   </div>
   <!-- Step indicator + progress bar + status -->
   <div id="pipelineProgress" style="padding:4px 16px;display:flex;align-items:center;gap:10px;">
@@ -2464,6 +2503,38 @@ document.addEventListener('keydown', function(e) {
     <!-- Top nav links removed — flow is now inline via action bar -->
 
     <div style="max-width:800px;margin:0 auto;">
+
+    <!-- GETTING STARTED CHECKLIST -->
+    <div id="gettingStarted" style="margin-bottom:20px;padding:20px;background:linear-gradient(135deg,rgba(124,92,255,0.08),rgba(0,229,255,0.05));border:1px solid rgba(124,92,255,0.2);border-radius:var(--radius-lg);">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+        <span style="font-size:24px;">&#127916;</span>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--text);">Welcome to LUMN Studio</div>
+          <div style="font-size:11px;color:var(--text-dim);">Create your AI-powered video in 6 steps</div>
+        </div>
+      </div>
+      <div id="startChecklist" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <div class="checklist-item" style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);">
+          <span id="checkProject" style="font-size:14px;">&#11036;</span>
+          <span style="font-size:10px;color:var(--text);">Set up your project</span>
+        </div>
+        <div class="checklist-item" style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);">
+          <span id="checkAssets" style="font-size:14px;">&#11036;</span>
+          <span style="font-size:10px;color:var(--text);">Create characters & environments</span>
+        </div>
+        <div class="checklist-item" style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);">
+          <span id="checkShots" style="font-size:14px;">&#11036;</span>
+          <span style="font-size:10px;color:var(--text);">Generate your shots</span>
+        </div>
+        <div class="checklist-item" style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);">
+          <span id="checkEdit" style="font-size:14px;">&#11036;</span>
+          <span style="font-size:10px;color:var(--text);">Edit & export your video</span>
+        </div>
+      </div>
+      <div style="text-align:right;margin-top:8px;">
+        <button class="btn btn-small" onclick="document.getElementById('gettingStarted').style.display='none'" style="font-size:9px;color:var(--text-dim);">Dismiss</button>
+      </div>
+    </div>
 
     <!-- SECTION 1: STORY INPUTS -->
     <div class="panel" id="autoStoryPanel">
@@ -3057,8 +3128,13 @@ document.addEventListener('keydown', function(e) {
       <div id="shotsSceneCards"></div>
 
       <!-- Empty state -->
-      <div id="shotsEmptyState" style="margin-top:24px;padding:32px;border:1px dashed var(--border);border-radius:var(--radius-lg);text-align:center;color:var(--text-dim);font-size:11px;letter-spacing:1px;text-transform:uppercase;">
-        No shots yet. Create a plan in the PROJECT workspace first.
+      <div id="shotsEmptyState" style="margin-top:24px;border:1px dashed var(--border);border-radius:var(--radius-lg);">
+        <div style="text-align:center;padding:40px 20px;">
+          <div style="font-size:40px;margin-bottom:12px;">&#128248;</div>
+          <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px;">No shots yet</div>
+          <div style="font-size:11px;color:var(--text-dim);max-width:300px;margin:0 auto 16px;">Create a plan in the Project tab first. Your shots will appear here ready for generation.</div>
+          <button class="btn btn-small btn-cyan" onclick="window._switchWorkspace('project')">Go to Project &#8594;</button>
+        </div>
       </div>
     </div>
   </div>
@@ -3079,8 +3155,12 @@ document.addEventListener('keydown', function(e) {
 
     <!-- Timeline strip -->
     <div id="editTimeline" style="display:flex;gap:2px;overflow-x:auto;padding:12px 0;margin-bottom:16px;min-height:120px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);align-items:stretch;">
-      <div id="editTimelineEmpty" style="width:100%;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:11px;">
-        Generate clips in the SHOTS tab first, then arrange them here
+      <div id="editTimelineEmpty" style="width:100%;display:flex;align-items:center;justify-content:center;">
+        <div style="text-align:center;padding:20px;">
+          <div style="font-size:32px;margin-bottom:8px;">&#9986;&#65039;</div>
+          <div style="font-size:12px;color:var(--text-dim);">Generate clips in Shots first, then arrange them here</div>
+          <button class="btn btn-small" onclick="window._switchWorkspace('shots')" style="margin-top:8px;">Go to Shots &#8594;</button>
+        </div>
       </div>
     </div>
 
@@ -14085,6 +14165,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (vid) vid.src = '/api/download?t=' + Date.now();
                 if (dl) dl.href = '/api/download';
                 window._toast('Final video ready!', 'success');
+                if (window._celebrate) window._celebrate();
               } else if (pd.phase === 'error') {
                 clearInterval(pollTimer);
                 window._toast('Stitch error: ' + (pd.error || 'unknown'), 'error');
@@ -14330,6 +14411,7 @@ document.addEventListener('DOMContentLoaded', function() {
               if (vid) vid.src = '/api/download?t=' + Date.now();
               if (dl) dl.href = '/api/download';
               window._toast('Final video rendered!', 'success');
+              if (window._celebrate) window._celebrate();
             } else if (pd.phase === 'error') {
               clearInterval(pollTimer);
               if (progress) progress.style.display = 'none';
