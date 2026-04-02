@@ -2356,6 +2356,14 @@ document.addEventListener('keydown', function(e) {
       if (mode === 'shots' && window._initShotsWorkspace) {
         window._initShotsWorkspace();
       }
+      // Initialize edit workspace when switching to edit tab
+      if (mode === 'edit' && window._initEditWorkspace) {
+        window._initEditWorkspace();
+      }
+      // Initialize output workspace when switching to output tab
+      if (mode === 'output' && window._initOutputWorkspace) {
+        window._initOutputWorkspace();
+      }
       // Update pipeline progress bar
       var stepIdx = flow.indexOf(mode);
       var totalSteps = flow.length;
@@ -3400,30 +3408,264 @@ document.addEventListener('keydown', function(e) {
 
   <!-- ============ EDIT WORKSPACE ============ -->
   <div id="editContainer" class="workspace-panel hidden" style="display:none;">
-    <div style="max-width:800px;margin:0 auto;padding:16px;">
-      <h2 style="color:var(--text);font-size:18px;font-weight:700;letter-spacing:1px;margin-bottom:8px;">Edit</h2>
-      <p style="color:var(--text-dim);font-size:12px;line-height:1.6;">Timeline editor, generation queue, re-generation controls, and visual editing.</p>
-      <div style="margin-top:24px;padding:32px;border:1px dashed var(--border);border-radius:var(--radius-lg);text-align:center;color:var(--text-dim);font-size:11px;letter-spacing:1px;text-transform:uppercase;">Coming in Phase 2</div>
+    <!-- Top bar -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div>
+        <span style="font-size:16px;font-weight:700;color:var(--text);letter-spacing:1px;">SEQUENCE EDITOR</span>
+        <span id="editClipCount" style="font-size:11px;color:var(--text-dim);margin-left:8px;"></span>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-small" onclick="window._previewSequence()" style="border-color:var(--cyan);color:var(--cyan);">Preview Sequence</button>
+        <button class="btn btn-small" onclick="window._stitchSequence()" style="border-color:var(--green);color:var(--green);">Stitch Final Video</button>
+      </div>
+    </div>
+
+    <!-- Timeline strip -->
+    <div id="editTimeline" style="display:flex;gap:2px;overflow-x:auto;padding:12px 0;margin-bottom:16px;min-height:120px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);align-items:stretch;">
+      <div id="editTimelineEmpty" style="width:100%;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:11px;">
+        Generate clips in the SHOTS tab first, then arrange them here
+      </div>
+    </div>
+
+    <!-- Total duration bar -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding:8px 12px;background:var(--surface2);border-radius:var(--radius);border:1px solid var(--border);">
+      <span style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Total Duration</span>
+      <span id="editTotalDuration" style="font-size:12px;color:var(--text);font-weight:600;">0:00</span>
+    </div>
+
+    <!-- Transition settings -->
+    <div style="margin-bottom:16px;">
+      <div style="font-size:11px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Global Transition</div>
+      <div style="display:flex;gap:12px;align-items:center;">
+        <select id="editGlobalTransition" class="styled-select" style="width:160px;" onchange="window._setGlobalTransition(this.value)">
+          <option value="crossfade">Crossfade</option>
+          <option value="cut">Hard Cut</option>
+          <option value="dissolve">Dissolve</option>
+          <option value="fade_black">Fade to Black</option>
+          <option value="wipe_left">Wipe Left</option>
+          <option value="slide_left">Slide Left</option>
+        </select>
+        <label style="font-size:10px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+          Duration: <input type="number" id="editTransitionDur" value="0.5" min="0" max="3" step="0.1" style="width:50px;font-size:10px;padding:2px 4px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:3px;">s
+        </label>
+      </div>
+    </div>
+
+    <!-- Output preview -->
+    <div id="editOutputPanel" style="display:none;margin-top:16px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);text-align:center;">
+      <div style="font-size:11px;color:var(--green);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Stitched Output</div>
+      <video id="editOutputVideo" controls style="max-width:100%;max-height:400px;border-radius:var(--radius);border:1px solid var(--border);" ondblclick="window._openFsPreview && window._openFsPreview(this.src)"></video>
+      <div style="margin-top:8px;">
+        <a id="editDownloadLink" class="btn btn-small btn-green" style="text-decoration:none;">Download</a>
+      </div>
     </div>
   </div>
 
   <!-- ============ AUDIO WORKSPACE ============ -->
-  <div id="audioContainer" class="workspace-panel hidden" style="display:none;">
-    <div style="max-width:800px;margin:0 auto;padding:16px;">
-      <h2 style="color:var(--text);font-size:18px;font-weight:700;letter-spacing:1px;margin-bottom:8px;">Audio</h2>
-      <p style="color:var(--text-dim);font-size:12px;line-height:1.6;">Audio sync, beat detection, soundtrack management, and voice-over tools.</p>
-      <div style="margin-top:24px;padding:32px;border:1px dashed var(--border);border-radius:var(--radius-lg);text-align:center;color:var(--text-dim);font-size:11px;letter-spacing:1px;text-transform:uppercase;">Coming in Phase 2</div>
+  <div id="audioContainer" class="workspace-panel hidden">
+  <!-- Top bar -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <span style="font-size:16px;font-weight:700;color:var(--text);letter-spacing:1px;">AUDIO</span>
+  </div>
+
+  <!-- Audio sub-tabs -->
+  <div style="display:flex;gap:4px;margin-bottom:16px;padding:4px;background:var(--surface);border-radius:var(--radius-lg);border:1px solid var(--border);">
+    <button class="mode-btn active" onclick="window._setAudioTab('music')" id="audioTabMusic" style="font-size:10px;padding:6px 14px;">Music</button>
+    <button class="mode-btn" onclick="window._setAudioTab('voice')" id="audioTabVoice" style="font-size:10px;padding:6px 14px;">Voice / Dialogue</button>
+    <button class="mode-btn" onclick="window._setAudioTab('sfx')" id="audioTabSfx" style="font-size:10px;padding:6px 14px;">SFX / Ambience</button>
+  </div>
+
+  <!-- Music Panel -->
+  <div id="audioPanelMusic">
+    <div style="padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);">
+      <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:12px;">Music Track</div>
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;">
+        <label class="btn btn-small" style="cursor:pointer;">
+          Upload Music
+          <input type="file" accept=".mp3,.wav,.m4a,.ogg,.flac" style="display:none;" onchange="window._uploadAudioTrack(this.files[0], 'music')">
+        </label>
+        <span id="audioMusicFilename" style="font-size:10px;color:var(--text-dim);">No file selected</span>
+      </div>
+      <div id="audioMusicPlayer" style="display:none;">
+        <audio id="audioMusicAudio" controls style="width:100%;height:36px;"></audio>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:12px;align-items:center;">
+        <label style="font-size:10px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+          Volume: <input type="range" id="audioMusicVolume" min="0" max="100" value="80" style="width:100px;">
+          <span id="audioMusicVolVal">80%</span>
+        </label>
+        <label style="font-size:10px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+          <input type="checkbox" id="audioMusicDuck" style="accent-color:var(--amber);"> Duck under dialogue
+        </label>
+      </div>
+    </div>
+
+    <!-- Runway Sound Effects Generation -->
+    <div style="margin-top:16px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);">
+      <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:12px;">Generate Music / SFX (Runway)</div>
+      <div style="display:flex;gap:8px;align-items:end;">
+        <div style="flex:1;">
+          <label style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Describe the sound</label>
+          <input type="text" id="audioGenPrompt" class="styled-input" placeholder="e.g. Cinematic orchestral build with drums" style="width:100%;">
+        </div>
+        <div>
+          <label style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Duration</label>
+          <input type="number" id="audioGenDuration" value="10" min="1" max="30" style="width:60px;font-size:10px;padding:4px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:3px;">
+        </div>
+        <button class="btn btn-small btn-cyan" onclick="window._generateSound()">Generate</button>
+      </div>
     </div>
   </div>
 
-  <!-- ============ OUTPUT WORKSPACE ============ -->
-  <div id="outputContainer" class="workspace-panel hidden" style="display:none;">
-    <div style="max-width:800px;margin:0 auto;padding:16px;">
-      <h2 style="color:var(--text);font-size:18px;font-weight:700;letter-spacing:1px;margin-bottom:8px;">Output</h2>
-      <p style="color:var(--text-dim);font-size:12px;line-height:1.6;">Final render, export options, preview, and delivery.</p>
-      <div style="margin-top:24px;padding:32px;border:1px dashed var(--border);border-radius:var(--radius-lg);text-align:center;color:var(--text-dim);font-size:11px;letter-spacing:1px;text-transform:uppercase;">Coming in Phase 2</div>
+  <!-- Voice Panel -->
+  <div id="audioPanelVoice" class="hidden">
+    <div style="padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);">
+      <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:12px;">Voice / Narration</div>
+
+      <!-- TTS -->
+      <div style="margin-bottom:16px;">
+        <div style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Text to Speech (Runway)</div>
+        <textarea id="audioTTSText" class="styled-input" rows="3" placeholder="Enter narration or dialogue text..." style="width:100%;resize:vertical;"></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+          <select id="audioTTSVoice" class="styled-select" style="width:150px;">
+            <option value="Maya">Maya</option><option value="Arjun">Arjun</option><option value="Serene">Serene</option>
+            <option value="Bernard">Bernard</option><option value="Billy">Billy</option><option value="Mark">Mark</option>
+            <option value="Clint">Clint</option><option value="Leslie">Leslie</option><option value="Eleanor">Eleanor</option>
+            <option value="Elias">Elias</option><option value="Elliot">Elliot</option><option value="Noah">Noah</option>
+            <option value="James">James</option><option value="Katie">Katie</option><option value="Jack">Jack</option>
+            <option value="Maggie">Maggie</option><option value="Frank">Frank</option><option value="Claudia">Claudia</option>
+            <option value="Vincent">Vincent</option><option value="Kendrick">Kendrick</option><option value="Rachel">Rachel</option>
+          </select>
+          <button class="btn btn-small btn-green" onclick="window._generateTTS()">Generate Voice</button>
+        </div>
+      </div>
+
+      <!-- Upload voice -->
+      <div>
+        <div style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Or Upload Voice Audio</div>
+        <label class="btn btn-small" style="cursor:pointer;">
+          Upload Voice File
+          <input type="file" accept=".mp3,.wav,.m4a" style="display:none;" onchange="window._uploadAudioTrack(this.files[0], 'voice')">
+        </label>
+      </div>
     </div>
   </div>
+
+  <!-- SFX Panel -->
+  <div id="audioPanelSfx" class="hidden">
+    <div style="padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);">
+      <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:12px;">Sound Effects & Ambience</div>
+      <div style="display:flex;gap:8px;align-items:end;">
+        <div style="flex:1;">
+          <label style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Describe the effect</label>
+          <input type="text" id="audioSfxPrompt" class="styled-input" placeholder="e.g. Rain on a window, thunder in the distance" style="width:100%;">
+        </div>
+        <div>
+          <label style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Duration</label>
+          <input type="number" id="audioSfxDuration" value="10" min="1" max="30" style="width:60px;font-size:10px;padding:4px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:3px;">
+        </div>
+        <label style="font-size:10px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+          <input type="checkbox" id="audioSfxLoop"> Loop
+        </label>
+        <button class="btn btn-small btn-amber" onclick="window._generateSFX()">Generate SFX</button>
+      </div>
+      <div id="audioSfxResult" style="margin-top:12px;display:none;">
+        <audio id="audioSfxPlayer" controls style="width:100%;height:36px;"></audio>
+      </div>
+    </div>
+  </div>
+</div>
+
+  <!-- ============ OUTPUT WORKSPACE ============ -->
+  <div id="outputContainer" class="workspace-panel hidden">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <span style="font-size:16px;font-weight:700;color:var(--text);letter-spacing:1px;">OUTPUT</span>
+  </div>
+
+  <!-- Project Summary -->
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
+    <div style="padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);text-align:center;">
+      <div style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Scenes</div>
+      <div id="outputSceneCount" style="font-size:24px;font-weight:700;color:var(--cyan);">0</div>
+    </div>
+    <div style="padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);text-align:center;">
+      <div style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Clips Ready</div>
+      <div id="outputClipCount" style="font-size:24px;font-weight:700;color:var(--green);">0</div>
+    </div>
+    <div style="padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);text-align:center;">
+      <div style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Est. Duration</div>
+      <div id="outputDuration" style="font-size:24px;font-weight:700;color:var(--amber);">0:00</div>
+    </div>
+  </div>
+
+  <!-- Export Options -->
+  <div style="padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:16px;">
+    <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:12px;">Export Settings</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div>
+        <label style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Format</label>
+        <select id="outputFormat" class="styled-select" style="width:100%;">
+          <option value="mp4">MP4 (H.264)</option>
+          <option value="webm">WebM</option>
+          <option value="gif">Animated GIF</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Quality</label>
+        <select id="outputQuality" class="styled-select" style="width:100%;">
+          <option value="high">High (1080p)</option>
+          <option value="medium">Medium (720p)</option>
+          <option value="draft">Draft (480p)</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Aspect Ratio</label>
+        <select id="outputRatio" class="styled-select" style="width:100%;">
+          <option value="16:9">16:9 Landscape</option>
+          <option value="9:16">9:16 Portrait</option>
+          <option value="1:1">1:1 Square</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Transition</label>
+        <select id="outputTransition" class="styled-select" style="width:100%;">
+          <option value="crossfade">Crossfade</option>
+          <option value="cut">Hard Cut</option>
+          <option value="dissolve">Dissolve</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Render Button -->
+  <div style="text-align:center;margin-bottom:16px;">
+    <button class="btn btn-tier-primary" onclick="window._renderFinalVideo()" style="padding:12px 40px;font-size:13px;letter-spacing:2px;">RENDER FINAL VIDEO</button>
+  </div>
+
+  <!-- Render Progress -->
+  <div id="outputRenderProgress" style="display:none;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:16px;text-align:center;">
+    <div style="font-size:11px;color:var(--amber);letter-spacing:1px;margin-bottom:8px;">RENDERING...</div>
+    <div style="width:100%;height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+      <div id="outputRenderFill" style="height:100%;width:0%;background:linear-gradient(90deg,var(--amber),var(--green));border-radius:3px;transition:width 0.5s;"></div>
+    </div>
+    <div id="outputRenderStatus" style="font-size:10px;color:var(--text-dim);margin-top:4px;">Starting...</div>
+  </div>
+
+  <!-- Final Video -->
+  <div id="outputFinalPanel" style="display:none;padding:16px;background:var(--surface);border:1px solid var(--green);border-radius:var(--radius-lg);text-align:center;">
+    <div style="font-size:12px;font-weight:600;color:var(--green);margin-bottom:12px;letter-spacing:1px;">YOUR VIDEO IS READY</div>
+    <video id="outputFinalVideo" controls style="max-width:100%;max-height:500px;border-radius:var(--radius);border:1px solid var(--border);" ondblclick="window._openFsPreview && window._openFsPreview(this.src)"></video>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:center;">
+      <a id="outputDownloadBtn" class="btn btn-green" style="text-decoration:none;padding:8px 24px;">Download Video</a>
+    </div>
+  </div>
+
+  <!-- Cost Summary -->
+  <div style="margin-top:16px;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);text-align:center;">
+    <span style="font-size:10px;color:var(--text-dim);letter-spacing:1px;">Estimated Cost: </span>
+    <span id="outputCostEstimate" style="font-size:12px;color:var(--amber);font-weight:600;">$0.00</span>
+  </div>
+</div>
 
   <!-- ============ PROMPT OS: PROMPTS TAB ============ -->
   <div id="posPromptsContainer" class="hidden">
@@ -13638,6 +13880,277 @@ document.addEventListener('DOMContentLoaded', function() {
       setTimeout(next, 2000);
     }
     next();
+  };
+
+  // ---- EDIT Workspace Functions ----
+
+  window._initEditWorkspace = function() {
+    var timeline = document.getElementById('editTimeline');
+    var empty = document.getElementById('editTimelineEmpty');
+    var countEl = document.getElementById('editClipCount');
+    if (!timeline) return;
+
+    var scenes = window._autoScenes || [];
+    var clipsReady = scenes.filter(function(s) { return s.clip_path || s.has_clip; });
+
+    if (clipsReady.length === 0) {
+      if (empty) empty.style.display = '';
+      if (countEl) countEl.textContent = '0 clips';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+    if (countEl) countEl.textContent = clipsReady.length + ' clips ready';
+
+    // Build timeline strips
+    timeline.innerHTML = '';
+    var totalDur = 0;
+    scenes.forEach(function(scene, i) {
+      var hasClip = scene.clip_path || scene.has_clip;
+      var dur = parseFloat(scene.duration) || 5;
+      totalDur += dur;
+
+      var strip = document.createElement('div');
+      strip.style.cssText = 'flex:0 0 ' + Math.max(80, dur * 30) + 'px;padding:8px;border-radius:var(--radius);cursor:pointer;position:relative;display:flex;flex-direction:column;justify-content:space-between;min-height:100px;' +
+        (hasClip ? 'background:var(--surface2);border:1px solid var(--green);' : 'background:var(--bg);border:1px dashed var(--border);opacity:0.5;');
+
+      // Thumbnail
+      var thumb = '';
+      if (scene.preview && scene.preview.image_url) {
+        thumb = '<img src="' + scene.preview.image_url + '" style="width:100%;height:50px;object-fit:cover;border-radius:3px;margin-bottom:4px;">';
+      }
+
+      strip.innerHTML = thumb +
+        '<div style="font-size:9px;font-weight:700;color:var(--text);">Scene ' + (i+1) + '</div>' +
+        '<div style="font-size:8px;color:var(--text-dim);">' + dur.toFixed(1) + 's</div>' +
+        '<div style="font-size:8px;color:' + (hasClip ? 'var(--green)' : 'var(--red)') + ';">' + (hasClip ? 'Ready' : 'No clip') + '</div>';
+
+      // Transition indicator between strips
+      if (i > 0) {
+        var trans = document.createElement('div');
+        trans.style.cssText = 'flex:0 0 24px;display:flex;align-items:center;justify-content:center;';
+        trans.innerHTML = '<div style="width:16px;height:16px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--text-dim);" title="' + (scene.transition || 'crossfade') + '">&#8594;</div>';
+        timeline.appendChild(trans);
+      }
+
+      timeline.appendChild(strip);
+    });
+
+    // Update total duration
+    var durEl = document.getElementById('editTotalDuration');
+    if (durEl) {
+      var mins = Math.floor(totalDur / 60);
+      var secs = Math.round(totalDur % 60);
+      durEl.textContent = mins + ':' + (secs < 10 ? '0' : '') + secs + ' (' + totalDur.toFixed(1) + 's)';
+    }
+  };
+
+  window._setGlobalTransition = function(type) {
+    if (!window._autoScenes) return;
+    window._autoScenes.forEach(function(s) { s.transition = type; });
+    window._toast('Transition set to ' + type + ' for all scenes', 'info', 2000);
+  };
+
+  window._previewSequence = function() {
+    window._toast('Previewing sequence... (stitch with transitions)', 'info', 3000);
+    window._stitchSequence();
+  };
+
+  window._stitchSequence = function() {
+    var container = document.getElementById('toastContainer');
+    var toastEl = document.createElement('div');
+    toastEl.className = 'toast toast-info';
+    toastEl.style.cssText = 'animation:none;opacity:1;';
+    var startTime = Date.now();
+    toastEl.innerHTML = '<span class="toast-icon">&#127916;</span><div style="flex:1;">' +
+      '<div>Stitching final video...</div>' +
+      '<div style="margin-top:4px;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">' +
+      '<div id="stitchProgress" style="height:100%;width:0%;background:linear-gradient(90deg,var(--amber),var(--green));border-radius:2px;transition:width 0.5s;"></div></div>' +
+      '<div id="stitchTimer" style="font-size:10px;color:var(--text-dim);margin-top:2px;">0s elapsed</div></div>';
+    container.appendChild(toastEl);
+
+    var timer = setInterval(function() {
+      var elapsed = Math.round((Date.now() - startTime) / 1000);
+      var fill = document.getElementById('stitchProgress');
+      var timerEl = document.getElementById('stitchTimer');
+      if (fill) fill.style.width = Math.min(90, elapsed * 3) + '%';
+      if (timerEl) timerEl.textContent = elapsed + 's elapsed';
+    }, 1000);
+
+    fetch('/api/auto-director/stitch', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        clearInterval(timer);
+        toastEl.classList.add('toast-out');
+        setTimeout(function() { toastEl.remove(); }, 300);
+        if (data.error) {
+          window._toast('Stitch failed: ' + data.error, 'error', 6000);
+        } else {
+          window._toast('Video stitching started!', 'success');
+          // Poll for completion
+          var pollTimer = setInterval(function() {
+            fetch('/api/progress').then(function(r){return r.json();}).then(function(pd) {
+              if (pd.phase === 'done') {
+                clearInterval(pollTimer);
+                var panel = document.getElementById('editOutputPanel');
+                var vid = document.getElementById('editOutputVideo');
+                var dl = document.getElementById('editDownloadLink');
+                if (panel) panel.style.display = '';
+                if (vid) vid.src = '/api/download?t=' + Date.now();
+                if (dl) dl.href = '/api/download';
+                window._toast('Final video ready!', 'success');
+              } else if (pd.phase === 'error') {
+                clearInterval(pollTimer);
+                window._toast('Stitch error: ' + (pd.error || 'unknown'), 'error');
+              }
+            });
+          }, 2000);
+        }
+      })
+      .catch(function(e) {
+        clearInterval(timer);
+        toastEl.classList.add('toast-out');
+        setTimeout(function() { toastEl.remove(); }, 300);
+        window._toast('Stitch error: ' + e.message, 'error');
+      });
+  };
+
+  // ===== AUDIO WORKSPACE =====
+  window._setAudioTab = function(subTab) {
+    ['music','voice','sfx'].forEach(function(t) {
+      var panel = document.getElementById('audioPanel' + t.charAt(0).toUpperCase() + t.slice(1));
+      var btn = document.getElementById('audioTab' + t.charAt(0).toUpperCase() + t.slice(1));
+      if (panel) panel.classList.toggle('hidden', t !== subTab);
+      if (btn) btn.classList.toggle('active', t === subTab);
+    });
+  };
+
+  window._uploadAudioTrack = function(file, type) {
+    if (!file) return;
+    var form = new FormData();
+    form.append('file', file);
+    fetch('/api/upload', { method: 'POST', body: form }).then(function(r) { return r.json(); }).then(function(data) {
+      if (data.ok || data.filename) {
+        window._toast(type + ' uploaded: ' + file.name, 'success');
+        if (type === 'music') {
+          document.getElementById('audioMusicFilename').textContent = file.name;
+          var player = document.getElementById('audioMusicPlayer');
+          var audio = document.getElementById('audioMusicAudio');
+          if (player) player.style.display = '';
+          if (audio) audio.src = URL.createObjectURL(file);
+        }
+      }
+    }).catch(function(e) { window._toast('Upload failed: ' + e.message, 'error'); });
+  };
+
+  window._generateSound = function() {
+    var prompt = document.getElementById('audioGenPrompt').value.trim();
+    var dur = parseInt(document.getElementById('audioGenDuration').value) || 10;
+    if (!prompt) { window._toast('Enter a sound description', 'warning'); return; }
+    window._toast('Generating sound effect...', 'info', 30000);
+    // TODO: Wire to Runway sound_effect API
+    window._toast('Sound generation not yet wired to backend — coming soon', 'warning', 4000);
+  };
+
+  window._generateTTS = function() {
+    var text = document.getElementById('audioTTSText').value.trim();
+    var voice = document.getElementById('audioTTSVoice').value;
+    if (!text) { window._toast('Enter text for speech', 'warning'); return; }
+    window._toast('Generating voice with ' + voice + '...', 'info', 30000);
+    // TODO: Wire to Runway text_to_speech API
+    window._toast('TTS generation not yet wired to backend — coming soon', 'warning', 4000);
+  };
+
+  window._generateSFX = function() {
+    var prompt = document.getElementById('audioSfxPrompt').value.trim();
+    var dur = parseInt(document.getElementById('audioSfxDuration').value) || 10;
+    var loop = document.getElementById('audioSfxLoop').checked;
+    if (!prompt) { window._toast('Enter an SFX description', 'warning'); return; }
+    window._toast('Generating SFX...', 'info', 30000);
+    // TODO: Wire to Runway sound_effect API
+    window._toast('SFX generation not yet wired to backend — coming soon', 'warning', 4000);
+  };
+
+  // Volume slider
+  (function() {
+    var vol = document.getElementById('audioMusicVolume');
+    if (vol) vol.oninput = function() {
+      var v = document.getElementById('audioMusicVolVal');
+      if (v) v.textContent = this.value + '%';
+    };
+  })();
+
+  // ===== OUTPUT WORKSPACE =====
+  window._initOutputWorkspace = function() {
+    var scenes = window._autoScenes || [];
+    var clips = scenes.filter(function(s) { return s.clip_path || s.has_clip; });
+    var totalDur = 0;
+    scenes.forEach(function(s) { totalDur += parseFloat(s.duration) || 5; });
+
+    var sc = document.getElementById('outputSceneCount');
+    var cc = document.getElementById('outputClipCount');
+    var dur = document.getElementById('outputDuration');
+    if (sc) sc.textContent = scenes.length;
+    if (cc) cc.textContent = clips.length;
+    if (dur) {
+      var m = Math.floor(totalDur / 60);
+      var s2 = Math.round(totalDur % 60);
+      dur.textContent = m + ':' + (s2 < 10 ? '0' : '') + s2;
+    }
+
+    // Cost estimate
+    var costEl = document.getElementById('outputCostEstimate');
+    if (costEl) {
+      fetch('/api/cost').then(function(r){return r.json()}).then(function(d) {
+        costEl.textContent = '$' + (d.total_cost || 0).toFixed(2);
+      }).catch(function(){});
+    }
+  };
+
+  window._renderFinalVideo = function() {
+    var progress = document.getElementById('outputRenderProgress');
+    if (progress) progress.style.display = '';
+
+    window._toast('Starting final render...', 'info', 3000);
+
+    fetch('/api/auto-director/stitch', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error) {
+          window._toast('Render failed: ' + data.error, 'error', 6000);
+          if (progress) progress.style.display = 'none';
+          return;
+        }
+        // Poll for completion
+        var pollTimer = setInterval(function() {
+          fetch('/api/progress').then(function(r){return r.json()}).then(function(pd) {
+            var fill = document.getElementById('outputRenderFill');
+            var status = document.getElementById('outputRenderStatus');
+            if (pd.phase === 'stitching') {
+              if (fill) fill.style.width = '50%';
+              if (status) status.textContent = 'Stitching clips...';
+            } else if (pd.phase === 'done') {
+              clearInterval(pollTimer);
+              if (fill) fill.style.width = '100%';
+              if (progress) progress.style.display = 'none';
+              var panel = document.getElementById('outputFinalPanel');
+              var vid = document.getElementById('outputFinalVideo');
+              var dl = document.getElementById('outputDownloadBtn');
+              if (panel) panel.style.display = '';
+              if (vid) vid.src = '/api/download?t=' + Date.now();
+              if (dl) dl.href = '/api/download';
+              window._toast('Final video rendered!', 'success');
+            } else if (pd.phase === 'error') {
+              clearInterval(pollTimer);
+              if (progress) progress.style.display = 'none';
+              window._toast('Render error: ' + (pd.error || 'unknown'), 'error');
+            }
+          });
+        }, 2000);
+      })
+      .catch(function(e) {
+        if (progress) progress.style.display = 'none';
+        window._toast('Render error: ' + e.message, 'error');
+      });
   };
 
   // ---- Scene Edit / Lock / Regen API Functions ----
