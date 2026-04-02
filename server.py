@@ -60,6 +60,7 @@ from lib.video_generator import (
     MODEL_DURATION_OPTIONS, get_valid_duration, get_smart_duration,
     extract_last_frame, extract_first_frame,
     SHOT_TYPE_REF_PRIORITY, select_refs_for_shot_type, build_shot_prompt,
+    _runway_headers, _runway_poll, _download, RUNWAY_API_BASE,
 )
 from lib.video_stitcher import (
     stitch, apply_lyrics_overlay, apply_aspect_ratio, split_clip,
@@ -151,6 +152,8 @@ PREVIEWS_DIR = os.path.join(OUTPUT_DIR, "previews")
 WATERMARK_PATH = os.path.join(OUTPUT_DIR, "watermark.png")
 THUMBNAIL_PATH = os.path.join(OUTPUT_DIR, "thumbnail.jpg")
 AUDIO_TRACKS_DIR = os.path.join(UPLOADS_DIR, "audio_tracks")
+AUDIO_GEN_DIR = os.path.join(OUTPUT_DIR, "audio")
+os.makedirs(AUDIO_GEN_DIR, exist_ok=True)
 SOCIAL_EXPORTS_DIR = os.path.join(OUTPUT_DIR, "social_exports")
 KEYFRAMES_DIR = os.path.join(OUTPUT_DIR, "keyframes")
 SCENE_VIDEOS_DIR = os.path.join(UPLOADS_DIR, "scene_videos")
@@ -3063,6 +3066,11 @@ class Handler(BaseHTTPRequestHandler):
                         break
             self._send_file(clip_file)
 
+        elif path.startswith("/api/audio/generated/"):
+            filename = path[len("/api/audio/generated/"):]
+            safe = os.path.basename(urllib.parse.unquote(filename))
+            self._send_file(os.path.join(AUDIO_GEN_DIR, safe))
+
         elif path == "/api/references":
             self._handle_get_references()
 
@@ -4414,6 +4422,12 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/manual/scenes/auto-chain":
             self._handle_manual_auto_chain()
 
+        elif path == "/api/generate-sound":
+            self._handle_generate_sound()
+
+        elif path == "/api/generate-tts":
+            self._handle_generate_tts()
+
         else:
             self.send_error(404)
 
@@ -5185,6 +5199,137 @@ class Handler(BaseHTTPRequestHandler):
                 print(f"[MANUAL-CHAIN] Scene {scene['id']}: failed: {e}")
         _save_manual_plan(plan)
         self._send_json({"ok": True, "chained_scenes": chained})
+
+    # ---- Audio Generation endpoints (Runway) ----
+
+    def _handle_generate_sound(self):
+        """POST /api/generate-sound -- Runway sound_effect API."""
+        try:
+            body = json.loads(self._read_body())
+        except Exception:
+            self._send_json({"ok": False, "error": "Invalid JSON body"}, 400)
+            return
+
+        prompt_text = body.get("promptText", "").strip()
+        duration = body.get("duration", 10)
+        loop = body.get("loop", False)
+
+        if not prompt_text:
+            self._send_json({"ok": False, "error": "promptText is required"}, 400)
+            return
+
+        def _run():
+            import requests
+            try:
+                # Submit to Runway sound_effect API
+                payload = {
+                    "model": "eleven_text_to_sound_v2",
+                    "promptText": prompt_text,
+                    "duration": int(duration),
+                    "loop": bool(loop),
+                }
+                resp = requests.post(
+                    f"{RUNWAY_API_BASE}/sound_effect",
+                    headers=_runway_headers(),
+                    json=payload,
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                task_id = data.get("id", "")
+                if not task_id:
+                    raise RuntimeError(f"No task ID returned: {data}")
+
+                print(f"[AUDIO] Sound effect task submitted: {task_id}")
+
+                # Poll for completion
+                result = _runway_poll(task_id)
+                audio_url = result["url"]
+
+                # Download to output/audio/
+                ext = ".mp3"
+                if ".wav" in audio_url:
+                    ext = ".wav"
+                filename = f"sfx_{task_id[:12]}_{int(time.time())}{ext}"
+                dest = os.path.join(AUDIO_GEN_DIR, filename)
+                _download(audio_url, dest)
+
+                print(f"[AUDIO] Sound effect saved: {dest}")
+                self._send_json({
+                    "ok": True,
+                    "audio_url": f"/api/audio/generated/{filename}",
+                    "filename": filename,
+                })
+            except Exception as e:
+                print(f"[AUDIO] Sound effect generation failed: {e}")
+                self._send_json({"ok": False, "error": str(e)}, 500)
+
+        # Run synchronously (polling blocks but keeps it simple like video gen)
+        _run()
+
+    def _handle_generate_tts(self):
+        """POST /api/generate-tts -- Runway text_to_speech API."""
+        try:
+            body = json.loads(self._read_body())
+        except Exception:
+            self._send_json({"ok": False, "error": "Invalid JSON body"}, 400)
+            return
+
+        prompt_text = body.get("promptText", "").strip()
+        voice_preset_id = body.get("voicePresetId", "Leslie")
+
+        if not prompt_text:
+            self._send_json({"ok": False, "error": "promptText is required"}, 400)
+            return
+
+        def _run():
+            import requests
+            try:
+                payload = {
+                    "model": "eleven_multilingual_v2",
+                    "promptText": prompt_text,
+                    "voice": {
+                        "type": "runway-preset",
+                        "presetId": voice_preset_id,
+                    },
+                }
+                resp = requests.post(
+                    f"{RUNWAY_API_BASE}/text_to_speech",
+                    headers=_runway_headers(),
+                    json=payload,
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                task_id = data.get("id", "")
+                if not task_id:
+                    raise RuntimeError(f"No task ID returned: {data}")
+
+                print(f"[AUDIO] TTS task submitted: {task_id}")
+
+                # Poll for completion
+                result = _runway_poll(task_id)
+                audio_url = result["url"]
+
+                # Download to output/audio/
+                ext = ".mp3"
+                if ".wav" in audio_url:
+                    ext = ".wav"
+                filename = f"tts_{task_id[:12]}_{int(time.time())}{ext}"
+                dest = os.path.join(AUDIO_GEN_DIR, filename)
+                _download(audio_url, dest)
+
+                print(f"[AUDIO] TTS saved: {dest}")
+                self._send_json({
+                    "ok": True,
+                    "audio_url": f"/api/audio/generated/{filename}",
+                    "filename": filename,
+                })
+            except Exception as e:
+                print(f"[AUDIO] TTS generation failed: {e}")
+                self._send_json({"ok": False, "error": str(e)}, 500)
+
+        _run()
 
     # ---- Reference Image endpoints ----
 

@@ -2962,6 +2962,9 @@ document.addEventListener('keydown', function(e) {
         </div>
         <button class="btn btn-small btn-cyan" onclick="window._generateSound()">Generate</button>
       </div>
+      <div id="audioGenResult" style="margin-top:12px;display:none;">
+        <audio id="audioGenPlayer" controls style="width:100%;height:36px;"></audio>
+      </div>
     </div>
   </div>
 
@@ -2985,6 +2988,9 @@ document.addEventListener('keydown', function(e) {
             <option value="Vincent">Vincent</option><option value="Kendrick">Kendrick</option><option value="Rachel">Rachel</option>
           </select>
           <button class="btn btn-small btn-green" onclick="window._generateTTS()">Generate Voice</button>
+        </div>
+        <div id="audioTTSResult" style="margin-top:12px;display:none;">
+          <audio id="audioTTSPlayer" controls style="width:100%;height:36px;"></audio>
         </div>
       </div>
 
@@ -9344,7 +9350,7 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           window._setAutoState('planned');
         }
-      }).catch(function(){});
+      }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
     });
     // Load existing entities into Quick References inline cards
     if (typeof window._dirLoadQuickRefs === 'function') window._dirLoadQuickRefs();
@@ -9606,7 +9612,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Optionally delete from server
     if (removed && removed.serverId) {
       var endpoint = type === 'char' ? '/api/pos/characters/' : type === 'costume' ? '/api/pos/costumes/' : '/api/pos/environments/';
-      fetch(endpoint + removed.serverId, { method: 'DELETE' }).catch(function(){});
+      fetch(endpoint + removed.serverId, { method: 'DELETE' }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
     }
   };
 
@@ -9626,7 +9632,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return { name: c.name || '', description: c.description || c.physical || '', photoUrl: _entityPhotoUrl(c, 'characters'), serverId: c.id || null, isCharacterSheet: !!c.isCharacterSheet };
       });
       _dirRenderCards('char', window._dirQuickChars, 'directorCharsInline');
-    }).catch(function(){});
+    }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
     // Load costumes
     fetch('/api/pos/costumes').then(function(r){ return r.json(); }).then(function(data){
       var items = Array.isArray(data) ? data : (data.costumes || data.items || []);
@@ -9634,7 +9640,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return { name: c.name || '', description: c.description || '', photoUrl: _entityPhotoUrl(c, 'costumes'), serverId: c.id || null };
       });
       _dirRenderCards('costume', window._dirQuickCostumes, 'directorCostumesInline');
-    }).catch(function(){});
+    }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
     // Load environments
     fetch('/api/pos/environments').then(function(r){ return r.json(); }).then(function(data){
       var items = Array.isArray(data) ? data : (data.environments || data.items || []);
@@ -9642,7 +9648,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return { name: c.name || '', description: c.description || '', photoUrl: _entityPhotoUrl(c, 'environments'), serverId: c.id || null };
       });
       _dirRenderCards('env', window._dirQuickEnvs, 'directorEnvsInline');
-    }).catch(function(){});
+    }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
   };
 
   // ---- Library dropdown for References section ----
@@ -9662,7 +9668,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (c.physical) opt.textContent += ' — ' + c.physical.substring(0, 40);
         sel.appendChild(opt);
       });
-    }).catch(function(){});
+    }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
 
     // Populate costume dropdown
     fetch('/api/pos/costumes').then(function(r){return r.json()}).then(function(data) {
@@ -9679,7 +9685,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (c.description) opt.textContent += ' — ' + c.description.substring(0, 40);
         sel.appendChild(opt);
       });
-    }).catch(function(){});
+    }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
 
     // Populate environment dropdown
     fetch('/api/pos/environments').then(function(r){return r.json()}).then(function(data) {
@@ -9696,7 +9702,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (c.description) opt.textContent += ' — ' + c.description.substring(0, 40);
         sel.appendChild(opt);
       });
-    }).catch(function(){});
+    }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
   };
 
   // Add entity from library dropdown — pulls all info + photo
@@ -11125,7 +11131,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (p.angle) $('shotAngle').value = p.angle;
       if (p.movement) $('shotMovement').value = p.movement;
       if (p.composition) $('shotComposition').value = p.composition;
-    }).catch(function(){});
+    }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
   };
 
   window._previewShotPrompt = async function() {
@@ -11486,13 +11492,13 @@ document.addEventListener('DOMContentLoaded', function() {
   // Persist shots to settings
   function _persistShots() {
     var settings = {shots_data: window._shotsData};
-    fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(settings)}).catch(function(){});
+    fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(settings)}).catch(function(e){ console.warn('[LUMN]', e.message || e); });
   }
 
   // Load shots from settings on init
   fetch('/api/settings').then(r=>r.json()).then(function(s) {
     if (s.shots_data) window._shotsData = s.shots_data;
-  }).catch(function(){});
+  }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
 
   // Populate scene selector when shots page opens
   window._initShotsPage = async function() {
@@ -11864,13 +11870,9 @@ document.addEventListener('DOMContentLoaded', function() {
   window._updateOutputDownload = function() {
     var btn = $('outputDownloadBtn');
     if (!btn) return;
-    if (window._appMode === 'auto') {
-      btn.href = '/output/auto_director_final.mp4';
-      btn.download = 'auto_director_video.mp4';
-    } else {
-      btn.href = '/api/download';
-      btn.download = 'music_video.mp4';
-    }
+    // Always use auto director output (manual mode removed)
+    btn.href = '/output/auto_director_final.mp4';
+    btn.download = 'auto_director_video.mp4';
   };
   // Update download link whenever Output tab is opened
   var _origSetMode = window._setMode;
@@ -11961,8 +11963,8 @@ document.addEventListener('DOMContentLoaded', function() {
     var primary = document.getElementById('autoBarPrimary');
     if (!bar) return;
 
-    // Show bar in Auto mode only
-    bar.style.display = (window._appMode === 'auto') ? 'block' : 'none';
+    // Always show bar (manual mode removed)
+    bar.style.display = 'block';
 
     var dotColor = 'var(--text-dim)';
     var labelText = 'Ready';
@@ -13498,18 +13500,42 @@ document.addEventListener('DOMContentLoaded', function() {
     var prompt = document.getElementById('audioGenPrompt').value.trim();
     var dur = parseInt(document.getElementById('audioGenDuration').value) || 10;
     if (!prompt) { window._toast('Enter a sound description', 'warning'); return; }
-    window._toast('Generating sound effect...', 'info', 30000);
-    // TODO: Wire to Runway sound_effect API
-    window._toast('Sound generation not yet wired to backend — coming soon', 'warning', 4000);
+    window._toast('Generating sound effect... this may take a minute', 'info', 60000);
+    fetch('/api/generate-sound', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({promptText: prompt, duration: dur, loop: false})
+    }).then(function(r) { return r.json(); }).then(function(data) {
+      if (data.ok) {
+        window._toast('Sound effect generated!', 'success', 3000);
+        var result = document.getElementById('audioGenResult');
+        var player = document.getElementById('audioGenPlayer');
+        if (result && player) { player.src = data.audio_url; result.style.display = ''; }
+      } else {
+        window._toast('Sound generation failed: ' + (data.error || 'Unknown error'), 'error', 5000);
+      }
+    }).catch(function(e) { window._toast('Sound generation failed: ' + e.message, 'error', 5000); });
   };
 
   window._generateTTS = function() {
     var text = document.getElementById('audioTTSText').value.trim();
     var voice = document.getElementById('audioTTSVoice').value;
     if (!text) { window._toast('Enter text for speech', 'warning'); return; }
-    window._toast('Generating voice with ' + voice + '...', 'info', 30000);
-    // TODO: Wire to Runway text_to_speech API
-    window._toast('TTS generation not yet wired to backend — coming soon', 'warning', 4000);
+    window._toast('Generating voice with ' + voice + '... this may take a minute', 'info', 60000);
+    fetch('/api/generate-tts', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({promptText: text, voicePresetId: voice})
+    }).then(function(r) { return r.json(); }).then(function(data) {
+      if (data.ok) {
+        window._toast('Voice generated!', 'success', 3000);
+        var result = document.getElementById('audioTTSResult');
+        var player = document.getElementById('audioTTSPlayer');
+        if (result && player) { player.src = data.audio_url; result.style.display = ''; }
+      } else {
+        window._toast('TTS failed: ' + (data.error || 'Unknown error'), 'error', 5000);
+      }
+    }).catch(function(e) { window._toast('TTS failed: ' + e.message, 'error', 5000); });
   };
 
   window._generateSFX = function() {
@@ -13517,9 +13543,21 @@ document.addEventListener('DOMContentLoaded', function() {
     var dur = parseInt(document.getElementById('audioSfxDuration').value) || 10;
     var loop = document.getElementById('audioSfxLoop').checked;
     if (!prompt) { window._toast('Enter an SFX description', 'warning'); return; }
-    window._toast('Generating SFX...', 'info', 30000);
-    // TODO: Wire to Runway sound_effect API
-    window._toast('SFX generation not yet wired to backend — coming soon', 'warning', 4000);
+    window._toast('Generating SFX... this may take a minute', 'info', 60000);
+    fetch('/api/generate-sound', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({promptText: prompt, duration: dur, loop: loop})
+    }).then(function(r) { return r.json(); }).then(function(data) {
+      if (data.ok) {
+        window._toast('SFX generated!', 'success', 3000);
+        var result = document.getElementById('audioSfxResult');
+        var player = document.getElementById('audioSfxPlayer');
+        if (result && player) { player.src = data.audio_url; result.style.display = ''; }
+      } else {
+        window._toast('SFX generation failed: ' + (data.error || 'Unknown error'), 'error', 5000);
+      }
+    }).catch(function(e) { window._toast('SFX generation failed: ' + e.message, 'error', 5000); });
   };
 
   // Volume slider
@@ -13554,7 +13592,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (costEl) {
       fetch('/api/cost').then(function(r){return r.json()}).then(function(d) {
         costEl.textContent = '$' + (d.total_cost || 0).toFixed(2);
-      }).catch(function(){});
+      }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
     }
   };
 
@@ -13980,10 +14018,10 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!status.running) {
               clearInterval(pollId);
             }
-          }).catch(function(){});
+          }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
         }, 3000);
       }
-    }).catch(function(){});
+    }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
   };
 
   // Update preview summary in the scene plan header
@@ -14443,7 +14481,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             window._setAutoState('complete');
           }
-        }).catch(function(){});
+        }).catch(function(e){ console.warn('[LUMN]', e.message || e); });
       }, 3000);
     }).catch(function(err) {
       console.warn('[AutoDirector] Generate video failed:', err);
