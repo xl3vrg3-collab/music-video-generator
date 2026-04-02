@@ -84,6 +84,141 @@ MODEL_SECTION_DEFAULTS = {
     "openai":         {"intro": 8, "verse": 6, "chorus": 4, "bridge": 8, "outro": 10},
 }
 
+# ---- Shot type reference priority system ----
+# Values are weights 0.0-1.0 for how strongly each ref type should influence generation
+SHOT_TYPE_REF_PRIORITY = {
+    "close-up": {
+        "character": 1.0,    # highest — face/identity critical
+        "costume": 0.4,      # secondary — visible but not focus
+        "environment": 0.1,  # minimal — background blur
+    },
+    "medium": {
+        "character": 0.9,
+        "costume": 0.8,
+        "environment": 0.5,
+    },
+    "full": {
+        "character": 0.8,
+        "costume": 0.9,
+        "environment": 0.6,
+    },
+    "wide": {
+        "character": 0.4,
+        "costume": 0.3,
+        "environment": 1.0,  # highest — world-building
+    },
+    "establishing": {
+        "character": 0.2,
+        "costume": 0.1,
+        "environment": 1.0,  # highest
+    },
+}
+
+
+def select_refs_for_shot_type(shot_type: str, char_photos: list, costume_photos: list,
+                              env_photos: list, max_refs: int = 3) -> list:
+    """Select and prioritize reference photos based on shot type.
+
+    Each photo entry in the input lists should be a dict with at least
+    ``{"path": str, "tag": str}``.  A ``priority`` key is added by this
+    function based on shot-type weights.
+
+    Returns list of {path, tag, priority} sorted by priority descending.
+    Only returns up to *max_refs* (Runway text_to_image API limit is 3).
+
+    Guarantees:
+    - For close-up shots, at least one character ref is always included.
+    - For wide / establishing shots, at least one environment ref is always
+      included.
+    """
+    shot_type = (shot_type or "medium").lower().strip()
+    priorities = SHOT_TYPE_REF_PRIORITY.get(shot_type, SHOT_TYPE_REF_PRIORITY["medium"])
+
+    candidates = []
+    for p in char_photos:
+        candidates.append({"path": p["path"], "tag": p["tag"],
+                           "priority": priorities["character"], "type": "character"})
+    for p in costume_photos:
+        candidates.append({"path": p["path"], "tag": p["tag"],
+                           "priority": priorities["costume"], "type": "costume"})
+    for p in env_photos:
+        candidates.append({"path": p["path"], "tag": p["tag"],
+                           "priority": priorities["environment"], "type": "environment"})
+
+    # Sort by priority descending, then by type preference (char > costume > env)
+    type_order = {"character": 0, "costume": 1, "environment": 2}
+    candidates.sort(key=lambda c: (-c["priority"], type_order.get(c["type"], 9)))
+
+    selected = candidates[:max_refs]
+
+    # Enforce mandatory ref for certain shot types
+    if shot_type == "close-up" and char_photos:
+        if not any(s["type"] == "character" for s in selected):
+            # Swap last slot with the best character ref
+            best_char = next(c for c in candidates if c["type"] == "character")
+            selected[-1] = best_char
+
+    if shot_type in ("wide", "establishing") and env_photos:
+        if not any(s["type"] == "environment" for s in selected):
+            best_env = next(c for c in candidates if c["type"] == "environment")
+            selected[-1] = best_env
+
+    # Strip internal "type" key from output, keep path/tag/priority
+    return [{"path": s["path"], "tag": s["tag"], "priority": s["priority"]} for s in selected]
+
+
+def build_shot_prompt(shot_type: str, scene_prompt: str,
+                      has_char_ref: bool, has_costume_ref: bool,
+                      has_env_ref: bool) -> str:
+    """Build a generation prompt optimized for the shot type.
+
+    For close-ups: focus on facial detail, expression, skin texture.
+    For medium: balanced character + scene description.
+    For wide / establishing: focus on composition, environment, atmosphere.
+
+    When refs exist the prompt avoids over-describing identity (the photo
+    handles that).
+    """
+    shot_type = (shot_type or "medium").lower().strip()
+
+    # Quality suffix applied to all prompts
+    quality = "Hyper-realistic, photorealistic, 8K, cinematic lighting, sharp focus."
+
+    # Shot-type specific modifiers
+    if shot_type == "close-up":
+        framing = "Extreme close-up shot. Detailed skin texture, visible pores, catch-light in eyes, shallow depth of field."
+        if has_char_ref:
+            framing += " PRESERVE EXACT LIKENESS from reference — same face, same features, same proportions."
+    elif shot_type == "medium":
+        framing = "Medium shot, waist-up framing, balanced composition."
+        if has_char_ref:
+            framing += " PRESERVE EXACT LIKENESS from reference photos."
+    elif shot_type == "full":
+        framing = "Full body shot, head-to-toe framing, character centered in frame."
+        if has_costume_ref:
+            framing += " Show the complete outfit clearly."
+        if has_char_ref:
+            framing += " PRESERVE EXACT LIKENESS from reference."
+    elif shot_type == "wide":
+        framing = "Wide shot, expansive environment, character small in frame, cinematic composition, atmosphere."
+        if has_env_ref:
+            framing += " Match the exact environment from @Setting reference."
+    elif shot_type == "establishing":
+        framing = "Establishing shot, sweeping vista, grand scale, environmental storytelling, dramatic atmosphere."
+        if has_env_ref:
+            framing += " Match the exact location from @Setting reference."
+    else:
+        framing = "Cinematic shot."
+
+    # Clean scene prompt — strip redundant quality keywords that we'll add ourselves
+    import re as _re_shot
+    cleaned = scene_prompt
+    cleaned = _re_shot.sub(r'(?i)\b(hyper[- ]?realistic|photorealistic|8k|4k)\b', '', cleaned)
+    cleaned = _re_shot.sub(r'\s{2,}', ' ', cleaned).strip()
+
+    prompt = f"{framing} {cleaned} {quality}"
+    return prompt[:1000]  # API limit
+
 
 def get_valid_duration(engine: str, requested_duration: int) -> int:
     """

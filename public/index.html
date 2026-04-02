@@ -1218,10 +1218,10 @@
   .btn-upscale:disabled { opacity: 0.3; cursor: not-allowed; }
 
   /* ---- Auto mode clean layout ---- */
-  #directorModeContainer .panel {
+  #projectContainer .panel {
     margin-bottom: 16px;
   }
-  #directorModeContainer .section-label {
+  #projectContainer .section-label {
     margin-bottom: 4px;
   }
 
@@ -2266,56 +2266,20 @@ document.addEventListener('keydown', function(e) {
   });
   </script>
 
-  <!-- Mode Switcher -->
-  <div id="modeSwitcher" style="display:flex;justify-content:center;padding:6px 0;gap:0;">
-    <button id="modeSwitchAuto" onclick="window._switchAppMode('auto')" style="padding:8px 24px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:800;letter-spacing:2px;text-transform:uppercase;border:1px solid var(--border);border-right:none;border-radius:var(--radius) 0 0 var(--radius);cursor:pointer;transition:all 0.2s;background:#FF5E00;color:#000;">AUTO</button>
-    <button id="modeSwitchManual" onclick="window._switchAppMode('manual')" style="padding:8px 24px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:800;letter-spacing:2px;text-transform:uppercase;border:1px solid var(--border);border-radius:0 var(--radius) var(--radius) 0;cursor:pointer;transition:all 0.2s;background:var(--surface);color:var(--text-dim);">MANUAL</button>
-  </div>
-
-  <!-- Pipeline Navigation (dynamically updated by mode) -->
-  <div class="mode-toggle" id="pipelineNav" style="flex-wrap:nowrap;overflow-x:auto;gap:0;padding:0 8px;">
-    <button class="mode-btn active" id="directorModeBtn" data-pipe-mode="auto" onclick="window._setMode('director')" style="border-radius:var(--radius) 0 0 var(--radius);font-size:11px;padding:8px 14px;position:relative;">
-      <span class="pipe-step-num" style="opacity:0.5;font-size:9px;margin-right:4px;">1</span><span>Director</span>
-      <span class="pipeline-status" id="pipeStatus1"></span>
-    </button>
-    <button class="mode-btn" id="manualModeBtn" data-pipe-mode="manual" onclick="window._setMode('manual')" style="display:none;border-radius:var(--radius) 0 0 var(--radius);font-size:11px;padding:8px 14px;">
-      <span class="pipe-step-num" style="opacity:0.5;font-size:9px;margin-right:4px;">1</span><span>Build</span>
-      <span class="pipeline-status" id="pipeStatusManual"></span>
-    </button>
-    <button class="mode-btn pos-tab" id="posCharsBtn" data-pipe-mode="both" onclick="window._setMode('pos-characters')" style="border-radius:0;font-size:11px;padding:8px 14px;">
-      <span class="pipe-step-num" style="opacity:0.5;font-size:9px;margin-right:4px;">2</span>Characters
-      <span class="pipeline-status" id="pipeStatus2"></span>
-    </button>
-    <button class="mode-btn pos-tab" id="posCostumesBtn" data-pipe-mode="both" onclick="window._setMode('pos-costumes')" style="border-radius:0;font-size:11px;padding:8px 14px;">
-      <span class="pipe-step-num" style="opacity:0.5;font-size:9px;margin-right:4px;">3</span>Costumes
-      <span class="pipeline-status" id="pipeStatus3"></span>
-    </button>
-    <button class="mode-btn pos-tab" id="posEnvsBtn" data-pipe-mode="both" onclick="window._setMode('pos-environments')" style="border-radius:0;font-size:11px;padding:8px 14px;">
-      <span class="pipe-step-num" style="opacity:0.5;font-size:9px;margin-right:4px;">4</span>Environments
-      <span class="pipeline-status" id="pipeStatus4"></span>
-    </button>
-    <button class="mode-btn pos-tab" id="posScenesBtn" data-pipe-mode="manual" onclick="window._setMode('pos-scenes')" style="border-radius:0;font-size:11px;padding:8px 14px;">
-      <span class="pipe-step-num" style="opacity:0.5;font-size:9px;margin-right:4px;">5</span>Scenes
-      <span class="pipeline-status" id="pipeStatus5"></span>
-    </button>
-    <button class="mode-btn pos-tab" id="posShotsBtn" data-pipe-mode="manual" onclick="window._setMode('pos-shots')" style="border-radius:0;font-size:11px;padding:8px 14px;">
-      <span class="pipe-step-num" style="opacity:0.5;font-size:9px;margin-right:4px;">6</span>Shots
-      <span class="pipeline-status" id="pipeStatus6"></span>
-    </button>
-    <button class="mode-btn" id="generateModeBtn" data-pipe-mode="both" onclick="window._setMode('generate')" style="border-radius:0;font-size:11px;padding:8px 14px;">
-      <span class="pipe-step-num" style="opacity:0.5;font-size:9px;margin-right:4px;">7</span>Generate
-      <span class="pipeline-status" id="pipeStatus7"></span>
-    </button>
-    <button class="mode-btn pos-tab" id="posOutputBtn" data-pipe-mode="both" onclick="window._setMode('pos-output')" style="border-radius:0 var(--radius) var(--radius) 0;font-size:11px;padding:8px 14px;">
-      <span class="pipe-step-num" style="opacity:0.5;font-size:9px;margin-right:4px;">8</span>Output
-      <span class="pipeline-status" id="pipeStatus8"></span>
-    </button>
+  <!-- Workspace Navigation -->
+  <div class="mode-toggle" id="workspaceNav" style="flex-wrap:nowrap;overflow-x:auto;gap:0;padding:4px 8px;">
+    <button class="mode-btn active" id="wsProjectBtn" onclick="window._switchWorkspace('project')" style="font-size:11px;padding:8px 18px;">PROJECT</button>
+    <button class="mode-btn" id="wsAssetsBtn" onclick="window._switchWorkspace('assets')" style="font-size:11px;padding:8px 18px;">ASSETS</button>
+    <button class="mode-btn" id="wsShotsBtn" onclick="window._switchWorkspace('shots')" style="font-size:11px;padding:8px 18px;">SHOTS</button>
+    <button class="mode-btn" id="wsEditBtn" onclick="window._switchWorkspace('edit')" style="font-size:11px;padding:8px 18px;">EDIT</button>
+    <button class="mode-btn" id="wsAudioBtn" onclick="window._switchWorkspace('audio')" style="font-size:11px;padding:8px 18px;">AUDIO</button>
+    <button class="mode-btn" id="wsOutputBtn" onclick="window._switchWorkspace('output')" style="font-size:11px;padding:8px 18px;">OUTPUT</button>
   </div>
   <!-- Step indicator + progress bar + status -->
   <div id="pipelineProgress" style="padding:4px 16px;display:flex;align-items:center;gap:10px;">
-    <span id="pipelineStepLabel" style="color:var(--text-dim);font-size:11px;white-space:nowrap;">Step 1 of 8 — Vision</span>
+    <span id="pipelineStepLabel" style="color:var(--text-dim);font-size:11px;white-space:nowrap;">Step 1 of 6 — Project</span>
     <div style="flex:1;height:3px;background:var(--border);border-radius:2px;overflow:hidden;">
-      <div id="pipelineProgressFill" style="height:100%;width:12.5%;background:linear-gradient(90deg,#7c5cff,#ff5ca0);border-radius:2px;transition:width 0.3s;"></div>
+      <div id="pipelineProgressFill" style="height:100%;width:16.7%;background:linear-gradient(90deg,#7c5cff,#ff5ca0);border-radius:2px;transition:width 0.3s;"></div>
     </div>
   </div>
   <!-- Global Project Status Bar -->
@@ -2338,78 +2302,45 @@ document.addEventListener('keydown', function(e) {
   <script>
   (function(){
     var tabs = {
-      'director':'directorModeContainer', 'manual':'manualModeContainer',
-      'pos-prompts':'posPromptsContainer', 'pos-characters':'posCharsContainer',
-      'pos-costumes':'posCostumesContainer', 'pos-environments':'posEnvsContainer',
-      'pos-scenes':'posScenesContainer', 'pos-shots':'posShotsContainer',
-      'generate':'generateModeContainer', 'pos-output':'posOutputContainer'
+      'project':'projectContainer',
+      'assets':'assetsContainer',
+      'shots':'shotsContainer',
+      'edit':'editContainer',
+      'audio':'audioContainer',
+      'output':'outputContainer'
     };
     var btns = {
-      'director':'directorModeBtn', 'manual':'manualModeBtn',
-      'pos-prompts':'posPromptsBtn', 'pos-characters':'posCharsBtn',
-      'pos-costumes':'posCostumesBtn', 'pos-environments':'posEnvsBtn',
-      'pos-scenes':'posScenesBtn', 'pos-shots':'posShotsBtn',
-      'generate':'generateModeBtn', 'pos-output':'posOutputBtn'
+      'project':'wsProjectBtn',
+      'assets':'wsAssetsBtn',
+      'shots':'wsShotsBtn',
+      'edit':'wsEditBtn',
+      'audio':'wsAudioBtn',
+      'output':'wsOutputBtn'
     };
 
-    // Mode-aware pipeline definitions
-    window._appMode = 'auto'; // 'auto' | 'manual'
+    // Workspace flow (linear pipeline)
+    window._appMode = 'auto'; // kept for backwards compat
 
-    var autoFlow = ['director','generate','pos-output'];
-    var manualFlow = ['manual','pos-characters','pos-costumes','pos-environments','pos-scenes','pos-shots','generate','pos-output'];
-    // Labels per mode
-    var autoLabels = { 'director':'Director','generate':'Generate','pos-output':'Output' };
-    var manualLabels = { 'manual':'Build','pos-characters':'Characters','pos-costumes':'Costumes','pos-environments':'Environments','pos-scenes':'Scenes','pos-shots':'Shots','generate':'Generate','pos-output':'Output' };
+    var flow = ['project','assets','shots','edit','audio','output'];
+    var flowLabels = { 'project':'Project','assets':'Assets','shots':'Shots','edit':'Edit','audio':'Audio','output':'Output' };
 
-    function _getCurrentFlow() { return window._appMode === 'manual' ? manualFlow : autoFlow; }
-    function _getCurrentLabels() { return window._appMode === 'manual' ? manualLabels : autoLabels; }
+    function _getCurrentFlow() { return flow; }
+    function _getCurrentLabels() { return flowLabels; }
 
-    // Renumber visible pipeline tabs and show/hide based on mode
+    // Update progress bar for current workspace step
     window._updatePipelineNav = function() {
-      var flow = _getCurrentFlow();
-      var labels = _getCurrentLabels();
-      var totalSteps = flow.length;
-      var navBtns = document.querySelectorAll('#pipelineNav .mode-btn');
-      var visibleIdx = 0;
-      navBtns.forEach(function(btn) {
-        var pipeMode = btn.getAttribute('data-pipe-mode');
-        var btnId = btn.id;
-        // Determine the tab key from the button id
-        var tabKey = '';
-        for (var k in btns) { if (btns[k] === btnId) { tabKey = k; break; } }
-        // Should this tab be visible in the current mode?
-        var visible = flow.indexOf(tabKey) >= 0;
-        if (!visible) {
-          btn.style.display = 'none';
-        } else {
-          btn.style.display = '';
-          visibleIdx++;
-          // Update step number
-          var numSpan = btn.querySelector('.pipe-step-num');
-          if (numSpan) numSpan.textContent = visibleIdx;
-        }
-        // Fix border radius for first/last visible
-      });
-      // Fix border-radius on first and last visible buttons
-      var visibleBtns = [];
-      navBtns.forEach(function(b) { if (b.style.display !== 'none') visibleBtns.push(b); });
-      visibleBtns.forEach(function(b, i) {
-        if (i === 0) b.style.borderRadius = 'var(--radius) 0 0 var(--radius)';
-        else if (i === visibleBtns.length - 1) b.style.borderRadius = '0 var(--radius) var(--radius) 0';
-        else b.style.borderRadius = '0';
-      });
-      // Update progress bar total
-      var currentMode = window._currentPipelineStep || 'director';
+      var currentMode = window._currentPipelineStep || 'project';
       var stepIdx = flow.indexOf(currentMode);
+      var totalSteps = flow.length;
       var lbl = document.getElementById('pipelineStepLabel');
       var fill = document.getElementById('pipelineProgressFill');
       if (stepIdx >= 0) {
-        if (lbl) lbl.textContent = 'Step ' + (stepIdx+1) + ' of ' + totalSteps + ' — ' + (labels[currentMode] || currentMode);
+        if (lbl) lbl.textContent = 'Step ' + (stepIdx+1) + ' of ' + totalSteps + ' — ' + (flowLabels[currentMode] || currentMode);
         if (fill) fill.style.width = ((stepIdx+1) / totalSteps * 100) + '%';
       }
     };
 
-    window._currentPipelineStep = 'director';
+    window._currentPipelineStep = 'project';
     window._switchTab = function(mode) {
       window._currentPipelineStep = mode;
       for (var k in tabs) {
@@ -2418,18 +2349,20 @@ document.addEventListener('keydown', function(e) {
         if (el) { el.style.display = (k === mode) ? 'block' : 'none'; el.classList.remove('hidden'); }
         if (btn) { btn.classList.toggle('active', k === mode); }
       }
-      // Also hide auto mode container
+      // Also hide legacy auto mode container
       var ac = document.getElementById('autoModeContainer');
       if (ac) ac.style.display = 'none';
-      // Update pipeline progress bar using mode-aware flow
-      var flow = _getCurrentFlow();
-      var labels = _getCurrentLabels();
+      // Initialize shots workspace when switching to shots tab
+      if (mode === 'shots' && window._initShotsWorkspace) {
+        window._initShotsWorkspace();
+      }
+      // Update pipeline progress bar
       var stepIdx = flow.indexOf(mode);
       var totalSteps = flow.length;
       var lbl = document.getElementById('pipelineStepLabel');
       var fill = document.getElementById('pipelineProgressFill');
       if (stepIdx >= 0) {
-        if (lbl) lbl.textContent = 'Step ' + (stepIdx+1) + ' of ' + totalSteps + ' — ' + (labels[mode] || mode);
+        if (lbl) lbl.textContent = 'Step ' + (stepIdx+1) + ' of ' + totalSteps + ' — ' + (flowLabels[mode] || mode);
         if (fill) fill.style.width = ((stepIdx+1) / totalSteps * 100) + '%';
       }
       // Call the main _setMode if it exists (for data loading)
@@ -2438,51 +2371,78 @@ document.addEventListener('keydown', function(e) {
       }
     };
 
-    // Mode switch: AUTO / MANUAL
+    // Workspace switcher (replaces old _switchAppMode)
+    window._switchWorkspace = function(workspace) {
+      window._switchTab(workspace);
+    };
+
+    // Keep _switchAppMode for backwards compat — maps to project tab
     window._switchAppMode = function(mode) {
       window._appMode = mode;
-      var autoBtn = document.getElementById('modeSwitchAuto');
-      var manualBtn = document.getElementById('modeSwitchManual');
-      var pipelineNav = document.getElementById('pipelineNav');
-      var pipelineProgress = document.getElementById('pipelineProgress');
-      var globalStatusBar = document.getElementById('globalStatusBar');
-      var pageHeader = document.getElementById('pageHeader');
-      if (mode === 'auto') {
-        if (autoBtn) { autoBtn.style.background = '#FF5E00'; autoBtn.style.color = '#000'; autoBtn.style.borderColor = '#FF5E00'; autoBtn.style.padding = '10px 32px'; autoBtn.style.fontSize = '12px'; }
-        if (manualBtn) { manualBtn.style.background = 'var(--surface)'; manualBtn.style.color = 'var(--text-dim)'; manualBtn.style.borderColor = 'var(--border)'; manualBtn.style.padding = '8px 20px'; manualBtn.style.fontSize = '10px'; }
-        // Hide pipeline nav, progress bar, status bar, page header in Auto mode
-        if (pipelineNav) pipelineNav.style.display = 'none';
-        if (pipelineProgress) pipelineProgress.style.display = 'none';
-        if (globalStatusBar) globalStatusBar.style.display = 'none';
-        if (pageHeader) pageHeader.style.display = 'none';
-      } else {
-        if (manualBtn) { manualBtn.style.background = 'rgba(255,255,255,0.1)'; manualBtn.style.color = '#fff'; manualBtn.style.borderColor = 'rgba(255,255,255,0.2)'; manualBtn.style.padding = '8px 24px'; manualBtn.style.fontSize = '11px'; }
-        if (autoBtn) { autoBtn.style.background = 'var(--surface)'; autoBtn.style.color = 'var(--text-dim)'; autoBtn.style.borderColor = 'var(--border)'; autoBtn.style.padding = '8px 24px'; autoBtn.style.fontSize = '11px'; }
-        // Show pipeline nav, progress bar, status bar in Manual mode
-        if (pipelineNav) pipelineNav.style.display = '';
-        if (pipelineProgress) pipelineProgress.style.display = '';
-        if (globalStatusBar) globalStatusBar.style.display = '';
-      }
-      window._updatePipelineNav();
-      // Navigate to first tab of the selected mode
-      if (mode === 'auto') { window._switchTab('director'); }
-      else { window._switchTab('pos-characters'); }
+      window._switchTab('project');
     };
 
     // Store _switchTab as the pipeline-aware tab handler
-    // Do NOT override _setMode — let the main script define it for data loading
-    // Instead, make _switchTab call _setMode if it exists later
     window._switchTabCore = window._switchTab;
     window._switchTab = function(mode) {
-      window._switchTabCore(mode);
+      // Map legacy tab names to new workspace names
+      var legacyMap = {
+        'director':'project', 'manual':'project',
+        'pos-characters':'assets', 'pos-costumes':'assets',
+        'pos-environments':'assets', 'pos-scenes':'shots',
+        'pos-shots':'shots', 'generate':'edit',
+        'pos-output':'output'
+      };
+      var mapped = legacyMap[mode] || mode;
+      window._switchTabCore(mapped);
+      // When switching to assets, init panels and load default sub-tab
+      if (mapped === 'assets') {
+        if (typeof window._initAssetPanels === 'function') window._initAssetPanels();
+        // Map legacy mode to sub-tab, or default to characters
+        var subTabMap = { 'pos-characters':'characters', 'pos-costumes':'costumes', 'pos-environments':'environments' };
+        var subTab = subTabMap[mode] || 'characters';
+        if (typeof window._setAssetTab === 'function') window._setAssetTab(subTab);
+      }
       // Call the main _setMode for data loading if it's been defined by the main script
       if (window._mainSetMode) {
         try { window._mainSetMode(mode); } catch(e) { console.warn('_mainSetMode error:', e); }
       }
     };
     window._setMode = window._switchTab;
-    // Initialize in Auto mode
-    window._switchAppMode('auto');
+
+    // Asset sub-tab switcher
+    window._setAssetTab = function(subTab) {
+      var panels = ['characters','costumes','environments','props','voices'];
+      panels.forEach(function(p) {
+        var panel = document.getElementById('assetPanel' + p.charAt(0).toUpperCase() + p.slice(1));
+        var btn = document.getElementById('assetTab' + p.charAt(0).toUpperCase() + p.slice(1));
+        if (panel) panel.classList.toggle('hidden', p !== subTab);
+        if (btn) btn.classList.toggle('active', p === subTab);
+      });
+      // Load data for the selected tab
+      if (subTab === 'characters' && typeof window._posLoadChars === 'function') window._posLoadChars();
+      if (subTab === 'costumes' && typeof window._posLoadCostumes === 'function') window._posLoadCostumes();
+      if (subTab === 'environments' && typeof window._posLoadEnvironments === 'function') window._posLoadEnvironments();
+    };
+
+    // Move entity content into asset panels once DOM is ready
+    window._initAssetPanels = function() {
+      var moves = [
+        ['posCharsContainer', 'assetPanelCharacters'],
+        ['posCostumesContainer', 'assetPanelCostumes'],
+        ['posEnvsContainer', 'assetPanelEnvironments']
+      ];
+      moves.forEach(function(pair) {
+        var src = document.getElementById(pair[0]);
+        var dest = document.getElementById(pair[1]);
+        if (src && dest && src.children.length > 0 && dest.children.length === 0) {
+          while (src.firstChild) { dest.appendChild(src.firstChild); }
+        }
+      });
+    };
+
+    // Initialize to Project workspace
+    window._switchTab('project');
   })();
   </script>
 
@@ -3040,7 +3000,7 @@ document.addEventListener('keydown', function(e) {
   </div><!-- /manualModeContainer -->
 
   <!-- ============ AUTO DIRECTOR MODE ============ -->
-  <div id="directorModeContainer">
+  <div id="projectContainer">
 
     <!-- Top nav links removed — flow is now inline via action bar -->
 
@@ -3190,66 +3150,18 @@ document.addEventListener('keydown', function(e) {
       </div>
     </div>
 
-    <!-- SECTION 3: REFERENCES -->
-    <div class="panel" id="autoRefsPanel">
-      <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
-        <span class="dot dot-green"></span>
-        <span class="panel-title">References <span style="font-size:9px;opacity:0.5;font-weight:400;text-transform:none;letter-spacing:0;">optional</span></span>
-        <span class="collapse-icon">&#9660;</span>
-      </div>
-      <div class="panel-body" style="display:flex;flex-direction:column;gap:20px;">
-        <!-- Characters -->
-        <div>
-          <div class="section-label section-label-cyan" style="margin-bottom:8px;">Characters</div>
-          <div id="directorCharsInline" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;"></div>
-          <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
-            <select class="styled-select" id="dirCharLibrarySelect" style="flex:1;" onchange="window._dirAddFromLibrary('character',this)">
-              <option value="">Select from library...</option>
-            </select>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <input type="text" class="styled-input" id="dirQuickCharName" placeholder="Or create new — Name" style="width:120px;">
-            <input type="text" class="styled-input" id="dirQuickCharDesc" placeholder="Description..." style="flex:1;">
-            <label class="btn btn-small" style="cursor:pointer;">Photo<input type="file" accept="image/*" id="dirQuickCharPhoto" style="display:none;" onchange="window._dirAddQuickChar()"></label>
-            <button class="btn btn-small btn-green" onclick="window._dirAddQuickChar()">+</button>
-          </div>
-        </div>
-        <!-- Costumes -->
-        <div>
-          <div class="section-label section-label-amber" style="margin-bottom:8px;">Costumes</div>
-          <div id="directorCostumesInline" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;"></div>
-          <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
-            <select class="styled-select" id="dirCostumeLibrarySelect" style="flex:1;" onchange="window._dirAddFromLibrary('costume',this)">
-              <option value="">Select from library...</option>
-            </select>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <input type="text" class="styled-input" id="dirQuickCostumeName" placeholder="Or create new — Name" style="width:120px;">
-            <input type="text" class="styled-input" id="dirQuickCostumeDesc" placeholder="Description..." style="flex:1;">
-            <label class="btn btn-small" style="cursor:pointer;">Photo<input type="file" accept="image/*" id="dirQuickCostumePhoto" style="display:none;" onchange="window._dirAddQuickCostume()"></label>
-            <button class="btn btn-small btn-amber" onclick="window._dirAddQuickCostume()">+</button>
-          </div>
-        </div>
-        <!-- Environments -->
-        <div>
-          <div class="section-label section-label-green" style="margin-bottom:8px;">Environments</div>
-          <div id="directorEnvsInline" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;"></div>
-          <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
-            <select class="styled-select" id="dirEnvLibrarySelect" style="flex:1;" onchange="window._dirAddFromLibrary('environment',this)">
-              <option value="">Select from library...</option>
-            </select>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <input type="text" class="styled-input" id="dirQuickEnvName" placeholder="Or create new — Name" style="width:120px;">
-            <input type="text" class="styled-input" id="dirQuickEnvDesc" placeholder="Description..." style="flex:1;">
-            <label class="btn btn-small" style="cursor:pointer;">Photo<input type="file" accept="image/*" id="dirQuickEnvPhoto" style="display:none;" onchange="window._dirAddQuickEnv()"></label>
-            <button class="btn btn-small btn-green" onclick="window._dirAddQuickEnv()">+</button>
-          </div>
-        </div>
-      </div>
+    <!-- References section moved to ASSETS tab -->
+    <!-- Hidden containers for JS compatibility with director reference functions -->
+    <div style="display:none;">
+      <div id="directorCharsInline"></div>
+      <div id="directorCostumesInline"></div>
+      <div id="directorEnvsInline"></div>
+      <select id="dirCharLibrarySelect"><option value="">Select from library...</option></select>
+      <select id="dirCostumeLibrarySelect"><option value="">Select from library...</option></select>
+      <select id="dirEnvLibrarySelect"><option value="">Select from library...</option></select>
     </div>
 
-    <!-- SECTION 4: GENERATION SETTINGS -->
+    <!-- SECTION 3: GENERATION SETTINGS -->
     <div class="panel" id="autoSettingsPanel">
       <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
         <span class="dot"></span>
@@ -3415,7 +3327,103 @@ document.addEventListener('keydown', function(e) {
     <div style="height:80px;"></div>
 
     </div>
-  </div><!-- /directorModeContainer -->
+  </div><!-- /projectContainer -->
+
+  <!-- ============ ASSETS WORKSPACE ============ -->
+  <div id="assetsContainer" class="workspace-panel hidden" style="display:none;">
+    <!-- Sub-tab navigation -->
+    <div style="display:flex;gap:4px;margin-bottom:16px;padding:4px;background:var(--surface);border-radius:var(--radius-lg);border:1px solid var(--border);">
+      <button class="mode-btn active" onclick="window._setAssetTab('characters')" id="assetTabCharacters" style="font-size:10px;padding:6px 14px;">Characters</button>
+      <button class="mode-btn" onclick="window._setAssetTab('costumes')" id="assetTabCostumes" style="font-size:10px;padding:6px 14px;">Costumes</button>
+      <button class="mode-btn" onclick="window._setAssetTab('environments')" id="assetTabEnvironments" style="font-size:10px;padding:6px 14px;">Environments</button>
+      <button class="mode-btn" onclick="window._setAssetTab('props')" id="assetTabProps" style="font-size:10px;padding:6px 14px;">Props</button>
+      <button class="mode-btn" onclick="window._setAssetTab('voices')" id="assetTabVoices" style="font-size:10px;padding:6px 14px;">Voices</button>
+    </div>
+
+    <!-- Sub-panels -->
+    <div id="assetPanelCharacters">
+    </div>
+    <div id="assetPanelCostumes" class="hidden">
+    </div>
+    <div id="assetPanelEnvironments" class="hidden">
+    </div>
+    <div id="assetPanelProps" class="hidden">
+      <div style="text-align:center;padding:40px;color:var(--text-dim);">
+        <div style="font-size:14px;margin-bottom:8px;">Props &amp; Accessories</div>
+        <div style="font-size:11px;">Upload or create reusable props for your scenes</div>
+        <div style="font-size:10px;margin-top:16px;color:var(--amber);">Coming soon — Props will be linkable to characters and scenes</div>
+      </div>
+    </div>
+    <div id="assetPanelVoices" class="hidden">
+      <div style="text-align:center;padding:40px;color:var(--text-dim);">
+        <div style="font-size:14px;margin-bottom:8px;">Voice Profiles</div>
+        <div style="font-size:11px;">Create voice profiles for character dialogue and narration</div>
+        <div style="font-size:10px;margin-top:16px;color:var(--amber);">Coming soon — Voices can be generated or uploaded per character</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SHOTS WORKSPACE ============ -->
+  <div id="shotsContainer" class="workspace-panel hidden" style="display:none;">
+    <div style="max-width:900px;margin:0 auto;padding:16px;">
+      <!-- Top bar: shot count + actions -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <div>
+          <span style="font-size:16px;font-weight:700;color:var(--text);letter-spacing:1px;">SHOTS</span>
+          <span id="shotsTotalCount" style="font-size:11px;color:var(--text-dim);margin-left:8px;"></span>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-small" onclick="window._generateAllFirstFrames()" style="border-color:var(--cyan);color:var(--cyan);">Generate All First Frames</button>
+          <button class="btn btn-small" onclick="window._generateAllClips()" style="border-color:var(--green);color:var(--green);">Generate All Clips</button>
+        </div>
+      </div>
+
+      <!-- Shot type filter -->
+      <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+        <button class="btn btn-small active" onclick="window._filterShots('all')" id="shotFilterAll">All</button>
+        <button class="btn btn-small" onclick="window._filterShots('close-up')" id="shotFilterCloseup">Close-Up</button>
+        <button class="btn btn-small" onclick="window._filterShots('medium')" id="shotFilterMedium">Medium</button>
+        <button class="btn btn-small" onclick="window._filterShots('full')" id="shotFilterFull">Full</button>
+        <button class="btn btn-small" onclick="window._filterShots('wide')" id="shotFilterWide">Wide</button>
+        <button class="btn btn-small" onclick="window._filterShots('establishing')" id="shotFilterEstablishing">Establishing</button>
+      </div>
+
+      <!-- Scene cards container (reuses existing rendering) -->
+      <div id="shotsSceneCards"></div>
+
+      <!-- Empty state -->
+      <div id="shotsEmptyState" style="margin-top:24px;padding:32px;border:1px dashed var(--border);border-radius:var(--radius-lg);text-align:center;color:var(--text-dim);font-size:11px;letter-spacing:1px;text-transform:uppercase;">
+        No shots yet. Create a plan in the PROJECT workspace first.
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ EDIT WORKSPACE ============ -->
+  <div id="editContainer" class="workspace-panel hidden" style="display:none;">
+    <div style="max-width:800px;margin:0 auto;padding:16px;">
+      <h2 style="color:var(--text);font-size:18px;font-weight:700;letter-spacing:1px;margin-bottom:8px;">Edit</h2>
+      <p style="color:var(--text-dim);font-size:12px;line-height:1.6;">Timeline editor, generation queue, re-generation controls, and visual editing.</p>
+      <div style="margin-top:24px;padding:32px;border:1px dashed var(--border);border-radius:var(--radius-lg);text-align:center;color:var(--text-dim);font-size:11px;letter-spacing:1px;text-transform:uppercase;">Coming in Phase 2</div>
+    </div>
+  </div>
+
+  <!-- ============ AUDIO WORKSPACE ============ -->
+  <div id="audioContainer" class="workspace-panel hidden" style="display:none;">
+    <div style="max-width:800px;margin:0 auto;padding:16px;">
+      <h2 style="color:var(--text);font-size:18px;font-weight:700;letter-spacing:1px;margin-bottom:8px;">Audio</h2>
+      <p style="color:var(--text-dim);font-size:12px;line-height:1.6;">Audio sync, beat detection, soundtrack management, and voice-over tools.</p>
+      <div style="margin-top:24px;padding:32px;border:1px dashed var(--border);border-radius:var(--radius-lg);text-align:center;color:var(--text-dim);font-size:11px;letter-spacing:1px;text-transform:uppercase;">Coming in Phase 2</div>
+    </div>
+  </div>
+
+  <!-- ============ OUTPUT WORKSPACE ============ -->
+  <div id="outputContainer" class="workspace-panel hidden" style="display:none;">
+    <div style="max-width:800px;margin:0 auto;padding:16px;">
+      <h2 style="color:var(--text);font-size:18px;font-weight:700;letter-spacing:1px;margin-bottom:8px;">Output</h2>
+      <p style="color:var(--text-dim);font-size:12px;line-height:1.6;">Final render, export options, preview, and delivery.</p>
+      <div style="margin-top:24px;padding:32px;border:1px dashed var(--border);border-radius:var(--radius-lg);text-align:center;color:var(--text-dim);font-size:11px;letter-spacing:1px;text-transform:uppercase;">Coming in Phase 2</div>
+    </div>
+  </div>
 
   <!-- ============ PROMPT OS: PROMPTS TAB ============ -->
   <div id="posPromptsContainer" class="hidden">
@@ -4968,10 +4976,12 @@ window._updateThemeUI = function(theme) {
   if (icon) icon.innerHTML = theme === 'dark' ? '&#9790;' : '&#9788;';
   if (label) label.textContent = theme === 'dark' ? 'Dark' : 'Light';
 };
-// Init theme UI on load
+// Init theme UI on load + move asset panels
 document.addEventListener('DOMContentLoaded', function() {
   var t = document.documentElement.getAttribute('data-theme') || 'dark';
   window._updateThemeUI(t);
+  // Move entity content into asset sub-panels
+  if (typeof window._initAssetPanels === 'function') window._initAssetPanels();
 });
 
 (function() {
@@ -6033,7 +6043,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // All tab containers and buttons
   const _allTabContainers = {
     'manual': manualModeContainer,
-    'director': $('directorModeContainer'),
+    'director': $('projectContainer'),
     'pos-prompts': $('posPromptsContainer'),
     'pos-characters': $('posCharsContainer'),
     'pos-costumes': $('posCostumesContainer'),
@@ -10908,7 +10918,7 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch(e) {
       console.error('[INIT] Failed to set director mode:', e);
       // Fallback: just show director directly
-      var dc = document.getElementById('directorModeContainer');
+      var dc = document.getElementById('projectContainer');
       if (dc) { dc.classList.remove('hidden'); dc.style.display = 'block'; }
     }
   }, 200);
@@ -13091,7 +13101,26 @@ document.addEventListener('DOMContentLoaded', function() {
         header.appendChild(prevThumb);
       }
 
+      // Shot type dropdown
+      var shotTypeSelect = document.createElement('select');
+      shotTypeSelect.className = 'styled-select';
+      shotTypeSelect.style.cssText = 'width:110px;font-size:9px;padding:2px 4px;flex-shrink:0;';
+      shotTypeSelect.innerHTML = '<option value="close-up">Close-Up</option><option value="medium" selected>Medium</option><option value="full">Full Body</option><option value="wide">Wide</option><option value="establishing">Establishing</option>';
+      shotTypeSelect.value = scene.shot_type || 'medium';
+      shotTypeSelect.onclick = function(e) { e.stopPropagation(); };
+      shotTypeSelect.onchange = (function(idx, sc) {
+        return function() {
+          sc.shot_type = this.value;
+          fetch('/api/auto-director/scene/' + idx + '/edit', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({shot_type: this.value})
+          });
+        };
+      })(sceneIdx, scene);
+
       header.appendChild(beatBadge);
+      header.appendChild(shotTypeSelect);
       header.appendChild(titleSpan);
       header.appendChild(durSpan);
       header.appendChild(lockAll);
@@ -13515,6 +13544,100 @@ document.addEventListener('DOMContentLoaded', function() {
   window._showAutoPlanOutput = function() {
     window._populateAutoScenePlan();
     window._setAutoState('planned');
+  };
+
+  // ---- SHOTS Workspace Functions ----
+
+  window._initShotsWorkspace = function() {
+    var src = document.getElementById('autoSceneCards');
+    var dst = document.getElementById('shotsSceneCards');
+    var emptyState = document.getElementById('shotsEmptyState');
+    if (dst && window._autoScenes && window._autoScenes.length > 0) {
+      // Re-render scene cards into the shots container
+      window._renderAutoSceneCards(dst, null, window._autoScenes);
+      var count = document.getElementById('shotsTotalCount');
+      if (count) count.textContent = window._autoScenes.length + ' shot' + (window._autoScenes.length !== 1 ? 's' : '');
+      if (emptyState) emptyState.style.display = 'none';
+    } else {
+      if (dst) dst.innerHTML = '';
+      if (emptyState) emptyState.style.display = '';
+      var count = document.getElementById('shotsTotalCount');
+      if (count) count.textContent = '0 shots';
+    }
+  };
+
+  window._filterShots = function(type) {
+    // Update filter buttons
+    ['all','close-up','medium','full','wide','establishing'].forEach(function(t) {
+      var btn = document.getElementById('shotFilter' + (t === 'all' ? 'All' : t === 'close-up' ? 'Closeup' : t.charAt(0).toUpperCase() + t.slice(1)));
+      if (btn) btn.classList.toggle('active', t === type);
+    });
+    // Filter scene cards
+    var cards = document.querySelectorAll('#shotsSceneCards .scene-card-structured');
+    var visibleCount = 0;
+    cards.forEach(function(card, i) {
+      var scene = window._autoScenes && window._autoScenes[i];
+      if (!scene) return;
+      var shotType = scene.shot_type || 'medium';
+      var show = (type === 'all' || shotType === type);
+      card.style.display = show ? '' : 'none';
+      if (show) visibleCount++;
+    });
+    var count = document.getElementById('shotsTotalCount');
+    if (count) {
+      var total = (window._autoScenes || []).length;
+      if (type === 'all') {
+        count.textContent = total + ' shot' + (total !== 1 ? 's' : '');
+      } else {
+        count.textContent = visibleCount + ' of ' + total + ' shots';
+      }
+    }
+  };
+
+  window._generateAllFirstFrames = function() {
+    if (!window._autoScenes || !window._autoScenes.length) {
+      window._toast && window._toast('No scenes to generate. Create a plan first.', 'warning');
+      return;
+    }
+    var count = window._autoScenes.length;
+    window._toast && window._toast('Generating first frames for ' + count + ' scenes...', 'info', 5000);
+    var i = 0;
+    function next() {
+      if (i >= count) {
+        window._toast && window._toast('All first frames generated!', 'success');
+        return;
+      }
+      if (window._generateFirstFrame) window._generateFirstFrame(i);
+      i++;
+      setTimeout(next, 2000);
+    }
+    next();
+  };
+
+  window._generateAllClips = function() {
+    if (!window._autoScenes || !window._autoScenes.length) {
+      window._toast && window._toast('No scenes to generate. Create a plan first.', 'warning');
+      return;
+    }
+    var ready = window._autoScenes.filter(function(s) { return s.first_frame_path; });
+    if (!ready.length) {
+      window._toast && window._toast('Generate first frames before generating clips.', 'warning');
+      return;
+    }
+    window._toast && window._toast('Generating clips for ' + ready.length + ' scenes with first frames...', 'info', 5000);
+    var i = 0;
+    function next() {
+      if (i >= window._autoScenes.length) {
+        window._toast && window._toast('All clips generated!', 'success');
+        return;
+      }
+      if (window._autoScenes[i].first_frame_path && window._generateSceneClip) {
+        window._generateSceneClip(i);
+      }
+      i++;
+      setTimeout(next, 2000);
+    }
+    next();
   };
 
   // ---- Scene Edit / Lock / Regen API Functions ----

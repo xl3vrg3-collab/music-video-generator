@@ -59,6 +59,7 @@ from lib.video_generator import (
     _get_character_references, _resolve_character_references,
     MODEL_DURATION_OPTIONS, get_valid_duration, get_smart_duration,
     extract_last_frame, extract_first_frame,
+    SHOT_TYPE_REF_PRIORITY, select_refs_for_shot_type, build_shot_prompt,
 )
 from lib.video_stitcher import (
     stitch, apply_lyrics_overlay, apply_aspect_ratio, split_clip,
@@ -10197,6 +10198,7 @@ class Handler(BaseHTTPRequestHandler):
 
         scene = scenes[scene_index]
         prompt = scene.get("shot_prompt", scene.get("prompt", ""))
+        shot_type = scene.get("shot_type", "medium")
 
         # Enrich scene to resolve photo paths (also fixes stale IDs by name match)
         enriched = dict(scene)
@@ -10207,8 +10209,8 @@ class Handler(BaseHTTPRequestHandler):
                 scene[key] = enriched[key]
         save_movie_plan(plan, OUTPUT_DIR)
 
-        # Build @tag reference list from photos — supports multiple characters
-        refs = []
+        # --- Collect all candidate photos by type ---
+        char_photos = []
         char_tags = []
 
         # Multiple characters from scene.characters array
@@ -10232,32 +10234,43 @@ class Handler(BaseHTTPRequestHandler):
                                     if os.path.isfile(_cand):
                                         photo = _cand
                                         break
-                        if photo and len(refs) < 3:
+                        if photo:
                             tag = pc.get("name", f"Char{ci}").replace(" ", "")[:16]
                             if len(tag) < 3:
                                 tag = tag + "Ref"
-                            refs.append({"path": photo, "tag": tag})
+                            char_photos.append({"path": photo, "tag": tag})
                             char_tags.append(tag)
         else:
             # Fallback: single character photo
             char_photo = enriched.get("character_photo_path", "")
-            if char_photo and os.path.isfile(char_photo) and len(refs) < 3:
-                refs.append({"path": char_photo, "tag": "Character"})
+            if char_photo and os.path.isfile(char_photo):
+                char_photos.append({"path": char_photo, "tag": "Character"})
                 char_tags.append("Character")
 
+        costume_photos = []
         cos_photo = enriched.get("costume_photo_path", "")
-        if cos_photo and os.path.isfile(cos_photo) and len(refs) < 3:
-            refs.append({"path": cos_photo, "tag": "Costume"})
+        if cos_photo and os.path.isfile(cos_photo):
+            costume_photos.append({"path": cos_photo, "tag": "Costume"})
+
+        env_photos = []
         env_photo = enriched.get("environment_photo_path", "")
-        if env_photo and os.path.isfile(env_photo) and len(refs) < 3:
-            refs.append({"path": env_photo, "tag": "Setting"})
+        if env_photo and os.path.isfile(env_photo):
+            env_photos.append({"path": env_photo, "tag": "Setting"})
+
+        # --- Use shot type system to select refs ---
+        refs = select_refs_for_shot_type(shot_type, char_photos, costume_photos, env_photos, max_refs=3)
 
         if not refs:
             self._send_json({"error": "No photos available for this scene. Add a character, costume, or environment with a photo."}, 400)
             return
 
-        # Build prompt with @tag mentions — refs handle identity, text handles scene/action
-        # Strip character physical descriptions from prompt when refs exist — avoid conflict
+        print(f"[FIRST FRAME][{scene_index}] Shot type: {shot_type} | Selected refs: {[(r['tag'], r['priority']) for r in refs]}")
+
+        # --- Build shot-type-aware prompt ---
+        has_char = any(r["tag"] in char_tags for r in refs)
+        has_costume = any(r["tag"] == "Costume" for r in refs)
+        has_env = any(r["tag"] == "Setting" for r in refs)
+
         import re as _re_tag
         tag_prompt = prompt
         # Remove vision-API descriptions (they fight with image refs)
@@ -10265,18 +10278,20 @@ class Handler(BaseHTTPRequestHandler):
         tag_prompt = _re_tag.sub(r'\[reference photo available\]', '', tag_prompt)
         tag_prompt = _re_tag.sub(r'\s{2,}', ' ', tag_prompt).strip()
 
+        # Build shot-aware prompt (handles quality keywords + shot framing)
+        tag_prompt = build_shot_prompt(shot_type, tag_prompt, has_char, has_costume, has_env)
+
         # Add @tag refs — let the PHOTOS define identity
-        for ct in char_tags:
+        selected_char_tags = [r["tag"] for r in refs if r["tag"] in char_tags]
+        for ct in selected_char_tags:
             if f"@{ct}" not in tag_prompt:
                 tag_prompt = f"@{ct} " + tag_prompt
-        if any(r["tag"] == "Costume" for r in refs):
+        if has_costume:
             if "@Costume" not in tag_prompt:
                 tag_prompt = f"{tag_prompt} Wearing the exact outfit from @Costume."
-        if any(r["tag"] == "Setting" for r in refs):
+        if has_env:
             if "@Setting" not in tag_prompt:
                 tag_prompt = f"{tag_prompt} Set in the exact location from @Setting."
-        # Quality keywords + identity preservation emphasis
-        tag_prompt = f"{tag_prompt} Hyper-realistic, photorealistic, 8K, cinematic lighting, detailed skin texture, sharp focus. PRESERVE EXACT LIKENESS from reference photos — same face, same features, same proportions."
         tag_prompt = tag_prompt[:1000]  # API limit
 
         try:
