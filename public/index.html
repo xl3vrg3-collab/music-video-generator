@@ -3193,6 +3193,32 @@ document.addEventListener('keydown', function(e) {
         </div>
       </div>
 
+      <!-- Voice Style Transfer (Speech-to-Speech) -->
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+        <div style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Voice Style Transfer</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-bottom:8px;">Upload speech audio and transform it to a different voice</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <label class="btn btn-small" style="cursor:pointer;">
+            Upload Speech
+            <input type="file" accept=".mp3,.wav,.m4a" style="display:none;" id="stsAudioInput" onchange="window._stsFileSelected(this)">
+          </label>
+          <span id="stsFilename" style="font-size:10px;color:var(--text-dim);">No file</span>
+          <select id="stsVoice" class="styled-select" style="width:130px;font-size:10px;">
+            <option value="Maya">Maya</option><option value="Arjun">Arjun</option><option value="Serene">Serene</option>
+            <option value="Bernard">Bernard</option><option value="Billy">Billy</option><option value="Mark">Mark</option>
+            <option value="Clint">Clint</option><option value="Leslie">Leslie</option><option value="Eleanor">Eleanor</option>
+            <option value="Elias">Elias</option><option value="Elliot">Elliot</option><option value="Noah">Noah</option>
+            <option value="James">James</option><option value="Katie">Katie</option><option value="Jack">Jack</option>
+            <option value="Maggie">Maggie</option><option value="Frank">Frank</option><option value="Claudia">Claudia</option>
+            <option value="Vincent">Vincent</option><option value="Kendrick">Kendrick</option><option value="Rachel">Rachel</option>
+          </select>
+          <button class="btn btn-small btn-amber" onclick="window._generateSTS()">Transform</button>
+        </div>
+        <div id="stsResult" style="margin-top:8px;display:none;">
+          <audio id="stsPlayer" controls style="width:100%;height:36px;"></audio>
+        </div>
+      </div>
+
       <!-- Upload voice -->
       <div>
         <div style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Or Upload Voice Audio</div>
@@ -13849,8 +13875,36 @@ document.addEventListener('DOMContentLoaded', function() {
       totalDur += dur;
 
       var strip = document.createElement('div');
-      strip.style.cssText = 'flex:0 0 ' + Math.max(80, dur * 30) + 'px;padding:8px;border-radius:var(--radius);cursor:pointer;position:relative;display:flex;flex-direction:column;justify-content:space-between;min-height:100px;' +
+      strip.style.cssText = 'flex:0 0 ' + Math.max(80, dur * 30) + 'px;padding:8px;border-radius:var(--radius);cursor:grab;position:relative;display:flex;flex-direction:column;justify-content:space-between;min-height:100px;transition:border-color 0.2s,opacity 0.2s;' +
         (hasClip ? 'background:var(--surface2);border:1px solid var(--green);' : 'background:var(--bg);border:1px dashed var(--border);opacity:0.5;');
+
+      // Drag-and-drop reordering
+      strip.draggable = true;
+      strip.setAttribute('data-scene-index', i);
+
+      strip.ondragstart = function(e) {
+        e.dataTransfer.setData('text/plain', this.getAttribute('data-scene-index'));
+        this.style.opacity = '0.4';
+      };
+      strip.ondragend = function() {
+        this.style.opacity = '1';
+      };
+      strip.ondragover = function(e) {
+        e.preventDefault();
+        this.style.borderColor = 'var(--cyan)';
+      };
+      strip.ondragleave = function() {
+        this.style.borderColor = '';
+      };
+      strip.ondrop = function(e) {
+        e.preventDefault();
+        this.style.borderColor = '';
+        var fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
+        var toIdx = parseInt(this.getAttribute('data-scene-index'));
+        if (fromIdx !== toIdx && !isNaN(fromIdx) && !isNaN(toIdx)) {
+          window._reorderScene(fromIdx, toIdx);
+        }
+      };
 
       // Thumbnail
       var thumb = '';
@@ -13881,6 +13935,24 @@ document.addEventListener('DOMContentLoaded', function() {
       var secs = Math.round(totalDur % 60);
       durEl.textContent = mins + ':' + (secs < 10 ? '0' : '') + secs + ' (' + totalDur.toFixed(1) + 's)';
     }
+  };
+
+  window._reorderScene = function(fromIdx, toIdx) {
+    if (!window._autoScenes) return;
+    var scene = window._autoScenes.splice(fromIdx, 1)[0];
+    window._autoScenes.splice(toIdx, 0, scene);
+    // Update order fields
+    window._autoScenes.forEach(function(s, i) { s.order = i; });
+    // Re-render
+    window._initEditWorkspace();
+    window._toast('Scene moved from ' + (fromIdx+1) + ' to ' + (toIdx+1), 'info', 2000);
+    // Save order to backend
+    var order = window._autoScenes.map(function(s) { return s.id; });
+    fetch('/api/auto-director/reorder', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({order: order})
+    }).catch(function(e){ console.warn('[LUMN] Reorder save failed:', e.message); });
   };
 
   window._setGlobalTransition = function(type) {
@@ -14021,6 +14093,35 @@ document.addEventListener('DOMContentLoaded', function() {
         window._toast('TTS failed: ' + (data.error || 'Unknown error'), 'error', 5000);
       }
     }).catch(function(e) { window._toast('TTS failed: ' + e.message, 'error', 5000); });
+  };
+
+  window._stsFileSelected = function(input) {
+    var fn = document.getElementById('stsFilename');
+    if (fn && input.files[0]) fn.textContent = input.files[0].name;
+  };
+  window._generateSTS = function() {
+    var input = document.getElementById('stsAudioInput');
+    var voice = document.getElementById('stsVoice').value;
+    if (!input || !input.files[0]) { window._toast('Upload speech audio first', 'warning'); return; }
+    // Upload file first, then transform
+    var form = new FormData();
+    form.append('file', input.files[0]);
+    window._toast('Transforming voice...', 'info', 30000);
+    fetch('/api/upload', {method:'POST', body: form}).then(function(r){return r.json()}).then(function(data) {
+      var filename = data.filename || input.files[0].name;
+      return fetch('/api/generate-speech-to-speech', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({audioFilename: filename, voicePresetId: voice})
+      });
+    }).then(function(r){return r.json()}).then(function(data) {
+      if (data.error) { window._toast('STS failed: ' + data.error, 'error', 5000); return; }
+      window._toast('Voice transformed!', 'success');
+      var result = document.getElementById('stsResult');
+      var player = document.getElementById('stsPlayer');
+      if (result) result.style.display = '';
+      if (player) player.src = data.audio_url + '?t=' + Date.now();
+    }).catch(function(e){ window._toast('STS error: ' + e.message, 'error'); });
   };
 
   window._generateSFX = function() {

@@ -3964,6 +3964,23 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r'^/api/auto-director/scene/(\d+)/unlock$', path)
             self._handle_movie_scene_unlock(int(m.group(1)))
 
+        elif path == "/api/auto-director/reorder":
+            body = json.loads(self._read_body())
+            order = body.get("order", [])
+            plan = load_movie_plan(OUTPUT_DIR)
+            if plan and plan.get("scenes") and order:
+                id_to_scene = {s["id"]: s for s in plan["scenes"]}
+                reordered = [id_to_scene[sid] for sid in order if sid in id_to_scene]
+                for i, s in enumerate(reordered):
+                    s["order"] = i
+                plan["scenes"] = reordered
+                save_movie_plan(plan, OUTPUT_DIR)
+                # Also save to auto_director_plan
+                ad_path = os.path.join(OUTPUT_DIR, "auto_director_plan.json")
+                with open(ad_path, "w", encoding="utf-8") as f:
+                    json.dump(plan, f, indent=2, ensure_ascii=False)
+            self._send_json({"ok": True})
+
         elif path == "/api/auto-director/draft-assets/promote":
             self._handle_draft_promote()
 
@@ -4481,6 +4498,9 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/api/generate-tts":
             self._handle_generate_tts()
+
+        elif path == "/api/generate-speech-to-speech":
+            self._handle_generate_sts()
 
         else:
             self.send_error(404)
@@ -5413,6 +5433,86 @@ class Handler(BaseHTTPRequestHandler):
                 })
             except Exception as e:
                 print(f"[AUDIO] TTS generation failed: {e}")
+                self._send_json({"ok": False, "error": str(e)}, 500)
+
+        _run()
+
+    def _handle_generate_sts(self):
+        """POST /api/generate-speech-to-speech -- Runway speech_to_speech API."""
+        try:
+            body = json.loads(self._read_body())
+        except Exception:
+            self._send_json({"ok": False, "error": "Invalid JSON body"}, 400)
+            return
+
+        audio_filename = body.get("audioFilename", "").strip()
+        voice_preset_id = body.get("voicePresetId", "Maggie")
+
+        if not audio_filename:
+            self._send_json({"ok": False, "error": "audioFilename is required"}, 400)
+            return
+
+        # Resolve the uploaded audio file
+        audio_path = os.path.join(UPLOADS_DIR, audio_filename)
+        if not os.path.isfile(audio_path):
+            self._send_json({"ok": False, "error": f"Audio file not found: {audio_filename}"}, 404)
+            return
+
+        def _run():
+            import requests, base64
+            try:
+                # Read audio and convert to base64 data URI
+                with open(audio_path, "rb") as f:
+                    audio_bytes = f.read()
+                ext = os.path.splitext(audio_filename)[1].lower().lstrip(".")
+                mime = {"mp3": "audio/mp3", "wav": "audio/wav", "m4a": "audio/m4a"}.get(ext, "audio/mp3")
+                data_uri = f"data:{mime};base64,{base64.b64encode(audio_bytes).decode()}"
+
+                payload = {
+                    "model": "eleven_multilingual_sts_v2",
+                    "media": {
+                        "type": "audio",
+                        "uri": data_uri,
+                    },
+                    "voice": {
+                        "type": "runway-preset",
+                        "presetId": voice_preset_id,
+                    },
+                }
+                resp = requests.post(
+                    f"{RUNWAY_API_BASE}/speech_to_speech",
+                    headers=_runway_headers(),
+                    json=payload,
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                task_id = data.get("id", "")
+                if not task_id:
+                    raise RuntimeError(f"No task ID returned: {data}")
+
+                print(f"[AUDIO] STS task submitted: {task_id}")
+
+                # Poll for completion
+                result = _runway_poll(task_id)
+                audio_url = result["url"]
+
+                # Download to output/audio/
+                out_ext = ".mp3"
+                if ".wav" in audio_url:
+                    out_ext = ".wav"
+                filename = f"sts_{task_id[:12]}_{int(time.time())}{out_ext}"
+                dest = os.path.join(AUDIO_GEN_DIR, filename)
+                _download(audio_url, dest)
+
+                print(f"[AUDIO] STS saved: {dest}")
+                self._send_json({
+                    "ok": True,
+                    "audio_url": f"/api/audio/generated/{filename}",
+                    "filename": filename,
+                })
+            except Exception as e:
+                print(f"[AUDIO] STS generation failed: {e}")
                 self._send_json({"ok": False, "error": str(e)}, 500)
 
         _run()
