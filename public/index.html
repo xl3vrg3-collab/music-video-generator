@@ -2470,6 +2470,12 @@ setInterval(function(){ window._updateChecklist(); }, 1000);
 
     // Asset sub-tab switcher
     window._setAssetTab = function(subTab) {
+      // Show brief loading state on the active panel
+      var activePanel = document.getElementById('assetPanel' + subTab.charAt(0).toUpperCase() + subTab.slice(1));
+      if (activePanel && activePanel.children.length === 0) {
+        activePanel.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-dim);"><div style="font-size:20px;margin-bottom:8px;">&#9203;</div>Loading...</div>';
+      }
+
       var panels = ['characters','costumes','environments','props','voices'];
       panels.forEach(function(p) {
         var panel = document.getElementById('assetPanel' + p.charAt(0).toUpperCase() + p.slice(1));
@@ -2483,6 +2489,18 @@ setInterval(function(){ window._updateChecklist(); }, 1000);
       if (subTab === 'environments' && typeof window._posLoadEnvironments === 'function') window._posLoadEnvironments();
       if (subTab === 'props' && typeof window._posLoadProps === 'function') window._posLoadProps();
       if (subTab === 'voices' && typeof window._posLoadVoices === 'function') window._posLoadVoices();
+      // Ensure panels aren't empty after data load
+      setTimeout(function() {
+        ['Characters','Costumes','Environments'].forEach(function(type) {
+          var panel = document.getElementById('assetPanel' + type);
+          if (panel && panel.children.length === 0) {
+            panel.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-dim);">' +
+              '<div style="font-size:32px;margin-bottom:8px;">' + (type==='Characters'?'&#128100;':type==='Costumes'?'&#128084;':'&#127750;') + '</div>' +
+              '<div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px;">No ' + type.toLowerCase() + ' yet</div>' +
+              '<div style="font-size:11px;color:var(--text-dim);">Create your first ' + type.slice(0,-1).toLowerCase() + ' to get started</div></div>';
+          }
+        });
+      }, 600);
       // Update tab counts
       setTimeout(function() {
         var charCount = document.querySelectorAll('#assetPanelCharacters .pos-card, #assetPanelCharacters .entity-card').length;
@@ -8330,6 +8348,18 @@ document.addEventListener('DOMContentLoaded', function() {
     if (editId) { result = await posApiPut('/api/pos/characters/'+editId, body); }
     else { result = await apiPost('/api/pos/characters', body); }
     if (result.error) { alert('Error: '+result.error); return; }
+
+    // Auto-upload pending photo after character creation
+    var newId = editId || (result.id || result._id || (result.character && (result.character.id || result.character._id)));
+    if (window._pendingCharPhoto && newId) {
+      var fd = new FormData();
+      fd.append('photo', window._pendingCharPhoto);
+      fetch('/api/pos/characters/' + newId + '/photo', {method:'POST', body:fd})
+        .then(function(r){return r.json()})
+        .then(function(){window._pendingCharPhoto=null; window._posLoadChars();})
+        .catch(function(e){console.warn('[LUMN] Photo upload failed:', e);});
+    }
+
     $('posCharFormWrap').classList.add('hidden');
     window._posLoadChars();
   };
@@ -8348,16 +8378,28 @@ document.addEventListener('DOMContentLoaded', function() {
 
   window._posUploadCharPhoto = async function(input) {
     const editId = $('posCharEditId').value;
-    if (!editId) { alert('Save the character first before uploading a photo.'); input.value=''; return; }
     const file = input.files[0]; if (!file) return;
+
+    // Show thumbnail preview immediately
+    $('posCharPhotoThumb').src = URL.createObjectURL(file);
+    $('posCharPhotoThumb').style.display = 'block';
+    $('posCharPhotoPlaceholder').style.display = 'none';
+
+    if (!editId) {
+      // No ID yet (new character) — store file for upload after save
+      window._pendingCharPhoto = file;
+      window._toast && window._toast('Photo selected. It will be uploaded when you save.', 'info', 3000);
+      input.value = '';
+      return;
+    }
+
+    // Existing character — upload immediately
     const fd = new FormData(); fd.append('photo', file);
     try {
       const resp = await fetch('/api/pos/characters/'+editId+'/photo', {method:'POST', body:fd});
       const data = await resp.json();
       if (data.ok) {
         $('posCharPhotoThumb').src = data.photo_url + '?t=' + Date.now();
-        $('posCharPhotoThumb').style.display = 'block';
-        $('posCharPhotoPlaceholder').style.display = 'none';
         $('posCharRefPhoto').value = data.photo_url;
         // Show auto-describe buttons now that photo is uploaded
         $('posCharAutoDescBtn').style.display = '';
@@ -14037,23 +14079,50 @@ document.addEventListener('DOMContentLoaded', function() {
   };
 
   window._generateAllFirstFrames = function() {
-    if (!window._autoScenes || !window._autoScenes.length) {
-      window._toast && window._toast('No scenes to generate. Create a plan first.', 'warning');
-      return;
-    }
-    var count = window._autoScenes.length;
-    window._toast && window._toast('Generating first frames for ' + count + ' scenes...', 'info', 5000);
-    var i = 0;
-    function next() {
-      if (i >= count) {
-        window._toast && window._toast('All first frames generated!', 'success');
+    var scenes = window._autoScenes;
+    if (!scenes || !scenes.length) { window._toast('No scenes. Create a plan first.', 'warning'); return; }
+    var total = scenes.length;
+    var completed = 0;
+
+    // Create persistent progress toast
+    var container = document.getElementById('toastContainer');
+    var toastEl = document.createElement('div');
+    toastEl.className = 'toast toast-info';
+    toastEl.style.cssText = 'animation:none;opacity:1;';
+    toastEl.innerHTML = '<span class="toast-icon">&#128248;</span><div style="flex:1;">' +
+      '<div id="batchFFLabel">Generating first frames: 0/' + total + '</div>' +
+      '<div style="margin-top:4px;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">' +
+      '<div id="batchFFProgress" style="height:100%;width:0%;background:linear-gradient(90deg,var(--cyan),var(--green));transition:width 0.3s;"></div></div></div>';
+    container.appendChild(toastEl);
+
+    function generateNext(i) {
+      if (i >= total) {
+        toastEl.classList.add('toast-out');
+        setTimeout(function(){toastEl.remove();}, 300);
+        window._toast('All ' + total + ' first frames generated!', 'success');
+        if (typeof window._initShotsWorkspace === 'function') window._initShotsWorkspace();
         return;
       }
-      if (window._generateFirstFrame) window._generateFirstFrame(i);
-      i++;
-      setTimeout(next, 2000);
+      var label = document.getElementById('batchFFLabel');
+      var progress = document.getElementById('batchFFProgress');
+      if (label) label.textContent = 'Generating first frames: ' + (i+1) + '/' + total;
+      if (progress) progress.style.width = ((i/total)*100) + '%';
+
+      fetch('/api/auto-director/scene/' + i + '/first-frame', {method:'POST'})
+        .then(function(r){return r.json()})
+        .then(function(data) {
+          completed++;
+          if (data.scene && window._autoScenes) window._autoScenes[i] = data.scene;
+          if (progress) progress.style.width = ((completed/total)*100) + '%';
+          generateNext(i + 1);
+        })
+        .catch(function(e) {
+          console.warn('[LUMN] First frame ' + i + ' failed:', e);
+          completed++;
+          generateNext(i + 1);
+        });
     }
-    next();
+    generateNext(0);
   };
 
   window._generateAllClips = function() {
@@ -14061,25 +14130,56 @@ document.addEventListener('DOMContentLoaded', function() {
       window._toast && window._toast('No scenes to generate. Create a plan first.', 'warning');
       return;
     }
-    var ready = window._autoScenes.filter(function(s) { return s.first_frame_path; });
-    if (!ready.length) {
+    var scenes = window._autoScenes;
+    var readyIndices = [];
+    scenes.forEach(function(s, idx) { if (s.first_frame_path) readyIndices.push(idx); });
+    if (!readyIndices.length) {
       window._toast && window._toast('Generate first frames before generating clips.', 'warning');
       return;
     }
-    window._toast && window._toast('Generating clips for ' + ready.length + ' scenes with first frames...', 'info', 5000);
-    var i = 0;
-    function next() {
-      if (i >= window._autoScenes.length) {
-        window._toast && window._toast('All clips generated!', 'success');
+    var total = readyIndices.length;
+    var completed = 0;
+
+    // Create persistent progress toast
+    var container = document.getElementById('toastContainer');
+    var toastEl = document.createElement('div');
+    toastEl.className = 'toast toast-info';
+    toastEl.style.cssText = 'animation:none;opacity:1;';
+    toastEl.innerHTML = '<span class="toast-icon">&#127909;</span><div style="flex:1;">' +
+      '<div id="batchClipLabel">Generating clips: 0/' + total + '</div>' +
+      '<div style="margin-top:4px;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">' +
+      '<div id="batchClipProgress" style="height:100%;width:0%;background:linear-gradient(90deg,var(--cyan),var(--green));transition:width 0.3s;"></div></div></div>';
+    container.appendChild(toastEl);
+
+    function generateNext(ri) {
+      if (ri >= readyIndices.length) {
+        toastEl.classList.add('toast-out');
+        setTimeout(function(){toastEl.remove();}, 300);
+        window._toast('All ' + total + ' clips generated!', 'success');
+        if (typeof window._initEditWorkspace === 'function') window._initEditWorkspace();
         return;
       }
-      if (window._autoScenes[i].first_frame_path && window._generateSceneClip) {
-        window._generateSceneClip(i);
-      }
-      i++;
-      setTimeout(next, 2000);
+      var sceneIdx = readyIndices[ri];
+      var label = document.getElementById('batchClipLabel');
+      var progress = document.getElementById('batchClipProgress');
+      if (label) label.textContent = 'Generating clips: ' + (ri+1) + '/' + total;
+      if (progress) progress.style.width = ((ri/total)*100) + '%';
+
+      fetch('/api/auto-director/scene/' + sceneIdx + '/generate-clip', {method:'POST'})
+        .then(function(r){return r.json()})
+        .then(function(data) {
+          completed++;
+          if (data.scene && window._autoScenes) window._autoScenes[sceneIdx] = data.scene;
+          if (progress) progress.style.width = ((completed/total)*100) + '%';
+          generateNext(ri + 1);
+        })
+        .catch(function(e) {
+          console.warn('[LUMN] Clip ' + sceneIdx + ' failed:', e);
+          completed++;
+          generateNext(ri + 1);
+        });
     }
-    next();
+    generateNext(0);
   };
 
   // ---- EDIT Workspace Functions ----
@@ -14244,7 +14344,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (panel) panel.style.display = '';
                 if (vid) vid.src = '/api/download?t=' + Date.now();
                 if (dl) dl.href = '/api/download';
-                window._toast('Final video ready!', 'success');
+                window._toast('Video stitched! Switch to Output to render final.', 'success');
                 if (window._celebrate) window._celebrate();
               } else if (pd.phase === 'error') {
                 clearInterval(pollTimer);
