@@ -367,6 +367,12 @@
   .btn-green:hover { background: rgba(0,255,136,0.1); box-shadow: 0 0 20px var(--green-dim); }
 
   .btn-small { padding: 4px 12px; font-size: 10px; letter-spacing: 1px; min-height: 28px; }
+  .shot-filter-btn { font-size:10px; padding:4px 10px; border-radius:12px; background:transparent; border:1px solid var(--border); color:var(--text-dim); cursor:pointer; transition:all 0.2s; font-family:inherit; letter-spacing:1px; }
+  .shot-filter-btn:hover { border-color:var(--cyan); color:var(--cyan); }
+  .shot-filter-btn.active { background:rgba(0,229,255,0.1); border-color:var(--cyan); color:var(--cyan); font-weight:600; }
+  .workspace-panel { animation: fadeIn 0.2s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  #pipelineProgressFill { height: 5px !important; box-shadow: 0 0 8px rgba(124,92,255,0.4); }
   .btn-icon { padding: 4px 8px; font-size: 12px; min-height: 28px; min-width: 28px; letter-spacing: 0; }
   .btn-row { display: flex; gap: 8px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
   .btn-enhance {
@@ -2317,7 +2323,7 @@ setInterval(function(){ window._updateChecklist(); }, 3000);
   <!-- Step indicator + progress bar + status -->
   <div id="pipelineProgress" style="padding:4px 16px;display:flex;align-items:center;gap:10px;">
     <span id="pipelineStepLabel" style="color:var(--text-dim);font-size:11px;white-space:nowrap;">Step 1 of 6 — Project</span>
-    <div style="flex:1;height:3px;background:var(--border);border-radius:2px;overflow:hidden;">
+    <div style="flex:1;height:5px;background:var(--border);border-radius:2px;overflow:hidden;">
       <div id="pipelineProgressFill" style="height:100%;width:16.7%;background:linear-gradient(90deg,#7c5cff,#ff5ca0);border-radius:2px;transition:width 0.3s;"></div>
     </div>
   </div>
@@ -2472,6 +2478,18 @@ setInterval(function(){ window._updateChecklist(); }, 3000);
       if (subTab === 'environments' && typeof window._posLoadEnvironments === 'function') window._posLoadEnvironments();
       if (subTab === 'props' && typeof window._posLoadProps === 'function') window._posLoadProps();
       if (subTab === 'voices' && typeof window._posLoadVoices === 'function') window._posLoadVoices();
+      // Update tab counts
+      setTimeout(function() {
+        var charCount = document.querySelectorAll('#assetPanelCharacters .pos-card, #assetPanelCharacters .entity-card').length;
+        var cosCount = document.querySelectorAll('#assetPanelCostumes .pos-card, #assetPanelCostumes .entity-card').length;
+        var envCount = document.querySelectorAll('#assetPanelEnvironments .pos-card, #assetPanelEnvironments .entity-card').length;
+        var cBtn = document.getElementById('assetTabCharacters');
+        var coBtn = document.getElementById('assetTabCostumes');
+        var eBtn = document.getElementById('assetTabEnvironments');
+        if (cBtn && charCount) cBtn.innerHTML = '&#128100; Characters <span style="font-size:9px;opacity:0.6;">(' + charCount + ')</span>';
+        if (coBtn && cosCount) coBtn.innerHTML = '&#128084; Costumes <span style="font-size:9px;opacity:0.6;">(' + cosCount + ')</span>';
+        if (eBtn && envCount) eBtn.innerHTML = '&#127750; Environments <span style="font-size:9px;opacity:0.6;">(' + envCount + ')</span>';
+      }, 500);
     };
 
     // Move entity content into asset panels once DOM is ready
@@ -2873,11 +2891,11 @@ setInterval(function(){ window._updateChecklist(); }, 3000);
   <div id="assetsContainer" class="workspace-panel hidden" style="display:none;">
     <!-- Sub-tab navigation -->
     <div style="display:flex;gap:4px;margin-bottom:16px;padding:4px;background:var(--surface);border-radius:var(--radius-lg);border:1px solid var(--border);">
-      <button class="mode-btn active" onclick="window._setAssetTab('characters')" id="assetTabCharacters" style="font-size:10px;padding:6px 14px;">Characters</button>
-      <button class="mode-btn" onclick="window._setAssetTab('costumes')" id="assetTabCostumes" style="font-size:10px;padding:6px 14px;">Costumes</button>
-      <button class="mode-btn" onclick="window._setAssetTab('environments')" id="assetTabEnvironments" style="font-size:10px;padding:6px 14px;">Environments</button>
-      <button class="mode-btn" onclick="window._setAssetTab('props')" id="assetTabProps" style="font-size:10px;padding:6px 14px;">Props</button>
-      <button class="mode-btn" onclick="window._setAssetTab('voices')" id="assetTabVoices" style="font-size:10px;padding:6px 14px;">Voices</button>
+      <button class="mode-btn active" onclick="window._setAssetTab('characters')" id="assetTabCharacters" style="font-size:11px;padding:8px 16px;">&#128100; Characters</button>
+      <button class="mode-btn" onclick="window._setAssetTab('costumes')" id="assetTabCostumes" style="font-size:11px;padding:8px 16px;">&#128084; Costumes</button>
+      <button class="mode-btn" onclick="window._setAssetTab('environments')" id="assetTabEnvironments" style="font-size:11px;padding:8px 16px;">&#127750; Environments</button>
+      <button class="mode-btn" onclick="window._setAssetTab('props')" id="assetTabProps" style="font-size:11px;padding:8px 16px;">&#127919; Props</button>
+      <button class="mode-btn" onclick="window._setAssetTab('voices')" id="assetTabVoices" style="font-size:11px;padding:8px 16px;">&#127897;&#65039; Voices</button>
     </div>
 
     <!-- Sub-panels -->
@@ -3105,23 +3123,47 @@ setInterval(function(){ window._updateChecklist(); }, 3000);
 
       <!-- Shot type filter -->
       <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
-        <button class="btn btn-small active" onclick="window._filterShots('all')" id="shotFilterAll">All</button>
-        <button class="btn btn-small" onclick="window._filterShots('close-up')" id="shotFilterCloseup">Close-Up</button>
-        <button class="btn btn-small" onclick="window._filterShots('medium')" id="shotFilterMedium">Medium</button>
-        <button class="btn btn-small" onclick="window._filterShots('full')" id="shotFilterFull">Full</button>
-        <button class="btn btn-small" onclick="window._filterShots('wide')" id="shotFilterWide">Wide</button>
-        <button class="btn btn-small" onclick="window._filterShots('establishing')" id="shotFilterEstablishing">Establishing</button>
+        <button class="shot-filter-btn active" onclick="window._filterShots('all')" id="shotFilterAll">All</button>
+        <button class="shot-filter-btn" onclick="window._filterShots('close-up')" id="shotFilterCloseup">Close-Up</button>
+        <button class="shot-filter-btn" onclick="window._filterShots('medium')" id="shotFilterMedium">Medium</button>
+        <button class="shot-filter-btn" onclick="window._filterShots('full')" id="shotFilterFull">Full</button>
+        <button class="shot-filter-btn" onclick="window._filterShots('wide')" id="shotFilterWide">Wide</button>
+        <button class="shot-filter-btn" onclick="window._filterShots('establishing')" id="shotFilterEstablishing">Establishing</button>
       </div>
 
       <!-- Approval status filter -->
       <div id="approvalFilterRow" style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
         <span style="font-size:9px;color:var(--text-dim);padding:4px 0;">Status:</span>
-        <button class="btn btn-small active" data-approval="all" onclick="window._filterByApproval('all')">All</button>
-        <button class="btn btn-small" data-approval="draft" onclick="window._filterByApproval('draft')">Draft</button>
-        <button class="btn btn-small" data-approval="generated" onclick="window._filterByApproval('generated')">Generated</button>
-        <button class="btn btn-small" data-approval="selected" onclick="window._filterByApproval('selected')">Selected</button>
-        <button class="btn btn-small" data-approval="approved" onclick="window._filterByApproval('approved')">Approved</button>
-        <button class="btn btn-small" data-approval="locked" onclick="window._filterByApproval('locked')">Locked</button>
+        <button class="shot-filter-btn active" data-approval="all" onclick="window._filterByApproval('all')">All</button>
+        <button class="shot-filter-btn" data-approval="draft" onclick="window._filterByApproval('draft')">Draft</button>
+        <button class="shot-filter-btn" data-approval="generated" onclick="window._filterByApproval('generated')">Generated</button>
+        <button class="shot-filter-btn" data-approval="selected" onclick="window._filterByApproval('selected')">Selected</button>
+        <button class="shot-filter-btn" data-approval="approved" onclick="window._filterByApproval('approved')">Approved</button>
+        <button class="shot-filter-btn" data-approval="locked" onclick="window._filterByApproval('locked')">Locked</button>
+      </div>
+
+      <!-- Stats bar -->
+      <div id="shotsStatsBar" style="display:flex;gap:16px;margin-bottom:16px;padding:10px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);flex-wrap:wrap;">
+        <div style="text-align:center;min-width:60px;">
+          <div style="font-size:18px;font-weight:700;color:var(--cyan);" id="shotsStatTotal">0</div>
+          <div style="font-size:8px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Total</div>
+        </div>
+        <div style="text-align:center;min-width:60px;">
+          <div style="font-size:18px;font-weight:700;color:var(--amber);" id="shotsStatFrames">0</div>
+          <div style="font-size:8px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">First Frames</div>
+        </div>
+        <div style="text-align:center;min-width:60px;">
+          <div style="font-size:18px;font-weight:700;color:var(--green);" id="shotsStatClips">0</div>
+          <div style="font-size:8px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Clips Ready</div>
+        </div>
+        <div style="text-align:center;min-width:60px;">
+          <div style="font-size:18px;font-weight:700;color:var(--violet);" id="shotsStatApproved">0</div>
+          <div style="font-size:8px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Approved</div>
+        </div>
+        <div style="text-align:center;min-width:80px;">
+          <div style="font-size:18px;font-weight:700;color:var(--text);" id="shotsStatDuration">0:00</div>
+          <div style="font-size:8px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Duration</div>
+        </div>
       </div>
 
       <!-- Scene cards container (reuses existing rendering) -->
@@ -3154,6 +3196,7 @@ setInterval(function(){ window._updateChecklist(); }, 3000);
     </div>
 
     <!-- Timeline strip -->
+    <div style="font-size:9px;color:var(--text-dim);margin-bottom:4px;text-align:center;">Drag clips to reorder &bull; Click transitions to change type</div>
     <div id="editTimeline" style="display:flex;gap:2px;overflow-x:auto;padding:12px 0;margin-bottom:16px;min-height:120px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);align-items:stretch;">
       <div id="editTimelineEmpty" style="width:100%;display:flex;align-items:center;justify-content:center;">
         <div style="text-align:center;padding:20px;">
@@ -3207,9 +3250,9 @@ setInterval(function(){ window._updateChecklist(); }, 3000);
 
   <!-- Audio sub-tabs -->
   <div style="display:flex;gap:4px;margin-bottom:16px;padding:4px;background:var(--surface);border-radius:var(--radius-lg);border:1px solid var(--border);">
-    <button class="mode-btn active" onclick="window._setAudioTab('music')" id="audioTabMusic" style="font-size:10px;padding:6px 14px;">Music</button>
-    <button class="mode-btn" onclick="window._setAudioTab('voice')" id="audioTabVoice" style="font-size:10px;padding:6px 14px;">Voice / Dialogue</button>
-    <button class="mode-btn" onclick="window._setAudioTab('sfx')" id="audioTabSfx" style="font-size:10px;padding:6px 14px;">SFX / Ambience</button>
+    <button class="mode-btn active" onclick="window._setAudioTab('music')" id="audioTabMusic" style="font-size:10px;padding:6px 14px;">&#127925; Music</button>
+    <button class="mode-btn" onclick="window._setAudioTab('voice')" id="audioTabVoice" style="font-size:10px;padding:6px 14px;">&#128483;&#65039; Voice / Dialogue</button>
+    <button class="mode-btn" onclick="window._setAudioTab('sfx')" id="audioTabSfx" style="font-size:10px;padding:6px 14px;">&#128266; SFX / Ambience</button>
   </div>
 
   <!-- Music Panel -->
@@ -3234,6 +3277,9 @@ setInterval(function(){ window._updateChecklist(); }, 3000);
         <label style="font-size:10px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
           <input type="checkbox" id="audioMusicDuck" style="accent-color:var(--amber);"> Duck under dialogue
         </label>
+      </div>
+      <div id="audioWaveformVisual" style="margin-top:12px;height:40px;background:linear-gradient(90deg,var(--cyan-dim),var(--surface2),var(--cyan-dim));border-radius:var(--radius);display:flex;align-items:center;justify-content:center;">
+        <span style="font-size:9px;color:var(--text-dim);letter-spacing:1px;">AUDIO WAVEFORM — Upload music to visualize</span>
       </div>
     </div>
 
@@ -3264,7 +3310,8 @@ setInterval(function(){ window._updateChecklist(); }, 3000);
 
       <!-- TTS -->
       <div style="margin-bottom:16px;">
-        <div style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Text to Speech (Runway)</div>
+        <div style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Text to Speech (Runway)</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-bottom:8px;">Type your script and generate speech with AI voices</div>
         <textarea id="audioTTSText" class="styled-input" rows="3" placeholder="Enter narration or dialogue text..." style="width:100%;resize:vertical;"></textarea>
         <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
           <select id="audioTTSVoice" class="styled-select" style="width:150px;">
@@ -3286,7 +3333,7 @@ setInterval(function(){ window._updateChecklist(); }, 3000);
       <!-- Voice Style Transfer (Speech-to-Speech) -->
       <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
         <div style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Voice Style Transfer</div>
-        <div style="font-size:9px;color:var(--text-dim);margin-bottom:8px;">Upload speech audio and transform it to a different voice</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-bottom:8px;">Upload recorded speech and transform it to a different voice style</div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <label class="btn btn-small" style="cursor:pointer;">
             Upload Speech
@@ -3311,7 +3358,8 @@ setInterval(function(){ window._updateChecklist(); }, 3000);
 
       <!-- Voice Dubbing (Multi-Language) -->
       <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
-        <div style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Voice Dubbing (Multi-Language)</div>
+        <div style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Voice Dubbing (Multi-Language)</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-bottom:8px;">Automatically dub your audio into another language while preserving voice character</div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <label class="btn btn-small" style="cursor:pointer;">
             Upload Audio <input type="file" accept=".mp3,.wav,.m4a" style="display:none;" id="dubAudioInput" onchange="document.getElementById('dubFilename').textContent=this.files[0]?this.files[0].name:'No file'">
@@ -3333,7 +3381,8 @@ setInterval(function(){ window._updateChecklist(); }, 3000);
 
       <!-- Voice Isolation (Remove Background) -->
       <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
-        <div style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Voice Isolation (Remove Background)</div>
+        <div style="font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Voice Isolation (Remove Background)</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-bottom:8px;">Extract clean voice audio by removing background noise, music, and effects</div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <label class="btn btn-small" style="cursor:pointer;">
             Upload Audio <input type="file" accept=".mp3,.wav,.m4a" style="display:none;" id="isoAudioInput" onchange="document.getElementById('isoFilename').textContent=this.files[0]?this.files[0].name:'No file'">
@@ -3392,14 +3441,17 @@ setInterval(function(){ window._updateChecklist(); }, 3000);
   <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
     <div style="padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);text-align:center;">
       <div style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Scenes</div>
+      <div style="font-size:20px;margin-bottom:4px;">&#127916;</div>
       <div id="outputSceneCount" style="font-size:24px;font-weight:700;color:var(--cyan);">0</div>
     </div>
     <div style="padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);text-align:center;">
       <div style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Clips Ready</div>
+      <div style="font-size:20px;margin-bottom:4px;">&#9989;</div>
       <div id="outputClipCount" style="font-size:24px;font-weight:700;color:var(--green);">0</div>
     </div>
     <div style="padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);text-align:center;">
       <div style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Est. Duration</div>
+      <div style="font-size:20px;margin-bottom:4px;">&#9201;&#65039;</div>
       <div id="outputDuration" style="font-size:24px;font-weight:700;color:var(--amber);">0:00</div>
     </div>
   </div>
@@ -3458,11 +3510,20 @@ setInterval(function(){ window._updateChecklist(); }, 3000);
   </div>
 
   <!-- Final Video -->
-  <div id="outputFinalPanel" style="display:none;padding:16px;background:var(--surface);border:1px solid var(--green);border-radius:var(--radius-lg);text-align:center;">
-    <div style="font-size:12px;font-weight:600;color:var(--green);margin-bottom:12px;letter-spacing:1px;">YOUR VIDEO IS READY</div>
+  <div id="outputFinalPanel" style="display:none;padding:16px;background:var(--surface);border:2px solid var(--green);box-shadow:0 0 20px rgba(0,229,160,0.15);border-radius:var(--radius-lg);text-align:center;">
+    <div style="font-size:12px;font-weight:600;color:var(--green);margin-bottom:12px;letter-spacing:1px;">&#11088; YOUR VIDEO IS READY &#11088;</div>
     <video id="outputFinalVideo" controls style="max-width:100%;max-height:500px;border-radius:var(--radius);border:1px solid var(--border);" ondblclick="window._openFsPreview && window._openFsPreview(this.src)"></video>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:center;">
-      <a id="outputDownloadBtn" class="btn btn-green" style="text-decoration:none;padding:8px 24px;">Download Video</a>
+      <a id="outputDownloadBtn" class="btn btn-green" style="text-decoration:none;padding:12px 32px;font-size:13px;letter-spacing:2px;">Download Video</a>
+    </div>
+  </div>
+
+  <div id="outputWhatsNext" style="display:none;margin-top:16px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);text-align:center;">
+    <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:12px;">What's Next?</div>
+    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+      <button class="btn btn-small" onclick="window._switchTab('edit')" style="border-color:var(--cyan);color:var(--cyan);">&#9986;&#65039; Re-Edit Sequence</button>
+      <button class="btn btn-small" onclick="window._switchTab('audio')" style="border-color:var(--amber);color:var(--amber);">&#127925; Add Audio</button>
+      <button class="btn btn-small" onclick="window._switchTab('shots')" style="border-color:var(--green);color:var(--green);">&#128248; Generate More Shots</button>
     </div>
   </div>
 
@@ -13876,6 +13937,18 @@ document.addEventListener('DOMContentLoaded', function() {
       var count = document.getElementById('shotsTotalCount');
       if (count) count.textContent = window._autoScenes.length + ' shot' + (window._autoScenes.length !== 1 ? 's' : '');
       if (emptyState) emptyState.style.display = 'none';
+      // Update stats
+      var scenes = window._autoScenes || [];
+      var frames = scenes.filter(function(s){return s.first_frame_path || (s.preview && s.preview.image_url);}).length;
+      var clips = scenes.filter(function(s){return s.clip_path || s.has_clip;}).length;
+      var approved = scenes.filter(function(s){return s.approval === 'approved' || s.approval === 'locked';}).length;
+      var totalDur = 0; scenes.forEach(function(s){totalDur += parseFloat(s.duration)||5;});
+      var el;
+      el = document.getElementById('shotsStatTotal'); if(el) el.textContent = scenes.length;
+      el = document.getElementById('shotsStatFrames'); if(el) el.textContent = frames;
+      el = document.getElementById('shotsStatClips'); if(el) el.textContent = clips;
+      el = document.getElementById('shotsStatApproved'); if(el) el.textContent = approved;
+      el = document.getElementById('shotsStatDuration'); if(el) { var m=Math.floor(totalDur/60),s2=Math.round(totalDur%60); el.textContent=m+':'+(s2<10?'0':'')+s2; }
     } else {
       if (dst) dst.innerHTML = '';
       if (emptyState) emptyState.style.display = '';
@@ -14031,8 +14104,8 @@ document.addEventListener('DOMContentLoaded', function() {
       totalDur += dur;
 
       var strip = document.createElement('div');
-      strip.style.cssText = 'flex:0 0 ' + Math.max(80, dur * 30) + 'px;padding:8px;border-radius:var(--radius);cursor:grab;position:relative;display:flex;flex-direction:column;justify-content:space-between;min-height:100px;transition:border-color 0.2s,opacity 0.2s;' +
-        (hasClip ? 'background:var(--surface2);border:1px solid var(--green);' : 'background:var(--bg);border:1px dashed var(--border);opacity:0.5;');
+      strip.style.cssText = 'flex:0 0 ' + Math.max(100, dur * 35) + 'px;padding:10px;border-radius:8px;cursor:grab;position:relative;display:flex;flex-direction:column;justify-content:space-between;min-height:110px;transition:all 0.2s;' +
+        (hasClip ? 'background:linear-gradient(180deg,var(--surface2) 0%,var(--bg) 100%);border:1px solid var(--green);' : 'background:var(--bg);border:1px dashed var(--border);opacity:0.5;');
 
       // Drag-and-drop reordering
       strip.draggable = true;
@@ -14068,7 +14141,8 @@ document.addEventListener('DOMContentLoaded', function() {
         thumb = '<img src="' + scene.preview.image_url + '" style="width:100%;height:50px;object-fit:cover;border-radius:3px;margin-bottom:4px;">';
       }
 
-      strip.innerHTML = thumb +
+      var numBadge = '<div style="position:absolute;top:4px;left:4px;width:20px;height:20px;border-radius:50%;background:var(--cyan);color:#000;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;">' + (i+1) + '</div>';
+      strip.innerHTML = numBadge + thumb +
         '<div style="font-size:9px;font-weight:700;color:var(--text);">Scene ' + (i+1) + '</div>' +
         '<div style="font-size:8px;color:var(--text-dim);">' + dur.toFixed(1) + 's</div>' +
         '<div style="font-size:8px;color:' + (hasClip ? 'var(--green)' : 'var(--red)') + ';">' + (hasClip ? 'Ready' : 'No clip') + '</div>';
@@ -14077,7 +14151,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (i > 0) {
         var trans = document.createElement('div');
         trans.style.cssText = 'flex:0 0 24px;display:flex;align-items:center;justify-content:center;';
-        trans.innerHTML = '<div style="width:16px;height:16px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--text-dim);" title="' + (scene.transition || 'crossfade') + '">&#8594;</div>';
+        trans.innerHTML = '<div style="width:20px;height:20px;border-radius:50%;background:linear-gradient(135deg,var(--surface2),var(--surface));border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text-dim);" title="' + (scene.transition || 'crossfade') + '">&#10230;</div>';
         timeline.appendChild(trans);
       }
 
@@ -14412,6 +14486,8 @@ document.addEventListener('DOMContentLoaded', function() {
               if (dl) dl.href = '/api/download';
               window._toast('Final video rendered!', 'success');
               if (window._celebrate) window._celebrate();
+              var whatsNext = document.getElementById('outputWhatsNext');
+              if (whatsNext) whatsNext.style.display = '';
             } else if (pd.phase === 'error') {
               clearInterval(pollTimer);
               if (progress) progress.style.display = 'none';
