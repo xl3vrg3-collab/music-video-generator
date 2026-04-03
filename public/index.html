@@ -3220,6 +3220,10 @@ setInterval(function(){ window._updateChecklist(); }, 1000);
 
     <!-- Timeline strip -->
     <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;text-align:center;">Drag clips to reorder &bull; Click transitions to change type</div>
+    <div style="font-size:9px;color:var(--text-dim);margin-bottom:2px;display:flex;justify-content:space-between;">
+      <span>Timeline Overview</span>
+      <span id="editMinimapDuration"></span>
+    </div>
     <div id="editTimeline" style="display:flex;gap:2px;overflow-x:auto;padding:12px 0;margin-bottom:16px;min-height:120px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);align-items:stretch;">
       <div id="editTimelineEmpty" style="width:100%;display:flex;align-items:center;justify-content:center;">
         <div style="text-align:center;padding:20px;">
@@ -14271,6 +14275,45 @@ document.addEventListener('DOMContentLoaded', function() {
       var secs = Math.round(totalDur % 60);
       durEl.textContent = mins + ':' + (secs < 10 ? '0' : '') + secs + ' (' + totalDur.toFixed(1) + 's)';
     }
+
+    // Build minimap overview
+    var minimapContainer = document.getElementById('editMinimap');
+    if (!minimapContainer) {
+      minimapContainer = document.createElement('div');
+      minimapContainer.id = 'editMinimap';
+      minimapContainer.style.cssText = 'height:24px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;display:flex;overflow:hidden;cursor:pointer;';
+      timeline.parentNode.insertBefore(minimapContainer, timeline);
+    }
+    minimapContainer.innerHTML = '';
+
+    var totalDurForMap = 0;
+    scenes.forEach(function(s) { totalDurForMap += parseFloat(s.duration) || 5; });
+
+    scenes.forEach(function(scene, i) {
+      var dur = parseFloat(scene.duration) || 5;
+      var pct = (dur / totalDurForMap * 100);
+      var hasClip = scene.clip_path || scene.has_clip;
+      var miniStrip = document.createElement('div');
+      miniStrip.style.cssText = 'flex:' + pct + ' 0 0;height:100%;' +
+        'background:' + (hasClip ? 'var(--green)' : 'var(--surface)') + ';' +
+        'border-right:1px solid var(--border);opacity:0.7;transition:opacity 0.2s;';
+      miniStrip.title = 'Scene ' + (i+1) + ' (' + dur.toFixed(1) + 's)';
+      miniStrip.onmouseenter = function() { this.style.opacity = '1'; };
+      miniStrip.onmouseleave = function() { this.style.opacity = '0.7'; };
+      miniStrip.onclick = function() {
+        var strips = timeline.querySelectorAll('[data-scene-index]');
+        if (strips[i]) strips[i].scrollIntoView({behavior:'smooth', inline:'center'});
+      };
+      minimapContainer.appendChild(miniStrip);
+    });
+
+    // Update minimap duration label
+    var minimapDurEl = document.getElementById('editMinimapDuration');
+    if (minimapDurEl) {
+      var mmMins = Math.floor(totalDurForMap / 60);
+      var mmSecs = Math.round(totalDurForMap % 60);
+      minimapDurEl.textContent = scenes.length + ' scenes \u2022 ' + mmMins + ':' + (mmSecs < 10 ? '0' : '') + mmSecs;
+    }
   };
 
   window._reorderScene = function(fromIdx, toIdx) {
@@ -14386,6 +14429,37 @@ document.addEventListener('DOMContentLoaded', function() {
           var audio = document.getElementById('audioMusicAudio');
           if (player) player.style.display = '';
           if (audio) audio.src = URL.createObjectURL(file);
+          // Generate simple waveform visualization
+          if (file) {
+            var reader = new FileReader();
+            reader.onload = function(e) {
+              var ctx = new (window.AudioContext || window.webkitAudioContext)();
+              ctx.decodeAudioData(e.target.result, function(buffer) {
+                var data = buffer.getChannelData(0);
+                var waveDiv = document.getElementById('audioWaveformVisual');
+                if (!waveDiv) return;
+                // Sample down to ~200 points
+                var samples = 200;
+                var step = Math.floor(data.length / samples);
+                var bars = '';
+                for (var i = 0; i < samples; i++) {
+                  var sum = 0;
+                  for (var j = 0; j < step; j++) {
+                    sum += Math.abs(data[i * step + j] || 0);
+                  }
+                  var avg = sum / step;
+                  var height = Math.max(2, Math.round(avg * 80));
+                  bars += '<div style="flex:1;display:flex;align-items:center;"><div style="width:100%;height:' + height + '%;background:var(--cyan);border-radius:1px;opacity:0.6;"></div></div>';
+                }
+                waveDiv.style.cssText = 'margin-top:12px;height:50px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:stretch;gap:1px;padding:4px;overflow:hidden;';
+                waveDiv.innerHTML = bars;
+              }).catch(function() {
+                var waveDiv = document.getElementById('audioWaveformVisual');
+                if (waveDiv) waveDiv.innerHTML = '<span style="font-size:10px;color:var(--text-dim);align-self:center;margin:auto;">Waveform unavailable for this format</span>';
+              });
+            };
+            reader.readAsArrayBuffer(file);
+          }
         }
       }
     }).catch(function(e) { window._toast('Upload failed: ' + e.message, 'error'); });
