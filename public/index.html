@@ -2766,9 +2766,6 @@
 <script>
 // ===== POLLING TIMER CLEANUP =====
 window._activeTimers = window._activeTimers || [];
-window._registerTimer = function(timerId) {
-  window._activeTimers.push(timerId);
-};
 window._clearAllTimers = function() {
   window._activeTimers.forEach(function(id) { clearInterval(id); });
   window._activeTimers = [];
@@ -3395,12 +3392,6 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 1
     // Workspace switcher (replaces old _switchAppMode)
     window._switchWorkspace = function(workspace) {
       window._switchTab(workspace);
-    };
-
-    // Keep _switchAppMode for backwards compat — maps to project tab
-    window._switchAppMode = function(mode) {
-      window._appMode = mode;
-      window._switchTab('project');
     };
 
     // Store _switchTab as the pipeline-aware tab handler
@@ -6449,12 +6440,12 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 1
       </div>
       <div class="panel-body">
         <div id="outputVideoWrap">
-          <video id="outputFinalVideo" controls style="max-width:100%;border-radius:var(--radius);background:#000;">
+          <video id="outputFinalVideoMusic" controls style="max-width:100%;border-radius:var(--radius);background:#000;">
             <source src="/output/auto_director_final.mp4" type="video/mp4">
           </video>
         </div>
         <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
-          <a class="btn btn-small" id="outputDownloadBtn" href="/api/download" download="music_video.mp4" style="text-decoration:none;background:var(--green);border-color:var(--green);color:#000;">Download MP4</a>
+          <a class="btn btn-small" id="outputDownloadBtnMusic" href="/api/download" download="music_video.mp4" style="text-decoration:none;background:var(--green);border-color:var(--green);color:#000;">Download MP4</a>
           <button class="btn btn-small" onclick="window._setMode('generate')">← Back to Generate</button>
         </div>
         <div id="outputNoVideo" style="display:none;color:var(--text-dim);font-size:12px;padding:30px;text-align:center;">
@@ -6638,7 +6629,7 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 1
   <div class="modal-content" style="max-width:500px;">
     <button class="modal-close" onclick="window._closeModal('analyticsModal')">&times;</button>
     <div class="modal-title">Project Analytics</div>
-    <div id="analyticsContent" style="font-size:11px;color:var(--text);"></div>
+    <div id="analyticsContentShots" style="font-size:11px;color:var(--text);"></div>
   </div>
 </div>
 
@@ -10623,16 +10614,6 @@ document.addEventListener('DOMContentLoaded', function() {
     input.value = '';
   };
 
-  // Legacy preview/sheet functions — redirected to unified _generateSheet system
-  window._posGenCharPreview = function() {
-    var editId = ($('posCharEditId') || {}).value;
-    if (editId) window._generateSheet('character', editId, 'full', null);
-  };
-  window._posGenCharSheet = function() {
-    var editId = ($('posCharEditId') || {}).value;
-    if (editId) window._generateSheet('character', editId, 'full', null);
-  };
-
   // Auto-describe character from photo — fills ALL form fields
   window._posAutoDescribeChar = async function() {
     const editId = $('posCharEditId').value;
@@ -10907,11 +10888,6 @@ document.addEventListener('DOMContentLoaded', function() {
     input.value = '';
   };
 
-  window._posGenCostumePreview = function() {
-    var editId = ($('posCostumeEditId') || {}).value;
-    if (editId) window._generateSheet('costume', editId, 'full', null);
-  };
-
   // ---- ENVIRONMENTS ----
   window._posLoadEnvs = async function() {
     var data = await apiGet('/api/pos/environments');
@@ -11071,11 +11047,6 @@ document.addEventListener('DOMContentLoaded', function() {
       } else { window._toast('Upload error: '+(data.error||'unknown'), 'error'); }
     } catch(e) { window._toast('Upload failed: '+e.message, 'error'); }
     input.value = '';
-  };
-
-  window._posGenEnvPreview = function() {
-    var editId = ($('posEnvEditId') || {}).value;
-    if (editId) window._generateSheet('environment', editId, 'full', null);
   };
 
   // ---- PROPS ----
@@ -15057,10 +15028,6 @@ document.addEventListener('DOMContentLoaded', function() {
   }, 1500);
 
   // ===================== GLOBAL MODE SWITCH (FINAL INIT) =====================
-  // _switchAppMode is already defined in the inline script above.
-  // Re-initialize here now that all JS is loaded, to ensure proper pipeline nav.
-  /* diagnostics removed for production */
-
   // Initialize in Auto Director mode with full JS context
   window._switchAppMode('auto');
 
@@ -20923,11 +20890,10 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   };
 
-  // ===================== WIRE INTO _switchAppMode =====================
-  // Patch _switchAppMode to show/hide the action bar
-  var _origSwitchAppMode = window._switchAppMode;
+  // ===================== _switchAppMode (single definition) =====================
   window._switchAppMode = function(mode) {
-    _origSwitchAppMode(mode);
+    window._appMode = mode;
+    window._switchTab('project');
     var bar = document.getElementById('autoActionBar');
     if (bar) {
       bar.style.display = (mode === 'auto') ? 'block' : 'none';
