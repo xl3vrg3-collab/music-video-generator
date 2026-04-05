@@ -2844,55 +2844,82 @@
     from { opacity: 0; transform: translateY(16px); }
     to { opacity: 1; transform: translateY(0); }
   }
+  @keyframes welcomeTaglineIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes welcomePulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(0,0,0,0.12); }
+    50% { box-shadow: 0 0 0 12px rgba(0,0,0,0); }
+  }
+  @keyframes welcomePulseDark {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.15); }
+    50% { box-shadow: 0 0 0 12px rgba(255,255,255,0); }
+  }
+  @media (max-width: 768px) {
+    #welcomeTagline { font-size: 22px !important; }
+    #welcomePillsTop { gap: 8px !important; }
+    #welcomePillsTop .welcome-pill { font-size: 9px !important; padding: 5px 12px !important; }
+    #welcomeCta { padding: 12px 36px !important; font-size: 12px !important; }
+    #welcomeSubheading { font-size: 11px !important; }
+  }
+  @media (max-width: 480px) {
+    #welcomeTagline { font-size: 18px !important; letter-spacing: 4px !important; }
+    #welcomePillsTop .welcome-pill { font-size: 8px !important; padding: 4px 10px !important; }
+    #welcomeCta { padding: 10px 28px !important; font-size: 11px !important; letter-spacing: 3px !important; }
+    #welcomeTopContent { padding: 28px 16px 0 !important; }
+    #welcomeContent { padding: 0 16px 28px !important; }
+  }
 </style>
 <div id="welcomeScreen" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:100000;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;cursor:default;transition:filter 0.9s ease, opacity 0.9s ease;">
 
   <!-- Light bear background (visible on load) -->
-  <div id="welcomeBgLight" style="position:absolute;top:0;left:0;right:0;bottom:0;background-image:url('/public/lumn_bg_light.png');background-size:contain;background-position:center center;background-repeat:no-repeat;background-color:#f5f3f0;opacity:1;transition:opacity 1.2s ease;"></div>
+  <div id="welcomeBgLight" style="position:absolute;top:0;left:0;right:0;bottom:0;background-image:url('/public/lumn_bg_light.png');background-size:cover;background-position:center 35%;background-repeat:no-repeat;background-color:#f5f3f0;opacity:1;"></div>
 
   <!-- Dark bear background (hidden on load) -->
-  <div id="welcomeBgDark" style="position:absolute;top:0;left:0;right:0;bottom:0;background-image:url('/public/lumn_bg_dark.png');background-size:contain;background-position:center center;background-repeat:no-repeat;background-color:#060606;opacity:0;transition:opacity 1.2s ease;"></div>
+  <div id="welcomeBgDark" style="position:absolute;top:0;left:0;right:0;bottom:0;background-image:url('/public/lumn_bg_dark.png');background-size:cover;background-position:center 35%;background-repeat:no-repeat;background-color:#060606;opacity:0;"></div>
 
   <!-- Top gradient for text readability -->
-  <div id="welcomeGradientTop" style="position:absolute;top:0;left:0;right:0;height:25%;background:linear-gradient(180deg,rgba(245,243,240,0.9) 0%,rgba(245,243,240,0.5) 60%,transparent 100%);pointer-events:none;transition:background 1.2s ease;"></div>
+  <div id="welcomeGradientTop" style="position:absolute;top:0;left:0;right:0;height:30%;background:linear-gradient(180deg,rgba(245,243,240,0.95) 0%,rgba(245,243,240,0.7) 50%,transparent 100%);pointer-events:none;"></div>
 
   <!-- Bottom gradient for button readability -->
-  <div id="welcomeGradient" style="position:absolute;bottom:0;left:0;right:0;height:20%;background:linear-gradient(180deg,transparent 0%,rgba(245,243,240,0.7) 40%,rgba(245,243,240,0.95) 100%);pointer-events:none;transition:background 1.2s ease;"></div>
+  <div id="welcomeGradient" style="position:absolute;bottom:0;left:0;right:0;height:28%;background:linear-gradient(180deg,transparent 0%,rgba(245,243,240,0.8) 40%,rgba(245,243,240,0.98) 100%);pointer-events:none;"></div>
 
-  <!-- TOP CONTENT: AI Film Studio + pills (above the bear) -->
+  <!-- TOP CONTENT: Tagline + pills (above the bear) -->
   <div id="welcomeTopContent" style="position:relative;z-index:2;text-align:center;padding:40px 24px 0;width:100%;transition:opacity 0.3s ease;">
     <div style="margin-bottom:16px;">
-      <div id="welcomeTagline" style="font-family:'Inter Tight',sans-serif;font-weight:300;font-size:14px;color:rgba(0,0,0,0.45);letter-spacing:8px;text-transform:uppercase;transition:color 1.2s ease;">AI Film Studio</div>
+      <div id="welcomeTagline" style="font-family:'Inter Tight',sans-serif;font-weight:700;font-size:28px;color:rgba(0,0,0,0.55);letter-spacing:8px;text-transform:uppercase;opacity:0;animation:welcomeTaglineIn 0.6s ease 0.1s forwards;">AI Film Studio</div>
     </div>
 
-    <!-- Feature pills -->
+    <!-- Feature pills (3 only) -->
     <div id="welcomePillsTop" style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
-      <div class="welcome-pill" style="opacity:0;animation:welcomePillIn 0.5s ease forwards;animation-delay:0.2s;background:rgba(0,0,0,0.04);backdrop-filter:blur(16px);border:1px solid rgba(0,0,0,0.06);border-radius:20px;padding:6px 16px;font-family:'Inter Tight',sans-serif;font-size:10px;font-weight:500;color:rgba(0,0,0,0.45);letter-spacing:1px;transition:background 1.2s ease, border-color 1.2s ease, color 1.2s ease;">Generate</div>
-      <div class="welcome-pill" style="opacity:0;animation:welcomePillIn 0.5s ease forwards;animation-delay:0.3s;background:rgba(0,0,0,0.04);backdrop-filter:blur(16px);border:1px solid rgba(0,0,0,0.06);border-radius:20px;padding:6px 16px;font-family:'Inter Tight',sans-serif;font-size:10px;font-weight:500;color:rgba(0,0,0,0.45);letter-spacing:1px;transition:background 1.2s ease, border-color 1.2s ease, color 1.2s ease;">Characters</div>
-      <div class="welcome-pill" style="opacity:0;animation:welcomePillIn 0.5s ease forwards;animation-delay:0.4s;background:rgba(0,0,0,0.04);backdrop-filter:blur(16px);border:1px solid rgba(0,0,0,0.06);border-radius:20px;padding:6px 16px;font-family:'Inter Tight',sans-serif;font-size:10px;font-weight:500;color:rgba(0,0,0,0.45);letter-spacing:1px;transition:background 1.2s ease, border-color 1.2s ease, color 1.2s ease;">Edit</div>
-      <div class="welcome-pill" style="opacity:0;animation:welcomePillIn 0.5s ease forwards;animation-delay:0.5s;background:rgba(0,0,0,0.04);backdrop-filter:blur(16px);border:1px solid rgba(0,0,0,0.06);border-radius:20px;padding:6px 16px;font-family:'Inter Tight',sans-serif;font-size:10px;font-weight:500;color:rgba(0,0,0,0.45);letter-spacing:1px;transition:background 1.2s ease, border-color 1.2s ease, color 1.2s ease;">Music</div>
-      <div class="welcome-pill" style="opacity:0;animation:welcomePillIn 0.5s ease forwards;animation-delay:0.6s;background:rgba(0,0,0,0.04);backdrop-filter:blur(16px);border:1px solid rgba(0,0,0,0.06);border-radius:20px;padding:6px 16px;font-family:'Inter Tight',sans-serif;font-size:10px;font-weight:500;color:rgba(0,0,0,0.45);letter-spacing:1px;transition:background 1.2s ease, border-color 1.2s ease, color 1.2s ease;">Export</div>
+      <div class="welcome-pill" style="opacity:0;animation:welcomePillIn 0.5s ease forwards;animation-delay:0.3s;background:rgba(0,0,0,0.04);backdrop-filter:blur(16px);border:1px solid rgba(0,0,0,0.06);border-radius:20px;padding:6px 16px;font-family:'Inter Tight',sans-serif;font-size:10px;font-weight:500;color:rgba(0,0,0,0.45);letter-spacing:1px;">Generate</div>
+      <div class="welcome-pill" style="opacity:0;animation:welcomePillIn 0.5s ease forwards;animation-delay:0.45s;background:rgba(0,0,0,0.04);backdrop-filter:blur(16px);border:1px solid rgba(0,0,0,0.06);border-radius:20px;padding:6px 16px;font-family:'Inter Tight',sans-serif;font-size:10px;font-weight:500;color:rgba(0,0,0,0.45);letter-spacing:1px;">Edit</div>
+      <div class="welcome-pill" style="opacity:0;animation:welcomePillIn 0.5s ease forwards;animation-delay:0.6s;background:rgba(0,0,0,0.04);backdrop-filter:blur(16px);border:1px solid rgba(0,0,0,0.06);border-radius:20px;padding:6px 16px;font-family:'Inter Tight',sans-serif;font-size:10px;font-weight:500;color:rgba(0,0,0,0.45);letter-spacing:1px;">Export</div>
     </div>
   </div>
 
   <!-- MIDDLE: Bear + LUMN text from the image itself (no overlay needed) -->
   <div style="flex:1;"></div>
 
-  <!-- BOTTOM CONTENT: Enter Studio button + footer (below the bear) -->
+  <!-- BOTTOM CONTENT: Subheading + Enter button + footer (below the bear) -->
   <div id="welcomeContent" style="position:relative;z-index:2;text-align:center;max-width:900px;padding:0 24px 40px;width:100%;transition:opacity 0.3s ease;">
 
-    <!-- CTA button — dark-on-light initial styling -->
+    <!-- Subheading above CTA -->
+    <div id="welcomeSubheading" style="font-family:'Inter Tight',sans-serif;font-size:13px;font-weight:400;color:rgba(0,0,0,0.35);letter-spacing:3px;text-transform:uppercase;margin-bottom:16px;">Create Magic in Minutes</div>
+
+    <!-- CTA button with pulse -->
     <div>
-      <button id="welcomeCta" onclick="window._enterStudio()" style="background:rgba(0,0,0,0.08);backdrop-filter:blur(16px);color:rgba(0,0,0,0.7);border:1px solid rgba(0,0,0,0.12);padding:14px 48px;border-radius:30px;font-family:'Inter Tight',sans-serif;font-size:13px;font-weight:600;letter-spacing:4px;cursor:pointer;transition:all 0.3s ease, background 1.2s ease, color 1.2s ease, border-color 1.2s ease;text-transform:uppercase;" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 32px rgba(0,0,0,0.15)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
-        Enter Studio
+      <button id="welcomeCta" onclick="window._enterStudio()" style="background:rgba(0,0,0,0.08);backdrop-filter:blur(16px);color:rgba(0,0,0,0.7);border:1px solid rgba(0,0,0,0.12);padding:14px 48px;border-radius:30px;font-family:'Inter Tight',sans-serif;font-size:13px;font-weight:600;letter-spacing:4px;cursor:pointer;text-transform:uppercase;animation:welcomePulse 2.5s ease infinite;" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 32px rgba(0,0,0,0.15)';this.style.animationPlayState='paused'" onmouseout="this.style.transform='';this.style.boxShadow='';this.style.animationPlayState='running'">
+        Enter
       </button>
     </div>
 
-    <!-- Cyan accent line -->
-    <div style="width:40px;height:1px;background:rgba(0,210,211,0.4);margin:20px auto 16px;"></div>
+    <!-- Gradient divider -->
+    <div style="width:60px;height:2px;background:linear-gradient(90deg,transparent,rgba(0,210,211,0.5),transparent);margin:20px auto 16px;border-radius:1px;"></div>
 
     <!-- Footer text -->
-    <div id="welcomeFooter" style="font-family:'JetBrains Mono',monospace;font-size:8px;color:rgba(0,0,0,0.15);letter-spacing:3px;text-transform:uppercase;transition:color 1.2s ease;">Script to Screen</div>
+    <div id="welcomeFooter" style="font-family:'Inter Tight',sans-serif;font-size:10px;color:rgba(0,0,0,0.18);letter-spacing:3px;text-transform:uppercase;">Script to Screen</div>
   </div>
 </div>
 
@@ -2905,29 +2932,38 @@ window._enterStudio = function() {
   var gradientTop = document.getElementById('welcomeGradientTop');
   var gradient = document.getElementById('welcomeGradient');
   var tagline = document.getElementById('welcomeTagline');
+  var subheading = document.getElementById('welcomeSubheading');
   var cta = document.getElementById('welcomeCta');
   var footer = document.getElementById('welcomeFooter');
   var pills = document.querySelectorAll('.welcome-pill');
   if (!screen) return;
 
-  // INSTANT switch to black — no slow fade
+  // INSTANT switch to dark — no transition
   bgLight.style.transition = 'none';
   bgDark.style.transition = 'none';
   bgLight.style.opacity = '0';
   bgDark.style.opacity = '1';
 
-  // Instant gradient switch (both top and bottom)
-  if (gradientTop) { gradientTop.style.transition = 'none'; gradientTop.style.background = 'linear-gradient(180deg,rgba(6,6,6,0.9) 0%,rgba(6,6,6,0.5) 60%,transparent 100%)'; }
-  if (gradient) { gradient.style.transition = 'none'; gradient.style.background = 'linear-gradient(180deg,transparent 0%,rgba(6,6,6,0.7) 40%,rgba(6,6,6,0.95) 100%)'; }
+  // Ensure both backgrounds use cover + center 35%
+  bgLight.style.backgroundSize = 'cover';
+  bgDark.style.backgroundSize = 'cover';
+  bgLight.style.backgroundPosition = 'center 35%';
+  bgDark.style.backgroundPosition = 'center 35%';
 
-  // Instant text color switch to white
-  if (tagline) { tagline.style.transition = 'none'; tagline.style.color = 'rgba(255,255,255,0.5)'; }
+  // Instant stronger dark gradients
+  if (gradientTop) { gradientTop.style.transition = 'none'; gradientTop.style.background = 'linear-gradient(180deg,rgba(6,6,6,0.95) 0%,rgba(6,6,6,0.7) 50%,transparent 100%)'; }
+  if (gradient) { gradient.style.transition = 'none'; gradient.style.background = 'linear-gradient(180deg,transparent 0%,rgba(6,6,6,0.8) 40%,rgba(6,6,6,0.98) 100%)'; }
+
+  // Instant text color switch to light
+  if (tagline) { tagline.style.transition = 'none'; tagline.style.color = 'rgba(255,255,255,0.6)'; }
+  if (subheading) { subheading.style.transition = 'none'; subheading.style.color = 'rgba(255,255,255,0.3)'; }
   if (footer) { footer.style.transition = 'none'; footer.style.color = 'rgba(255,255,255,0.15)'; }
   if (cta) {
     cta.style.transition = 'none';
     cta.style.background = 'rgba(255,255,255,0.12)';
     cta.style.color = '#fff';
     cta.style.borderColor = 'rgba(255,255,255,0.15)';
+    cta.style.animation = 'welcomePulseDark 2.5s ease infinite';
   }
   pills.forEach(function(pill) {
     pill.style.transition = 'none';
@@ -2936,7 +2972,7 @@ window._enterStudio = function() {
     pill.style.color = 'rgba(255,255,255,0.7)';
   });
 
-  // Hold on dark for 3 seconds, then fade into the app
+  // Hold on dark for 3 seconds, then blur + fade into the app
   setTimeout(function() {
     screen.style.transition = 'opacity 1s ease, filter 1s ease';
     screen.style.opacity = '0';
