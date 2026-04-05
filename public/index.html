@@ -2838,93 +2838,120 @@
 </head>
 <body>
 
-<!-- Welcome Screen (first visit only) -->
-<div id="welcomeScreen" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:100000;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;transition:opacity 0.8s ease;overflow:hidden;cursor:default;">
+<!-- Welcome Screen (first visit only) — starts light, transitions to dark on enter -->
+<style>
+  @keyframes welcomePillIn {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+</style>
+<div id="welcomeScreen" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:100000;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;overflow:hidden;cursor:default;transition:filter 0.9s ease, opacity 0.9s ease;">
 
-  <!-- 8K Background — dark bear (default) / white bear (light mode) -->
-  <div id="welcomeBg" style="position:absolute;top:0;left:0;right:0;bottom:0;background-image:url('/public/lumn_bg_dark.png');background-size:cover;background-position:center top;transition:opacity 1s ease;"></div>
+  <!-- Light bear background (visible on load) -->
+  <div id="welcomeBgLight" style="position:absolute;top:0;left:0;right:0;bottom:0;background-image:url('/public/lumn_bg_light.png');background-size:cover;background-position:center center;opacity:1;transition:opacity 1.2s ease;"></div>
 
-  <!-- Bottom gradient fade for content area -->
-  <div style="position:absolute;bottom:0;left:0;right:0;height:45%;background:linear-gradient(180deg,transparent 0%,rgba(0,0,0,0.8) 60%,rgba(0,0,0,0.95) 100%);pointer-events:none;"></div>
+  <!-- Dark bear background (hidden on load, fades in on enter) -->
+  <div id="welcomeBgDark" style="position:absolute;top:0;left:0;right:0;bottom:0;background-image:url('/public/lumn_bg_dark.png');background-size:cover;background-position:center top;opacity:0;transition:opacity 1.2s ease;"></div>
+
+  <!-- Bottom gradient — starts light, transitions to dark -->
+  <div id="welcomeGradient" style="position:absolute;bottom:0;left:0;right:0;height:45%;background:linear-gradient(180deg,transparent 0%,rgba(255,255,255,0.6) 60%,rgba(255,255,255,0.9) 100%);pointer-events:none;transition:background 1.2s ease;"></div>
 
   <!-- Content pinned to bottom -->
-  <div style="position:relative;z-index:2;text-align:center;max-width:900px;padding:0 24px 48px;width:100%;">
+  <div id="welcomeContent" style="position:relative;z-index:2;text-align:center;max-width:900px;padding:0 24px 48px;width:100%;transition:opacity 0.3s ease;">
 
-    <!-- Tagline — matches the LUMN font from the bear images -->
-    <div style="margin-bottom:24px;">
-      <div style="font-family:'Inter Tight',sans-serif;font-weight:300;font-size:15px;color:rgba(255,255,255,0.5);letter-spacing:8px;text-transform:uppercase;">AI Film Studio</div>
+    <!-- Tagline -->
+    <div style="margin-bottom:8px;">
+      <div id="welcomeTagline" style="font-family:'Inter Tight',sans-serif;font-weight:300;font-size:15px;color:rgba(0,0,0,0.45);letter-spacing:8px;text-transform:uppercase;transition:color 1.2s ease;">AI Film Studio</div>
     </div>
 
-    <!-- Feature pills — minimal, clean -->
-    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:36px;">
-      <div style="background:rgba(255,255,255,0.08);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06);border-radius:24px;padding:8px 20px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:500;color:rgba(255,255,255,0.7);letter-spacing:1px;">Generate</div>
-      <div style="background:rgba(255,255,255,0.08);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06);border-radius:24px;padding:8px 20px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:500;color:rgba(255,255,255,0.7);letter-spacing:1px;">Characters</div>
-      <div style="background:rgba(255,255,255,0.08);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06);border-radius:24px;padding:8px 20px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:500;color:rgba(255,255,255,0.7);letter-spacing:1px;">Edit</div>
-      <div style="background:rgba(255,255,255,0.08);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06);border-radius:24px;padding:8px 20px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:500;color:rgba(255,255,255,0.7);letter-spacing:1px;">Music</div>
-      <div style="background:rgba(255,255,255,0.08);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06);border-radius:24px;padding:8px 20px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:500;color:rgba(255,255,255,0.7);letter-spacing:1px;">Export</div>
+    <!-- Sub-tagline -->
+    <div style="margin-bottom:28px;">
+      <div id="welcomeSubTagline" style="font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(0,0,0,0.3);letter-spacing:3px;text-transform:uppercase;transition:color 1.2s ease;">From script to cinematic video in minutes</div>
     </div>
 
-    <!-- CTA + Theme toggle -->
-    <div style="display:flex;align-items:center;justify-content:center;gap:16px;">
-      <button onclick="window._dismissWelcome()" style="background:rgba(255,255,255,0.12);backdrop-filter:blur(16px);color:#fff;border:1px solid rgba(255,255,255,0.15);padding:14px 48px;border-radius:30px;font-family:'Inter Tight',sans-serif;font-size:13px;font-weight:600;letter-spacing:4px;cursor:pointer;transition:all 0.3s ease;text-transform:uppercase;" onmouseover="this.style.background='rgba(255,255,255,0.2)';this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 32px rgba(0,0,0,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.12)';this.style.transform='';this.style.boxShadow=''">
+    <!-- Feature pills with stagger animation -->
+    <div id="welcomePills" style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:36px;">
+      <div class="welcome-pill" style="opacity:0;animation:welcomePillIn 0.5s ease forwards;animation-delay:0.1s;background:rgba(0,0,0,0.05);backdrop-filter:blur(16px);border:1px solid rgba(0,0,0,0.08);border-radius:24px;padding:8px 20px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:500;color:rgba(0,0,0,0.55);letter-spacing:1px;transition:background 1.2s ease, border-color 1.2s ease, color 1.2s ease;">Generate</div>
+      <div class="welcome-pill" style="opacity:0;animation:welcomePillIn 0.5s ease forwards;animation-delay:0.2s;background:rgba(0,0,0,0.05);backdrop-filter:blur(16px);border:1px solid rgba(0,0,0,0.08);border-radius:24px;padding:8px 20px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:500;color:rgba(0,0,0,0.55);letter-spacing:1px;transition:background 1.2s ease, border-color 1.2s ease, color 1.2s ease;">Characters</div>
+      <div class="welcome-pill" style="opacity:0;animation:welcomePillIn 0.5s ease forwards;animation-delay:0.3s;background:rgba(0,0,0,0.05);backdrop-filter:blur(16px);border:1px solid rgba(0,0,0,0.08);border-radius:24px;padding:8px 20px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:500;color:rgba(0,0,0,0.55);letter-spacing:1px;transition:background 1.2s ease, border-color 1.2s ease, color 1.2s ease;">Edit</div>
+      <div class="welcome-pill" style="opacity:0;animation:welcomePillIn 0.5s ease forwards;animation-delay:0.4s;background:rgba(0,0,0,0.05);backdrop-filter:blur(16px);border:1px solid rgba(0,0,0,0.08);border-radius:24px;padding:8px 20px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:500;color:rgba(0,0,0,0.55);letter-spacing:1px;transition:background 1.2s ease, border-color 1.2s ease, color 1.2s ease;">Music</div>
+      <div class="welcome-pill" style="opacity:0;animation:welcomePillIn 0.5s ease forwards;animation-delay:0.5s;background:rgba(0,0,0,0.05);backdrop-filter:blur(16px);border:1px solid rgba(0,0,0,0.08);border-radius:24px;padding:8px 20px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:500;color:rgba(0,0,0,0.55);letter-spacing:1px;transition:background 1.2s ease, border-color 1.2s ease, color 1.2s ease;">Export</div>
+    </div>
+
+    <!-- CTA button — dark-on-light initial styling -->
+    <div>
+      <button id="welcomeCta" onclick="window._enterStudio()" style="background:rgba(0,0,0,0.08);backdrop-filter:blur(16px);color:rgba(0,0,0,0.7);border:1px solid rgba(0,0,0,0.12);padding:14px 48px;border-radius:30px;font-family:'Inter Tight',sans-serif;font-size:13px;font-weight:600;letter-spacing:4px;cursor:pointer;transition:all 0.3s ease, background 1.2s ease, color 1.2s ease, border-color 1.2s ease;text-transform:uppercase;" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 32px rgba(0,0,0,0.15)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
         Enter Studio
       </button>
-      <button onclick="window._toggleWelcomeTheme()" id="welcomeThemeBtn" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);width:40px;height:40px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:all 0.3s;" title="Switch light/dark">
-        ☀️
-      </button>
     </div>
 
-    <div style="font-family:'JetBrains Mono',monospace;font-size:8px;color:rgba(255,255,255,0.15);margin-top:20px;letter-spacing:3px;text-transform:uppercase;">Script to Screen</div>
+    <!-- Cyan accent line -->
+    <div style="width:40px;height:1px;background:rgba(0,210,211,0.4);margin:20px auto 16px;"></div>
+
+    <!-- Footer text -->
+    <div id="welcomeFooter" style="font-family:'JetBrains Mono',monospace;font-size:8px;color:rgba(0,0,0,0.15);letter-spacing:3px;text-transform:uppercase;transition:color 1.2s ease;">Script to Screen</div>
   </div>
 </div>
 
 <script>
-window._dismissWelcome = function() {
+/* --- Welcome Screen: light-to-dark enter transition --- */
+window._enterStudio = function() {
   var screen = document.getElementById('welcomeScreen');
-  if (screen) {
-    screen.style.opacity = '0';
-    setTimeout(function() { screen.remove(); }, 800);
+  var bgLight = document.getElementById('welcomeBgLight');
+  var bgDark = document.getElementById('welcomeBgDark');
+  var gradient = document.getElementById('welcomeGradient');
+  var tagline = document.getElementById('welcomeTagline');
+  var subTagline = document.getElementById('welcomeSubTagline');
+  var cta = document.getElementById('welcomeCta');
+  var footer = document.getElementById('welcomeFooter');
+  var pills = document.querySelectorAll('.welcome-pill');
+  if (!screen) return;
+
+  // INSTANT switch to black — no slow fade
+  bgLight.style.transition = 'none';
+  bgDark.style.transition = 'none';
+  bgLight.style.opacity = '0';
+  bgDark.style.opacity = '1';
+
+  // Instant gradient switch
+  gradient.style.transition = 'none';
+  gradient.style.background = 'linear-gradient(180deg,transparent 0%,rgba(0,0,0,0.7) 50%,rgba(0,0,0,0.92) 100%)';
+
+  // Instant text color switch to white
+  if (tagline) { tagline.style.transition = 'none'; tagline.style.color = 'rgba(255,255,255,0.5)'; }
+  if (subTagline) { subTagline.style.transition = 'none'; subTagline.style.color = 'rgba(255,255,255,0.3)'; }
+  if (footer) { footer.style.transition = 'none'; footer.style.color = 'rgba(255,255,255,0.15)'; }
+  if (cta) {
+    cta.style.transition = 'none';
+    cta.style.background = 'rgba(255,255,255,0.12)';
+    cta.style.color = '#fff';
+    cta.style.borderColor = 'rgba(255,255,255,0.15)';
   }
+  pills.forEach(function(pill) {
+    pill.style.transition = 'none';
+    pill.style.background = 'rgba(255,255,255,0.08)';
+    pill.style.borderColor = 'rgba(255,255,255,0.06)';
+    pill.style.color = 'rgba(255,255,255,0.7)';
+  });
+
+  // Hold on dark for 3 seconds, then fade into the app
+  setTimeout(function() {
+    screen.style.transition = 'opacity 1s ease, filter 1s ease';
+    screen.style.opacity = '0';
+    screen.style.filter = 'blur(6px)';
+
+    setTimeout(function() {
+      screen.remove();
+    }, 1100);
+  }, 3000);
+
   localStorage.setItem('lumn_welcomed', '1');
 };
 
-// Welcome screen light/dark toggle — switches between bear images
-window._welcomeIsDark = true;
-window._toggleWelcomeTheme = function() {
-  var bg = document.getElementById('welcomeBg');
-  var btn = document.getElementById('welcomeThemeBtn');
-  var screen = document.getElementById('welcomeScreen');
-  if (!bg) return;
-
-  window._welcomeIsDark = !window._welcomeIsDark;
-
-  if (window._welcomeIsDark) {
-    // Dark mode — black bear
-    bg.style.opacity = '0';
-    setTimeout(function() {
-      bg.style.backgroundImage = "url('/public/lumn_bg_dark.png')";
-      bg.style.opacity = '1';
-    }, 500);
-    if (btn) btn.textContent = '☀️';
-    // Update gradient for dark
-    if (screen) {
-      screen.querySelectorAll('div')[2].style.background = 'linear-gradient(180deg,transparent 0%,rgba(0,0,0,0.8) 60%,rgba(0,0,0,0.95) 100%)';
-    }
-  } else {
-    // Light mode — white bear
-    bg.style.opacity = '0';
-    setTimeout(function() {
-      bg.style.backgroundImage = "url('/public/lumn_bg_light.png')";
-      bg.style.opacity = '1';
-    }, 500);
-    if (btn) btn.textContent = '🌙';
-    // Update gradient for light
-    if (screen) {
-      screen.querySelectorAll('div')[2].style.background = 'linear-gradient(180deg,transparent 0%,rgba(255,255,255,0.6) 60%,rgba(255,255,255,0.9) 100%)';
-    }
-    // Also toggle app theme
-    document.documentElement.setAttribute('data-theme', 'light');
-  }
+// Re-show welcome from toolbar
+window._showWelcome = function() {
+  localStorage.removeItem('lumn_welcomed');
+  location.reload();
 };
 
 // Preload both images
@@ -2932,12 +2959,6 @@ window._toggleWelcomeTheme = function() {
   new Image().src = '/public/lumn_bg_dark.png';
   new Image().src = '/public/lumn_bg_light.png';
 })();
-
-// Also allow re-showing welcome from help menu
-window._showWelcome = function() {
-  localStorage.removeItem('lumn_welcomed');
-  location.reload();
-};
 
 // Auto-dismiss if returning user
 (function() {
