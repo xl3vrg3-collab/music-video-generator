@@ -415,7 +415,7 @@
     transform: translateX(-50%);
     background: var(--surface2); border: 1px solid var(--border);
     color: var(--text); font-size: 10px; padding: 4px 8px;
-    border-radius: 3px; white-space: nowrap; z-index: 1000;
+    border-radius: 3px; white-space: nowrap; z-index: 200;
     letter-spacing: 1px; pointer-events: none;
   }
 
@@ -1529,7 +1529,7 @@
   .more-menu-wrap { position: relative; display: inline-block; }
   .more-menu {
     position: absolute; right: 0; top: 100%; background: var(--surface);
-    border: 1px solid var(--border); border-radius: 4px; z-index: 100;
+    border: 1px solid var(--border); border-radius: 4px; z-index: 200;
     min-width: 160px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); display: none;
   }
   .more-menu.open { display: block; }
@@ -1761,7 +1761,7 @@
   /* ---- Feature 1: Project Browser ---- */
   .project-browser-overlay {
     display: none; position: fixed; inset: 0;
-    background: rgba(0,0,0,0.92); z-index: 10001;
+    background: rgba(0,0,0,0.92); z-index: 10000;
     align-items: center; justify-content: center;
   }
   .project-browser-overlay.open { display: flex; }
@@ -1795,7 +1795,7 @@
   /* ---- Feature 2+10: Batch Render Grid ---- */
   .render-grid-overlay {
     display: none; position: fixed; inset: 0;
-    background: rgba(0,0,0,0.9); z-index: 10002;
+    background: rgba(0,0,0,0.9); z-index: 10000;
     align-items: center; justify-content: center;
   }
   .render-grid-overlay.open { display: flex; }
@@ -1875,7 +1875,7 @@
   /* ---- Feature 7: Fullscreen Prompt Editor ---- */
   .prompt-editor-overlay {
     display: none; position: fixed; inset: 0;
-    background: rgba(0,0,0,0.92); z-index: 10003;
+    background: rgba(0,0,0,0.92); z-index: 10000;
     align-items: center; justify-content: center;
   }
   .prompt-editor-overlay.open { display: flex; }
@@ -2111,7 +2111,7 @@
 
   /* ===== TOAST NOTIFICATIONS ===== */
   .toast-container {
-    position: fixed; top: 20px; right: 20px; z-index: 99999;
+    position: fixed; top: 20px; right: 20px; z-index: 10100;
     display: flex; flex-direction: column; gap: 8px;
     pointer-events: none;
   }
@@ -2146,7 +2146,7 @@
 
   /* ===== FULLSCREEN PREVIEW MODAL ===== */
   .fs-preview-overlay {
-    position: fixed; inset: 0; z-index: 99998;
+    position: fixed; inset: 0; z-index: 10000;
     background: rgba(0,0,0,0.92); backdrop-filter: blur(8px);
     display: none; align-items: center; justify-content: center;
     cursor: pointer;
@@ -2821,7 +2821,8 @@ window._checkServerConnection = function() {
         banner.innerHTML = 'Server disconnected — reconnecting... <span id="reconnectDots">.</span>';
         document.body.prepend(banner);
         var dots = 0;
-        setInterval(function() {
+        if (window._reconnectDotsTimer) clearInterval(window._reconnectDotsTimer);
+        window._reconnectDotsTimer = setInterval(function() {
           dots = (dots + 1) % 4;
           var el = document.getElementById('reconnectDots');
           if (el) el.textContent = '.'.repeat(dots + 1);
@@ -2832,7 +2833,8 @@ window._checkServerConnection = function() {
     }
   });
 };
-setInterval(window._checkServerConnection, 5000);
+if (window._serverCheckTimer) clearInterval(window._serverCheckTimer);
+window._serverCheckTimer = setInterval(window._checkServerConnection, 5000);
 
 // ===== REQUEST QUEUE =====
 window._requestQueue = {
@@ -3103,7 +3105,8 @@ window._updateChecklist = function() {
   var hasClips = window._autoScenes && window._autoScenes.some(function(sc){return sc.clip_path || sc.has_clip;});
   e.textContent = hasClips ? '\u2705' : '\u2B1C';
 };
-setInterval(function(){ window._updateChecklist(); }, 1000);
+if (window._checklistTimer) clearInterval(window._checklistTimer);
+window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 1000);
 </script>
 <div class="glow-tl"></div>
 <div class="glow-br"></div>
@@ -9265,7 +9268,8 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   refreshCost();
-  setInterval(refreshCost, 10000);
+  if (window._refreshCostTimer) clearInterval(window._refreshCostTimer);
+  window._refreshCostTimer = setInterval(refreshCost, 10000);
 
   // ===================== LYRICS SYNC =====================
 
@@ -9924,7 +9928,8 @@ document.addEventListener('DOMContentLoaded', function() {
   };
   // Auto-refresh credits on load and every 5 minutes
   window._refreshCredits();
-  setInterval(window._refreshCredits, 300000);
+  if (window._refreshCreditsTimer) clearInterval(window._refreshCreditsTimer);
+  window._refreshCreditsTimer = setInterval(window._refreshCredits, 300000);
 
   // ---- Analytics ----
   window._showAnalytics = function() {
@@ -11710,6 +11715,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!data.ok) { window._toast('Error: ' + (data.error || 'failed'), 'error'); return; }
     // Show render grid overlay
     $('renderGridOverlay').classList.add('open');
+    if (batchQueuePollTimer) clearInterval(batchQueuePollTimer);
     batchQueuePollTimer = setInterval(window._pollBatchQueue, 1500);
     window._pollBatchQueue();
   };
@@ -12530,7 +12536,7 @@ document.addEventListener('DOMContentLoaded', function() {
     fetch('/api/pos/' + entityType + '/' + entityId + '/photo', {
       method: 'POST', body: fd
     }).then(function(r){return r.json()}).then(function(data) {
-      if (data.ok) console.log('[Photo] Uploaded for', entityType, entityId);
+      if (data.ok) { /* uploaded */ }
     }).catch(function(e) { console.warn('[Photo] Upload failed:', e); });
   }
 
@@ -12574,7 +12580,7 @@ document.addEventListener('DOMContentLoaded', function() {
               if (resp.ok) {
                 entry.photoUrl = '/api/pos/characters/' + id + '/photo';
                 _dirRenderCards('char', window._dirQuickChars, 'directorCharsInline');
-                console.log('[Photo] Uploaded character photo for', id);
+                /* photo uploaded */
               }
             }).catch(function(e){ console.warn('[Photo] Upload failed:', e); });
         }
@@ -13112,7 +13118,7 @@ document.addEventListener('DOMContentLoaded', function() {
     el.innerHTML = parts.length ? parts.join(' ') : '<span style="color:var(--text-dim);">Not set</span>';
   }
 
-  window._toggleStyleLock = async function(locked) {
+  window._toggleCinematicStyleLock = async function(locked) {
     try {
       await apiPost('/api/cinematic/style-memory', {locked: locked});
       window._loadStyleMemory();
@@ -13768,11 +13774,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // Default to Director mode on page load
   setTimeout(function() {
     try {
-      console.log('[INIT] Setting mode to director...');
-      console.log('[INIT] _allTabContainers keys:', Object.keys(_allTabContainers));
-      console.log('[INIT] director container:', _allTabContainers['director']);
       window._setMode('director');
-      console.log('[INIT] Director mode set successfully');
     } catch(e) {
       console.error('[INIT] Failed to set director mode:', e);
       // Fallback: just show director directly
@@ -15035,9 +15037,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // ===================== GLOBAL MODE SWITCH (FINAL INIT) =====================
   // _switchAppMode is already defined in the inline script above.
   // Re-initialize here now that all JS is loaded, to ensure proper pipeline nav.
-  console.log('[DIAGNOSTIC] All JS loaded. _setMode type:', typeof window._setMode);
-  console.log('[DIAGNOSTIC] _adInit type:', typeof window._adInit);
-  console.log('[DIAGNOSTIC] _allTabContainers:', Object.keys(_allTabContainers));
+  /* diagnostics removed for production */
 
   // Initialize in Auto Director mode with full JS context
   window._switchAppMode('auto');
@@ -15518,7 +15518,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!_atDropdown) {
       _atDropdown = document.createElement('div');
       _atDropdown.id = 'atMentionDropdown';
-      _atDropdown.style.cssText = 'position:fixed;z-index:10001;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 4px 16px rgba(0,0,0,0.5);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);max-height:240px;overflow-y:auto;min-width:200px;padding:4px 0;';
+      _atDropdown.style.cssText = 'position:fixed;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 4px 16px rgba(0,0,0,0.5);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);max-height:240px;overflow-y:auto;min-width:200px;padding:4px 0;';
       document.body.appendChild(_atDropdown);
     }
 
@@ -17943,6 +17943,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (playBtn) playBtn.innerHTML = '&#9208;';
 
       // Advance playhead
+      if (window._timelinePlayInterval) clearInterval(window._timelinePlayInterval);
       var startTime = Date.now();
       var startPlayhead = state.playheadTime;
       window._timelinePlayInterval = setInterval(function() {
@@ -19388,7 +19389,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
       var dropdown = document.createElement('div');
       dropdown.id = 'assetPickerDropdown';
-      dropdown.style.cssText = 'position:fixed;z-index:10000;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 4px 16px rgba(0,0,0,0.4);backdrop-filter:var(--surface-blur);max-height:200px;overflow-y:auto;min-width:180px;';
+      dropdown.style.cssText = 'position:fixed;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 4px 16px rgba(0,0,0,0.4);backdrop-filter:var(--surface-blur);max-height:200px;overflow-y:auto;min-width:180px;';
 
       available.forEach(function(asset) {
         var item = document.createElement('div');
@@ -20576,7 +20577,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
       var dropdown = document.createElement('div');
       dropdown.id = 'draftMatchDropdown';
-      dropdown.style.cssText = 'position:fixed;z-index:10002;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 4px 16px rgba(0,0,0,0.5);backdrop-filter:blur(16px);max-height:200px;overflow-y:auto;min-width:180px;padding:4px 0;';
+      dropdown.style.cssText = 'position:fixed;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 4px 16px rgba(0,0,0,0.5);backdrop-filter:blur(16px);max-height:200px;overflow-y:auto;min-width:180px;padding:4px 0;';
 
       assets.forEach(function(asset) {
         var item = document.createElement('div');
