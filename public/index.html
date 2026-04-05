@@ -2230,6 +2230,85 @@
   @keyframes trans-cross-dissolve { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 0; } }
   .transition-preview-container { position: relative; overflow: hidden; border-radius: var(--radius); }
 
+  /* ===== TOOLTIP SYSTEM ===== */
+  [data-tooltip] {
+    position: relative;
+  }
+  [data-tooltip]:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.9);
+    color: #e2e2e8;
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+    max-width: 250px;
+    white-space: normal;
+    z-index: 200;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.06);
+    line-height: 1.4;
+    animation: tooltip-fade 0.15s ease;
+  }
+  [data-tooltip]:hover::before {
+    content: '';
+    position: absolute;
+    bottom: calc(100% + 2px);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 4px solid transparent;
+    border-top-color: rgba(0,0,0,0.9);
+    z-index: 200;
+    pointer-events: none;
+  }
+  @keyframes tooltip-fade {
+    from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+  /* Light theme tooltip */
+  [data-theme="light"] [data-tooltip]:hover::after {
+    background: rgba(255,255,255,0.95);
+    color: #1a1a1a;
+    border-color: rgba(0,0,0,0.1);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  }
+  [data-theme="light"] [data-tooltip]:hover::before {
+    border-top-color: rgba(255,255,255,0.95);
+  }
+
+  /* ===== SKELETON LOADING ===== */
+  .skeleton {
+    background: linear-gradient(90deg, var(--surface) 25%, var(--surface2) 50%, var(--surface) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.5s ease-in-out infinite;
+    border-radius: var(--radius);
+  }
+  @keyframes skeleton-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  .skeleton-card {
+    height: 80px;
+    margin-bottom: 8px;
+  }
+  .skeleton-line {
+    height: 12px;
+    margin-bottom: 6px;
+    width: 60%;
+  }
+  .skeleton-line-short {
+    height: 10px;
+    margin-bottom: 6px;
+    width: 40%;
+  }
+
   /* ===== PREMIUM POLISH ===== */
 
   /* 1. Glass Morphism Panels */
@@ -3405,7 +3484,18 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 1
 
       // Optimization 1: Lazy workspace initialization — only init on first visit
       if (!window._workspaceInitialized[mode]) {
-        window._workspaceInitialized[mode] = true;
+        // Show skeleton while loading
+        var container = document.getElementById(tabs[mode]);
+        if (container) {
+          var skeleton = container.querySelector('.skeleton-overlay');
+          if (!skeleton) {
+            skeleton = document.createElement('div');
+            skeleton.className = 'skeleton-overlay';
+            skeleton.style.cssText = 'padding:16px;';
+            skeleton.innerHTML = '<div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line-short"></div>';
+            container.appendChild(skeleton);
+          }
+        }
         if (mode === 'assets') {
           window._posLoadChars && window._posLoadChars();
           window._posLoadCostumes && window._posLoadCostumes();
@@ -3420,6 +3510,11 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 1
           if (typeof window._setAudioTab === 'function') window._setAudioTab('music');
         } else if (mode === 'output') {
           window._initOutputWorkspace && window._initOutputWorkspace();
+        }
+        window._workspaceInitialized[mode] = true;
+        if (container) {
+          var skeletonEl = container.querySelector('.skeleton-overlay');
+          if (skeletonEl) skeletonEl.remove();
         }
       } else {
         // Already initialized — still refresh data for non-first visits
@@ -13864,13 +13959,18 @@ document.addEventListener('DOMContentLoaded', function() {
     title = (title || '').trim() || 'Untitled Project';
     var inp = $('projectTitleInput');
     if (inp && !inp.value.trim()) inp.value = title;
+    // Update browser tab title with project name
+    document.title = (title || 'Untitled') + ' \u2014 LUMN Studio';
     await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({project_title: title})});
   };
   // Load project title on init
   fetch('/api/settings').then(r=>r.json()).then(d => {
     const inp = $('projectTitleInput');
-    if (inp && d.project_title) inp.value = d.project_title;
+    if (inp && d.project_title) {
+      inp.value = d.project_title;
+      document.title = d.project_title + ' \u2014 LUMN Studio';
+    }
   }).catch(()=>{});
 
   // Default to Director mode on page load
