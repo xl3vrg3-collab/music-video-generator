@@ -80,6 +80,7 @@ from lib.prompt_assistant import (
 )
 from lib.storyboard_generator import generate_storyboard
 from lib.project_manager import ProjectManager
+from lib.upscaler import upscale_image, upscale_video, get_upscale_status
 def _scene_gen_hash(scene: dict) -> str:
     """Hash the generation-relevant fields of a scene.
     If the hash matches the stored gen_hash, the clip can be reused."""
@@ -4097,6 +4098,9 @@ class Handler(BaseHTTPRequestHandler):
                         })
             self._send_json(images)
 
+        elif path == "/api/upscale/status":
+            self._send_json(get_upscale_status())
+
         else:
             self.send_error(404)
 
@@ -5189,6 +5193,39 @@ class Handler(BaseHTTPRequestHandler):
         # ──── Reference Demo Image Generation (Lookbook) ────
         elif path == "/api/generate-reference-images":
             self._handle_generate_reference_images()
+
+        elif path == "/api/upscale/image":
+            body = json.loads(self._read_body())
+            image_path = body.get("imagePath", "")
+            scale = body.get("scale", 4)
+
+            if not image_path or not os.path.isfile(image_path):
+                self._send_json({"error": "Image not found"}, 400)
+                return
+
+            output_path = image_path.replace(".jpg", "_4k.jpg").replace(".png", "_4k.png")
+
+            def _do_upscale():
+                result = upscale_image(image_path, output_path, scale=scale)
+                return result
+
+            # Run in thread to not block
+            result_holder = [None]
+            def _run():
+                result_holder[0] = _do_upscale()
+
+            t = threading.Thread(target=_run)
+            t.start()
+            t.join(timeout=120)
+
+            if result_holder[0] and os.path.isfile(result_holder[0]):
+                self._send_json({
+                    "ok": True,
+                    "upscaledPath": result_holder[0],
+                    "upscaledUrl": f"/output/{os.path.relpath(result_holder[0], OUTPUT_DIR)}",
+                })
+            else:
+                self._send_json({"error": "Upscaling failed — install realesrgan-ncnn-vulkan for AI upscaling, or FFmpeg will be used as fallback"}, 500)
 
         else:
             self.send_error(404)
@@ -11842,7 +11879,19 @@ Do not include any explanation, just the JSON object."""
                        text_overlays=text_overlays,
                        output_resolution=output_resolution,
                        progress_cb=_stitch_progress)
-                _auto_director._update_progress(phase="done", output_file=output_path, progress_detail="")
+
+                # Optional AI upscale
+                final_output = output_path
+                if body.get("upscale"):
+                    try:
+                        _stitch_progress("Upscaling to 4K...")
+                        upscaled = upscale_video(output_path, output_path.replace(".mp4", "_4k.mp4"), scale=2)
+                        if upscaled != output_path:
+                            final_output = upscaled
+                    except Exception as e:
+                        print(f"[STITCH] Upscale skipped: {e}")
+
+                _auto_director._update_progress(phase="done", output_file=final_output, progress_detail="")
             except Exception as e:
                 _auto_director._update_progress(phase="error", error=f"Stitch failed: {e}")
 

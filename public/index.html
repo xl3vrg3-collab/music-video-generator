@@ -5059,6 +5059,13 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 1
         <div style="font-size:8px;color:var(--text-dim);margin-top:2px;">Per-scene transitions from Edit workspace take priority over this default.</div>
       </div>
     </div>
+    <div style="margin-top:8px;">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" id="outputUpscaleEnabled" onchange="window._checkUpscaleStatus()">
+        <span class="section-label section-label-dim" style="margin:0;">AI Upscale (Real-ESRGAN)</span>
+      </label>
+      <div id="upscaleStatus" style="font-size:8px;color:var(--text-dim);margin-top:2px;margin-left:24px;"></div>
+    </div>
   </div>
 
   <!-- Watermark / Branding -->
@@ -18327,6 +18334,7 @@ document.addEventListener('DOMContentLoaded', function() {
       'draft': '854:480',
     };
     renderPayload.outputResolution = resolutionMap[qualVal] || null;
+    renderPayload.upscale = document.getElementById('outputUpscaleEnabled') ? document.getElementById('outputUpscaleEnabled').checked : false;
 
     fetch('/api/auto-director/stitch', {
       method: 'POST',
@@ -19279,6 +19287,7 @@ document.addEventListener('DOMContentLoaded', function() {
       'draft': '854:480',
     };
     renderPayload.outputResolution = resolutionMap2[qualVal2] || null;
+    renderPayload.upscale = document.getElementById('outputUpscaleEnabled') ? document.getElementById('outputUpscaleEnabled').checked : false;
 
     fetch('/api/auto-director/stitch', {
       method: 'POST',
@@ -19369,6 +19378,29 @@ document.addEventListener('DOMContentLoaded', function() {
         window._toast('Render error: ' + e.message, 'error');
       });
   };
+
+  // ---- AI Upscale Status Check ----
+  window._checkUpscaleStatus = function() {
+    fetch('/api/upscale/status')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var el = document.getElementById('upscaleStatus');
+      if (!el) return;
+
+      if (data.best_method === 'realesrgan-cli') {
+        el.innerHTML = '<span style="color:var(--green);">&#10003; Real-ESRGAN CLI available</span> — AI upscaling to 4K';
+      } else if (data.best_method === 'realesrgan-python') {
+        el.innerHTML = '<span style="color:var(--green);">&#10003; Real-ESRGAN Python available</span> — AI upscaling to 4K';
+      } else if (data.best_method === 'ffmpeg-lanczos') {
+        el.innerHTML = '<span style="color:var(--amber);">&#9888; Using FFmpeg lanczos</span> — good upscale, not AI. <a href="https://github.com/xinntao/Real-ESRGAN/releases" target="_blank" style="color:var(--cyan);">Install Real-ESRGAN for better quality &rarr;</a>';
+      } else {
+        el.innerHTML = '<span style="color:var(--red);">&#10007; No upscaler available</span> — <a href="https://github.com/xinntao/Real-ESRGAN/releases" target="_blank" style="color:var(--cyan);">Install Real-ESRGAN &rarr;</a>';
+      }
+    });
+  };
+
+  // Check upscale status on load
+  setTimeout(function() { window._checkUpscaleStatus && window._checkUpscaleStatus(); }, 3000);
 
   // ---- Scene Edit / Lock / Regen API Functions ----
 
