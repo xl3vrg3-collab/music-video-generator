@@ -81,6 +81,9 @@ class DirectorBrain:
         # Recalculate style vector
         self._update_style_vector()
 
+        # Feed learned preferences to generation harness for AutoAgent
+        self.feed_to_harness()
+
         return entry
 
     def _update_style_vector(self):
@@ -149,6 +152,54 @@ class DirectorBrain:
 
         self.style_vector = sv
         self._save("style_vector.json", sv)
+
+    def feed_to_harness(self):
+        """Push learned preferences into the generation harness for AutoAgent."""
+        if len(self.ratings) < 5:
+            return  # Need minimum data
+
+        sv = self.style_vector
+        if not sv:
+            return
+
+        harness_path = os.path.join(BRAIN_DIR, "learned_harness.json")
+
+        learned = {
+            "quality_suffix_additions": [],
+            "preferred_shot_distribution": sv.get("preferred_shot_types", {}),
+            "preferred_duration": sv.get("avg_preferred_duration"),
+            "preferred_engine": sv.get("preferred_engine"),
+            "avoid_shot_types": sv.get("avoided_shot_types", []),
+            "updated_at": datetime.utcnow().isoformat(),
+            "based_on_ratings": len(self.ratings),
+        }
+
+        # Extract patterns from 5-star scenes
+        five_star = [r for r in self.ratings if r["rating"] == 5]
+        if five_star:
+            # What do all 5-star scenes have in common?
+            common_shots = Counter(r["shot_type"] for r in five_star)
+            if common_shots:
+                learned["best_shot_type"] = common_shots.most_common(1)[0][0]
+
+            common_cameras = [r["camera"] for r in five_star if r.get("camera")]
+            if common_cameras:
+                learned["best_camera"] = Counter(common_cameras).most_common(1)[0][0]
+
+            avg_dur = sum(r["duration"] for r in five_star if r.get("duration")) / max(len(five_star), 1)
+            if avg_dur > 0:
+                learned["best_duration"] = round(avg_dur, 1)
+
+        # Extract patterns from 1-2 star scenes (what to avoid)
+        bad = [r for r in self.ratings if r["rating"] <= 2]
+        if bad:
+            bad_shots = [r["shot_type"] for r in bad]
+            learned["avoid_shot_types"] = list(set(bad_shots))
+
+        with open(harness_path, "w", encoding="utf-8") as f:
+            json.dump(learned, f, indent=2, ensure_ascii=False)
+
+        return learned
 
     # ─── Recommendations ───
 

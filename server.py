@@ -4015,10 +4015,19 @@ class Handler(BaseHTTPRequestHandler):
             from lib.roadmap_features import KEYBOARD_SHORTCUTS
             self._send_json({"shortcuts": KEYBOARD_SHORTCUTS})
 
-        # Analytics
+        # Analytics (legacy prompt/cost analytics)
         elif path == "/api/analytics":
             from lib.roadmap_features import get_analytics
             self._send_json(get_analytics(OUTPUT_DIR))
+
+        # Generation performance analytics
+        elif path == "/api/generation-analytics":
+            analytics_path = os.path.join(OUTPUT_DIR, "analytics.json")
+            if os.path.isfile(analytics_path):
+                with open(analytics_path, "r") as f:
+                    self._send_json(json.load(f))
+            else:
+                self._send_json([])
 
         # Version history
         elif path == "/api/versions":
@@ -12505,6 +12514,7 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_generate_first_frame(self, scene_index):
         """Generate ONLY a first frame image for a scene (fast, no video)."""
+        _gen_start = time.time()
         ip = self.client_address[0]
         if not _check_rate_limit(ip, "generate"):
             self._send_json({"error": "Rate limited — too many generation requests. Please wait a minute."}, 429)
@@ -12564,6 +12574,21 @@ Do not include any explanation, just the JSON object."""
                 style_parts.append(f"Camera style: {project_style['cameraLanguage']}.")
             if style_parts:
                 style_prefix = " ".join(style_parts) + " "
+
+        # Apply Director Brain learned preferences
+        try:
+            brain_harness_path = os.path.join(OUTPUT_DIR, "director_brain", "learned_harness.json")
+            if os.path.isfile(brain_harness_path):
+                with open(brain_harness_path, "r") as f:
+                    learned = json.load(f)
+                # If the brain has a preferred engine and scene doesn't override
+                if learned.get("preferred_engine") and not scene.get("engine"):
+                    print(f"[DIRECTOR BRAIN] Suggesting engine: {learned['preferred_engine']}")
+                # If scene's shot type is in the "avoid" list, warn
+                if shot_type in (learned.get("avoid_shot_types") or []):
+                    print(f"[DIRECTOR BRAIN] WARNING: Shot type '{shot_type}' is in your low-rated list")
+        except:
+            pass
 
         # --- Collect all candidate photos by type ---
         char_photos = []
@@ -12889,6 +12914,34 @@ Do not include any explanation, just the JSON object."""
                              "preview_url": f"/api/scene-thumbnails/scene_{scene_index}.jpg",
                              "scene": scene,
                              "ref_warnings": ref_warnings})
+
+            # Log analytics
+            try:
+                analytics_path = os.path.join(OUTPUT_DIR, "analytics.json")
+                analytics = []
+                if os.path.isfile(analytics_path):
+                    with open(analytics_path, "r") as f:
+                        analytics = json.load(f)
+
+                analytics.append({
+                    "type": "first_frame",
+                    "scene_index": scene_index,
+                    "shot_type": shot_type,
+                    "engine": "gen4_image",
+                    "ref_count": len(refs),
+                    "prompt_length": len(tag_prompt),
+                    "generation_time": round(time.time() - _gen_start, 1),
+                    "success": True,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "has_style_lock": bool(style_prefix),
+                    "has_continuity": scene_index > 0,
+                })
+
+                # Keep last 500 entries
+                with open(analytics_path, "w") as f:
+                    json.dump(analytics[-500:], f, indent=2)
+            except:
+                pass
 
         except Exception as e:
             import traceback
@@ -13231,6 +13284,7 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_generate_scene_clip(self, scene_index):
         """Generate a video clip for a scene using image_to_video with its first frame."""
+        _gen_start = time.time()
         ip = self.client_address[0]
         if not _check_rate_limit(ip, "generate"):
             self._send_json({"error": "Rate limited — too many generation requests. Please wait a minute."}, 429)
@@ -13367,6 +13421,33 @@ Do not include any explanation, just the JSON object."""
                 "clip_url": f"/api/clips/{os.path.basename(clip_path)}",
                 "scene": scene,
             })
+
+            # Log analytics
+            try:
+                analytics_path = os.path.join(OUTPUT_DIR, "analytics.json")
+                analytics = []
+                if os.path.isfile(analytics_path):
+                    with open(analytics_path, "r") as f:
+                        analytics = json.load(f)
+
+                analytics.append({
+                    "type": "scene_clip",
+                    "scene_index": scene_index,
+                    "shot_type": shot_type,
+                    "engine": engine,
+                    "duration": duration,
+                    "prompt_length": len(video_prompt),
+                    "generation_time": round(time.time() - _gen_start, 1),
+                    "success": True,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "has_first_frame": bool(first_frame),
+                })
+
+                # Keep last 500 entries
+                with open(analytics_path, "w") as f:
+                    json.dump(analytics[-500:], f, indent=2)
+            except:
+                pass
 
         except Exception as e:
             import traceback

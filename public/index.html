@@ -3729,6 +3729,19 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 1
       </div>
     </div>
 
+    <!-- Generation Analytics Panel -->
+    <div class="panel collapsed" id="analyticsPanel">
+      <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
+        <span class="dot dot-green"></span>
+        <span class="panel-title">Generation Analytics</span>
+        <span class="collapse-icon">&#9660;</span>
+      </div>
+      <div class="panel-body">
+        <div id="analyticsContent" style="font-size:10px;color:var(--text-dim);">Loading...</div>
+        <button class="btn btn-small" onclick="window._refreshAnalytics()" style="margin-top:8px;font-size:8px;">Refresh</button>
+      </div>
+    </div>
+
     <!-- SECTION 1: STORY INPUTS -->
     <div class="panel" id="autoStoryPanel">
       <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
@@ -21674,6 +21687,52 @@ setTimeout(function() {
     });
   }
 }, 100);
+
+// ---- Generation Analytics ----
+window._refreshAnalytics = function() {
+  fetch('/api/generation-analytics').then(function(r) { return r.json(); }).then(function(data) {
+    var el = document.getElementById('analyticsContent');
+    if (!el || !data || !data.length) {
+      if (el) el.textContent = 'No generation data yet. Generate some scenes to see analytics.';
+      return;
+    }
+
+    // Calculate stats
+    var total = data.length;
+    var successes = data.filter(function(d) { return d.success; }).length;
+    var avgTime = data.reduce(function(sum, d) { return sum + (d.generation_time || 0); }, 0) / total;
+
+    // Per shot type
+    var byShot = {};
+    data.forEach(function(d) {
+      var st = d.shot_type || 'unknown';
+      if (!byShot[st]) byShot[st] = {count: 0, success: 0, totalTime: 0};
+      byShot[st].count++;
+      if (d.success) byShot[st].success++;
+      byShot[st].totalTime += d.generation_time || 0;
+    });
+
+    var html = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">';
+    html += '<div style="padding:8px;background:var(--surface);border-radius:var(--radius);text-align:center;"><div style="font-size:16px;font-weight:700;color:var(--cyan);">' + total + '</div><div style="font-size:8px;">Total Gens</div></div>';
+    html += '<div style="padding:8px;background:var(--surface);border-radius:var(--radius);text-align:center;"><div style="font-size:16px;font-weight:700;color:var(--green);">' + Math.round(successes/total*100) + '%</div><div style="font-size:8px;">Success Rate</div></div>';
+    html += '<div style="padding:8px;background:var(--surface);border-radius:var(--radius);text-align:center;"><div style="font-size:16px;font-weight:700;color:var(--amber);">' + avgTime.toFixed(1) + 's</div><div style="font-size:8px;">Avg Time</div></div>';
+    html += '</div>';
+
+    html += '<div style="font-size:9px;margin-top:4px;">';
+    Object.keys(byShot).forEach(function(st) {
+      var s = byShot[st];
+      html += '<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border);">';
+      html += '<span>' + st + '</span>';
+      html += '<span>' + s.count + ' gens, ' + Math.round(s.success/s.count*100) + '% success, ' + (s.totalTime/s.count).toFixed(1) + 's avg</span>';
+      html += '</div>';
+    });
+    html += '</div>';
+
+    el.innerHTML = html;
+  }).catch(function() {});
+};
+
+setTimeout(function() { window._refreshAnalytics && window._refreshAnalytics(); }, 4000);
 </script>
 
 <!-- STICKY AUTO DIRECTOR ACTION BAR -->
