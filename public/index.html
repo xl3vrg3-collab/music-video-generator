@@ -2839,48 +2839,56 @@
 <body>
 
 <!-- Welcome Screen (first visit only) -->
-<div id="welcomeScreen" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:100000;background:linear-gradient(135deg,#060606 0%,#0a0a1a 50%,#060606 100%);display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.5s ease;">
+<div id="welcomeScreen" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:100000;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.8s ease;overflow:hidden;">
 
-  <!-- Ambient glow -->
-  <div style="position:absolute;top:20%;left:30%;width:300px;height:300px;background:radial-gradient(circle,rgba(0,229,255,0.06) 0%,transparent 70%);pointer-events:none;"></div>
-  <div style="position:absolute;bottom:20%;right:25%;width:400px;height:400px;background:radial-gradient(circle,rgba(106,92,255,0.04) 0%,transparent 70%);pointer-events:none;"></div>
+  <!-- Background image slideshow -->
+  <div id="welcomeBgSlide" style="position:absolute;top:0;left:0;right:0;bottom:0;background-image:url('/output/reference_demos/light_low_key_dramatic_4k.png');background-size:cover;background-position:center;transition:opacity 1.5s ease;"></div>
+  <!-- Dark overlay for text readability -->
+  <div style="position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(180deg,rgba(0,0,0,0.7) 0%,rgba(0,0,0,0.4) 40%,rgba(0,0,0,0.6) 70%,rgba(0,0,0,0.85) 100%);"></div>
+  <!-- Subtle ambient glow -->
+  <div style="position:absolute;top:15%;left:20%;width:400px;height:400px;background:radial-gradient(circle,rgba(0,229,255,0.08) 0%,transparent 70%);pointer-events:none;"></div>
+  <div style="position:absolute;bottom:15%;right:15%;width:500px;height:500px;background:radial-gradient(circle,rgba(255,214,0,0.05) 0%,transparent 70%);pointer-events:none;"></div>
 
-  <!-- Logo -->
-  <div style="text-align:center;margin-bottom:32px;">
-    <h1 style="font-family:'Inter Tight',sans-serif;font-weight:900;font-size:42px;letter-spacing:12px;margin:0;background:linear-gradient(135deg,#fff,rgba(255,255,255,0.7));-webkit-background-clip:text;-webkit-text-fill-color:transparent;">LUMN <span style="background:linear-gradient(135deg,#FFD600,#FF8C00);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">STUDIO</span></h1>
-    <div style="font-family:'JetBrains Mono',monospace;font-size:13px;color:rgba(255,255,255,0.4);letter-spacing:4px;margin-top:8px;">AI Film Studio — Script to Screen</div>
+  <!-- Content -->
+  <div style="position:relative;z-index:2;text-align:center;max-width:900px;padding:0 24px;">
+
+    <!-- Logo -->
+    <div style="margin-bottom:40px;">
+      <h1 style="font-family:'Inter Tight',sans-serif;font-weight:900;font-size:56px;letter-spacing:16px;margin:0;color:#fff;text-shadow:0 2px 40px rgba(0,0,0,0.5);">LUMN <span style="background:linear-gradient(135deg,#FFD600,#FF8C00);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">STUDIO</span></h1>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:14px;color:rgba(255,255,255,0.5);letter-spacing:6px;margin-top:12px;text-transform:uppercase;">AI Film Studio — Script to Screen</div>
+    </div>
+
+    <!-- Feature cards with glass effect -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:48px;">
+      <div style="background:rgba(255,255,255,0.06);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 12px;transition:transform 0.3s,border-color 0.3s;" onmouseover="this.style.transform='translateY(-4px)';this.style.borderColor='rgba(0,229,255,0.3)'" onmouseout="this.style.transform='';this.style.borderColor='rgba(255,255,255,0.08)'">
+        <div style="font-size:32px;margin-bottom:12px;">🎬</div>
+        <div style="font-family:'Inter Tight',sans-serif;font-size:13px;font-weight:700;color:#fff;margin-bottom:6px;">Generate</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,0.4);line-height:1.5;">AI creates cinematic scenes from your characters & story</div>
+      </div>
+      <div style="background:rgba(255,255,255,0.06);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 12px;transition:transform 0.3s,border-color 0.3s;" onmouseover="this.style.transform='translateY(-4px)';this.style.borderColor='rgba(255,214,0,0.3)'" onmouseout="this.style.transform='';this.style.borderColor='rgba(255,255,255,0.08)'">
+        <div style="font-size:32px;margin-bottom:12px;">🎭</div>
+        <div style="font-family:'Inter Tight',sans-serif;font-size:13px;font-weight:700;color:#fff;margin-bottom:6px;">Characters</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,0.4);line-height:1.5;">Consistent identity across every shot with reference sheets</div>
+      </div>
+      <div style="background:rgba(255,255,255,0.06);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 12px;transition:transform 0.3s,border-color 0.3s;" onmouseover="this.style.transform='translateY(-4px)';this.style.borderColor='rgba(0,229,160,0.3)'" onmouseout="this.style.transform='';this.style.borderColor='rgba(255,255,255,0.08)'">
+        <div style="font-size:32px;margin-bottom:12px;">✂️</div>
+        <div style="font-family:'Inter Tight',sans-serif;font-size:13px;font-weight:700;color:#fff;margin-bottom:6px;">Edit</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,0.4);line-height:1.5;">Timeline editor, transitions, multi-track audio mixing</div>
+      </div>
+      <div style="background:rgba(255,255,255,0.06);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 12px;transition:transform 0.3s,border-color 0.3s;" onmouseover="this.style.transform='translateY(-4px)';this.style.borderColor='rgba(106,92,255,0.3)'" onmouseout="this.style.transform='';this.style.borderColor='rgba(255,255,255,0.08)'">
+        <div style="font-size:32px;margin-bottom:12px;">🎵</div>
+        <div style="font-family:'Inter Tight',sans-serif;font-size:13px;font-weight:700;color:#fff;margin-bottom:6px;">Music First</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,0.4);line-height:1.5;">Paste a Suno link and AI syncs visuals to your beats</div>
+      </div>
+    </div>
+
+    <!-- CTA -->
+    <button onclick="window._dismissWelcome()" style="background:linear-gradient(135deg,#7c5cff,#00e5ff);color:#fff;border:none;padding:16px 56px;border-radius:14px;font-family:'Inter Tight',sans-serif;font-size:15px;font-weight:800;letter-spacing:3px;cursor:pointer;transition:all 0.3s ease;box-shadow:0 4px 32px rgba(0,229,255,0.25);text-transform:uppercase;" onmouseover="this.style.transform='translateY(-3px)';this.style.boxShadow='0 8px 40px rgba(0,229,255,0.35)'" onmouseout="this.style.transform='';this.style.boxShadow='0 4px 32px rgba(0,229,255,0.25)'">
+      Get Started →
+    </button>
+
+    <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,0.2);margin-top:20px;letter-spacing:2px;">Powered by Runway Gen 4.5 · Veo 3.1 · Real-ESRGAN</div>
   </div>
-
-  <!-- Feature highlights -->
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:24px;max-width:800px;margin-bottom:40px;padding:0 20px;">
-    <div style="text-align:center;">
-      <div style="font-size:28px;margin-bottom:8px;">🎬</div>
-      <div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:4px;">Generate</div>
-      <div style="font-size:9px;color:rgba(255,255,255,0.4);">AI creates scenes from your vision</div>
-    </div>
-    <div style="text-align:center;">
-      <div style="font-size:28px;margin-bottom:8px;">🎭</div>
-      <div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:4px;">Characters</div>
-      <div style="font-size:9px;color:rgba(255,255,255,0.4);">Consistent characters across every shot</div>
-    </div>
-    <div style="text-align:center;">
-      <div style="font-size:28px;margin-bottom:8px;">✂️</div>
-      <div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:4px;">Edit</div>
-      <div style="font-size:9px;color:rgba(255,255,255,0.4);">Timeline, transitions, audio mixing</div>
-    </div>
-    <div style="text-align:center;">
-      <div style="font-size:28px;margin-bottom:8px;">🎵</div>
-      <div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:4px;">Music First</div>
-      <div style="font-size:9px;color:rgba(255,255,255,0.4);">Paste Suno link, AI syncs to beats</div>
-    </div>
-  </div>
-
-  <!-- CTA -->
-  <button onclick="window._dismissWelcome()" style="background:linear-gradient(135deg,#7c5cff,#00e5ff);color:#fff;border:none;padding:14px 48px;border-radius:12px;font-family:'Inter Tight',sans-serif;font-size:14px;font-weight:700;letter-spacing:2px;cursor:pointer;transition:all 0.3s ease;box-shadow:0 4px 24px rgba(0,229,255,0.2);" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 32px rgba(0,229,255,0.3)'" onmouseout="this.style.transform='';this.style.boxShadow='0 4px 24px rgba(0,229,255,0.2)'">
-    GET STARTED →
-  </button>
-
-  <div style="font-size:9px;color:rgba(255,255,255,0.2);margin-top:16px;">Powered by Runway Gen 4.5 · Veo 3.1 · Real-ESRGAN</div>
 </div>
 
 <script>
@@ -2888,10 +2896,43 @@ window._dismissWelcome = function() {
   var screen = document.getElementById('welcomeScreen');
   if (screen) {
     screen.style.opacity = '0';
-    setTimeout(function() { screen.remove(); }, 500);
+    setTimeout(function() { screen.remove(); }, 800);
   }
   localStorage.setItem('lumn_welcomed', '1');
+  if (window._welcomeSlideshowTimer) clearInterval(window._welcomeSlideshowTimer);
 };
+
+// Background slideshow — cycle through 4K reference photos
+(function() {
+  var bgImages = [
+    '/output/reference_demos/light_low_key_dramatic_4k.png',
+    '/output/reference_demos/grade_noir_4k.png',
+    '/output/reference_demos/light_backlit_silhouette_4k.png',
+    '/output/reference_demos/light_high_key_bright_4k.png',
+  ];
+  // Fallback to 1K if 4K not available
+  var fallbacks = [
+    '/output/reference_demos/light_low_key_dramatic.jpg',
+    '/output/reference_demos/grade_noir.jpg',
+    '/output/reference_demos/light_backlit_silhouette.jpg',
+    '/output/reference_demos/light_high_key_bright.jpg',
+  ];
+  var currentBg = 0;
+  var slide = document.getElementById('welcomeBgSlide');
+  if (slide && document.getElementById('welcomeScreen')) {
+    // Preload images
+    bgImages.forEach(function(src) { var img = new Image(); img.src = src; });
+
+    window._welcomeSlideshowTimer = setInterval(function() {
+      currentBg = (currentBg + 1) % bgImages.length;
+      slide.style.opacity = '0';
+      setTimeout(function() {
+        slide.style.backgroundImage = 'url("' + bgImages[currentBg] + '")';
+        slide.style.opacity = '1';
+      }, 800);
+    }, 5000);
+  }
+})();
 
 // Also allow re-showing welcome from help menu
 window._showWelcome = function() {
