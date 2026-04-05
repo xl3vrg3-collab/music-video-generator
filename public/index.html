@@ -2839,55 +2839,42 @@
 <body>
 
 <!-- Welcome Screen (first visit only) -->
-<div id="welcomeScreen" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:100000;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.8s ease;overflow:hidden;">
+<div id="welcomeScreen" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:100000;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;transition:opacity 0.8s ease;overflow:hidden;cursor:default;">
 
-  <!-- Background image slideshow -->
-  <div id="welcomeBgSlide" style="position:absolute;top:0;left:0;right:0;bottom:0;background-image:url('/output/reference_demos/light_low_key_dramatic_4k.png');background-size:cover;background-position:center;transition:opacity 1.5s ease;"></div>
-  <!-- Dark overlay for text readability -->
-  <div style="position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(180deg,rgba(0,0,0,0.7) 0%,rgba(0,0,0,0.4) 40%,rgba(0,0,0,0.6) 70%,rgba(0,0,0,0.85) 100%);"></div>
-  <!-- Subtle ambient glow -->
-  <div style="position:absolute;top:15%;left:20%;width:400px;height:400px;background:radial-gradient(circle,rgba(0,229,255,0.08) 0%,transparent 70%);pointer-events:none;"></div>
-  <div style="position:absolute;bottom:15%;right:15%;width:500px;height:500px;background:radial-gradient(circle,rgba(255,214,0,0.05) 0%,transparent 70%);pointer-events:none;"></div>
+  <!-- 8K Background — dark bear (default) / white bear (light mode) -->
+  <div id="welcomeBg" style="position:absolute;top:0;left:0;right:0;bottom:0;background-image:url('/public/lumn_bg_dark.png');background-size:cover;background-position:center top;transition:opacity 1s ease;"></div>
 
-  <!-- Content -->
-  <div style="position:relative;z-index:2;text-align:center;max-width:900px;padding:0 24px;">
+  <!-- Bottom gradient fade for content area -->
+  <div style="position:absolute;bottom:0;left:0;right:0;height:45%;background:linear-gradient(180deg,transparent 0%,rgba(0,0,0,0.8) 60%,rgba(0,0,0,0.95) 100%);pointer-events:none;"></div>
 
-    <!-- Logo -->
-    <div style="margin-bottom:40px;">
-      <h1 style="font-family:'Inter Tight',sans-serif;font-weight:900;font-size:56px;letter-spacing:16px;margin:0;color:#fff;text-shadow:0 2px 40px rgba(0,0,0,0.5);">LUMN <span style="background:linear-gradient(135deg,#FFD600,#FF8C00);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">STUDIO</span></h1>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:14px;color:rgba(255,255,255,0.5);letter-spacing:6px;margin-top:12px;text-transform:uppercase;">AI Film Studio — Script to Screen</div>
+  <!-- Content pinned to bottom -->
+  <div style="position:relative;z-index:2;text-align:center;max-width:900px;padding:0 24px 48px;width:100%;">
+
+    <!-- Tagline — matches the LUMN font from the bear images -->
+    <div style="margin-bottom:24px;">
+      <div style="font-family:'Inter Tight',sans-serif;font-weight:300;font-size:15px;color:rgba(255,255,255,0.5);letter-spacing:8px;text-transform:uppercase;">AI Film Studio</div>
     </div>
 
-    <!-- Feature cards with glass effect -->
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:48px;">
-      <div style="background:rgba(255,255,255,0.06);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 12px;transition:transform 0.3s,border-color 0.3s;" onmouseover="this.style.transform='translateY(-4px)';this.style.borderColor='rgba(0,229,255,0.3)'" onmouseout="this.style.transform='';this.style.borderColor='rgba(255,255,255,0.08)'">
-        <div style="font-size:32px;margin-bottom:12px;">🎬</div>
-        <div style="font-family:'Inter Tight',sans-serif;font-size:13px;font-weight:700;color:#fff;margin-bottom:6px;">Generate</div>
-        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,0.4);line-height:1.5;">AI creates cinematic scenes from your characters & story</div>
-      </div>
-      <div style="background:rgba(255,255,255,0.06);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 12px;transition:transform 0.3s,border-color 0.3s;" onmouseover="this.style.transform='translateY(-4px)';this.style.borderColor='rgba(255,214,0,0.3)'" onmouseout="this.style.transform='';this.style.borderColor='rgba(255,255,255,0.08)'">
-        <div style="font-size:32px;margin-bottom:12px;">🎭</div>
-        <div style="font-family:'Inter Tight',sans-serif;font-size:13px;font-weight:700;color:#fff;margin-bottom:6px;">Characters</div>
-        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,0.4);line-height:1.5;">Consistent identity across every shot with reference sheets</div>
-      </div>
-      <div style="background:rgba(255,255,255,0.06);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 12px;transition:transform 0.3s,border-color 0.3s;" onmouseover="this.style.transform='translateY(-4px)';this.style.borderColor='rgba(0,229,160,0.3)'" onmouseout="this.style.transform='';this.style.borderColor='rgba(255,255,255,0.08)'">
-        <div style="font-size:32px;margin-bottom:12px;">✂️</div>
-        <div style="font-family:'Inter Tight',sans-serif;font-size:13px;font-weight:700;color:#fff;margin-bottom:6px;">Edit</div>
-        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,0.4);line-height:1.5;">Timeline editor, transitions, multi-track audio mixing</div>
-      </div>
-      <div style="background:rgba(255,255,255,0.06);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 12px;transition:transform 0.3s,border-color 0.3s;" onmouseover="this.style.transform='translateY(-4px)';this.style.borderColor='rgba(106,92,255,0.3)'" onmouseout="this.style.transform='';this.style.borderColor='rgba(255,255,255,0.08)'">
-        <div style="font-size:32px;margin-bottom:12px;">🎵</div>
-        <div style="font-family:'Inter Tight',sans-serif;font-size:13px;font-weight:700;color:#fff;margin-bottom:6px;">Music First</div>
-        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,0.4);line-height:1.5;">Paste a Suno link and AI syncs visuals to your beats</div>
-      </div>
+    <!-- Feature pills — minimal, clean -->
+    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:36px;">
+      <div style="background:rgba(255,255,255,0.08);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06);border-radius:24px;padding:8px 20px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:500;color:rgba(255,255,255,0.7);letter-spacing:1px;">Generate</div>
+      <div style="background:rgba(255,255,255,0.08);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06);border-radius:24px;padding:8px 20px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:500;color:rgba(255,255,255,0.7);letter-spacing:1px;">Characters</div>
+      <div style="background:rgba(255,255,255,0.08);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06);border-radius:24px;padding:8px 20px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:500;color:rgba(255,255,255,0.7);letter-spacing:1px;">Edit</div>
+      <div style="background:rgba(255,255,255,0.08);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06);border-radius:24px;padding:8px 20px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:500;color:rgba(255,255,255,0.7);letter-spacing:1px;">Music</div>
+      <div style="background:rgba(255,255,255,0.08);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06);border-radius:24px;padding:8px 20px;font-family:'Inter Tight',sans-serif;font-size:11px;font-weight:500;color:rgba(255,255,255,0.7);letter-spacing:1px;">Export</div>
     </div>
 
-    <!-- CTA -->
-    <button onclick="window._dismissWelcome()" style="background:linear-gradient(135deg,#7c5cff,#00e5ff);color:#fff;border:none;padding:16px 56px;border-radius:14px;font-family:'Inter Tight',sans-serif;font-size:15px;font-weight:800;letter-spacing:3px;cursor:pointer;transition:all 0.3s ease;box-shadow:0 4px 32px rgba(0,229,255,0.25);text-transform:uppercase;" onmouseover="this.style.transform='translateY(-3px)';this.style.boxShadow='0 8px 40px rgba(0,229,255,0.35)'" onmouseout="this.style.transform='';this.style.boxShadow='0 4px 32px rgba(0,229,255,0.25)'">
-      Get Started →
-    </button>
+    <!-- CTA + Theme toggle -->
+    <div style="display:flex;align-items:center;justify-content:center;gap:16px;">
+      <button onclick="window._dismissWelcome()" style="background:rgba(255,255,255,0.12);backdrop-filter:blur(16px);color:#fff;border:1px solid rgba(255,255,255,0.15);padding:14px 48px;border-radius:30px;font-family:'Inter Tight',sans-serif;font-size:13px;font-weight:600;letter-spacing:4px;cursor:pointer;transition:all 0.3s ease;text-transform:uppercase;" onmouseover="this.style.background='rgba(255,255,255,0.2)';this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 32px rgba(0,0,0,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.12)';this.style.transform='';this.style.boxShadow=''">
+        Enter Studio
+      </button>
+      <button onclick="window._toggleWelcomeTheme()" id="welcomeThemeBtn" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);width:40px;height:40px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:all 0.3s;" title="Switch light/dark">
+        ☀️
+      </button>
+    </div>
 
-    <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,0.2);margin-top:20px;letter-spacing:2px;">Powered by Runway Gen 4.5 · Veo 3.1 · Real-ESRGAN</div>
+    <div style="font-family:'JetBrains Mono',monospace;font-size:8px;color:rgba(255,255,255,0.15);margin-top:20px;letter-spacing:3px;text-transform:uppercase;">Script to Screen</div>
   </div>
 </div>
 
@@ -2899,39 +2886,51 @@ window._dismissWelcome = function() {
     setTimeout(function() { screen.remove(); }, 800);
   }
   localStorage.setItem('lumn_welcomed', '1');
-  if (window._welcomeSlideshowTimer) clearInterval(window._welcomeSlideshowTimer);
 };
 
-// Background slideshow — cycle through 4K reference photos
-(function() {
-  var bgImages = [
-    '/output/reference_demos/light_low_key_dramatic_4k.png',
-    '/output/reference_demos/grade_noir_4k.png',
-    '/output/reference_demos/light_backlit_silhouette_4k.png',
-    '/output/reference_demos/light_high_key_bright_4k.png',
-  ];
-  // Fallback to 1K if 4K not available
-  var fallbacks = [
-    '/output/reference_demos/light_low_key_dramatic.jpg',
-    '/output/reference_demos/grade_noir.jpg',
-    '/output/reference_demos/light_backlit_silhouette.jpg',
-    '/output/reference_demos/light_high_key_bright.jpg',
-  ];
-  var currentBg = 0;
-  var slide = document.getElementById('welcomeBgSlide');
-  if (slide && document.getElementById('welcomeScreen')) {
-    // Preload images
-    bgImages.forEach(function(src) { var img = new Image(); img.src = src; });
+// Welcome screen light/dark toggle — switches between bear images
+window._welcomeIsDark = true;
+window._toggleWelcomeTheme = function() {
+  var bg = document.getElementById('welcomeBg');
+  var btn = document.getElementById('welcomeThemeBtn');
+  var screen = document.getElementById('welcomeScreen');
+  if (!bg) return;
 
-    window._welcomeSlideshowTimer = setInterval(function() {
-      currentBg = (currentBg + 1) % bgImages.length;
-      slide.style.opacity = '0';
-      setTimeout(function() {
-        slide.style.backgroundImage = 'url("' + bgImages[currentBg] + '")';
-        slide.style.opacity = '1';
-      }, 800);
-    }, 5000);
+  window._welcomeIsDark = !window._welcomeIsDark;
+
+  if (window._welcomeIsDark) {
+    // Dark mode — black bear
+    bg.style.opacity = '0';
+    setTimeout(function() {
+      bg.style.backgroundImage = "url('/public/lumn_bg_dark.png')";
+      bg.style.opacity = '1';
+    }, 500);
+    if (btn) btn.textContent = '☀️';
+    // Update gradient for dark
+    if (screen) {
+      screen.querySelectorAll('div')[2].style.background = 'linear-gradient(180deg,transparent 0%,rgba(0,0,0,0.8) 60%,rgba(0,0,0,0.95) 100%)';
+    }
+  } else {
+    // Light mode — white bear
+    bg.style.opacity = '0';
+    setTimeout(function() {
+      bg.style.backgroundImage = "url('/public/lumn_bg_light.png')";
+      bg.style.opacity = '1';
+    }, 500);
+    if (btn) btn.textContent = '🌙';
+    // Update gradient for light
+    if (screen) {
+      screen.querySelectorAll('div')[2].style.background = 'linear-gradient(180deg,transparent 0%,rgba(255,255,255,0.6) 60%,rgba(255,255,255,0.9) 100%)';
+    }
+    // Also toggle app theme
+    document.documentElement.setAttribute('data-theme', 'light');
   }
+};
+
+// Preload both images
+(function() {
+  new Image().src = '/public/lumn_bg_dark.png';
+  new Image().src = '/public/lumn_bg_light.png';
 })();
 
 // Also allow re-showing welcome from help menu
