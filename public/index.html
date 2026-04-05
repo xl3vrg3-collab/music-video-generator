@@ -3265,7 +3265,11 @@ setInterval(function(){ window._updateChecklist(); }, 1000);
         <span class="collapse-icon">&#9660;</span>
       </div>
       <div class="panel-body" style="display:flex;flex-direction:column;gap:16px;">
-        <div style="font-size:10px;color:var(--text-dim);">Visual guide to creative controls. Hover any option to see what it looks like.</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+          <div style="font-size:10px;color:var(--text-dim);flex:1;">Visual guide to creative controls. Hover any option to see what it looks like.</div>
+          <button class="btn btn-small btn-cyan" onclick="window._generateReferenceImages(this)" title="Generate demo photos showing each lighting, angle, shot type, and color grade (~$0.60, one-time)">&#128248; Generate Demo Photos</button>
+          <span id="lookbookGenStatus" style="font-size:9px;color:var(--text-dim);"></span>
+        </div>
 
         <!-- Shot Types -->
         <div>
@@ -20817,6 +20821,8 @@ window._createShotTypePreview = function(container, currentType, onSelect) {
       lightPrev.style.background = p.bg;
       lightPrev.style.color = p.text;
       lightPrev.textContent = val || 'Select lighting';
+      // Try real photo preview
+      window._updateLightingPreviewWithPhoto && window._updateLightingPreviewWithPhoto(val);
     }
     lightSel.addEventListener('change', updateLightPreview);
     updateLightPreview();
@@ -20930,6 +20936,132 @@ window._initLookbook = function() {
     });
     gradeContainer.innerHTML = html;
   }
+
+  // Try to load real reference images (if previously generated)
+  window._loadLookbookImages && window._loadLookbookImages();
+};
+
+// --- Reference Image Generation & Loading ---
+window._generateReferenceImages = function(btn) {
+  if (!confirm('Generate ~27 demo photos using Runway? Costs ~$0.60 (turbo model). Only needed once.')) return;
+  window._setButtonLoading && window._setButtonLoading(btn, true, 'Generating...');
+
+  fetch('/api/generate-reference-images', {method: 'POST'})
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    window._setButtonLoading && window._setButtonLoading(btn, false);
+    if (data.error) { window._toast(data.error, 'error'); return; }
+
+    var status = document.getElementById('lookbookGenStatus');
+    if (status) status.textContent = data.message;
+    window._toast(data.message, 'success');
+
+    // Poll for completion and refresh thumbnails
+    if (data.toGenerate > 0) {
+      var pollCount = 0;
+      var poller = setInterval(function() {
+        pollCount++;
+        fetch('/api/reference-demos').then(function(r) { return r.json(); }).then(function(imgs) {
+          var total = 0;
+          Object.values(imgs).forEach(function(arr) { total += arr.length; });
+          if (status) status.textContent = total + '/' + data.total + ' images ready...';
+          if (total >= data.total || pollCount > 120) {
+            clearInterval(poller);
+            if (status) status.textContent = total + ' demo photos ready!';
+            window._loadLookbookImages();
+          }
+        });
+      }, 5000);
+    }
+  })
+  .catch(function(e) {
+    window._setButtonLoading && window._setButtonLoading(btn, false);
+    window._toast('Generation failed: ' + e.message, 'error');
+  });
+};
+
+window._loadLookbookImages = function() {
+  fetch('/api/reference-demos')
+  .then(function(r) { return r.json(); })
+  .then(function(images) {
+    // Populate lighting section with real photos
+    var lightContainer = document.getElementById('lookbookLighting');
+    if (lightContainer && images.light && images.light.length > 0) {
+      var html = '';
+      images.light.forEach(function(img) {
+        html += '<div style="text-align:center;">';
+        html += '<img src="' + img.url + '" style="width:100%;height:80px;object-fit:cover;border-radius:var(--radius);border:1px solid var(--border);" loading="lazy" title="' + img.name + '">';
+        html += '<div style="font-size:7px;color:var(--text-dim);margin-top:2px;">' + img.name + '</div>';
+        html += '</div>';
+      });
+      lightContainer.innerHTML = html;
+    }
+
+    // Camera angles
+    var camContainer = document.getElementById('lookbookCameraAngles');
+    if (camContainer && images.angle && images.angle.length > 0) {
+      var html = '';
+      images.angle.forEach(function(img) {
+        html += '<div style="text-align:center;min-width:90px;">';
+        html += '<img src="' + img.url + '" style="width:90px;height:60px;object-fit:cover;border-radius:var(--radius);border:1px solid var(--border);" loading="lazy" title="' + img.name + '">';
+        html += '<div style="font-size:7px;color:var(--text-dim);margin-top:2px;">' + img.name + '</div>';
+        html += '</div>';
+      });
+      camContainer.innerHTML = html;
+    }
+
+    // Shot types
+    var shotContainer = document.getElementById('lookbookShotTypes');
+    if (shotContainer && images.shot && images.shot.length > 0) {
+      var html = '';
+      images.shot.forEach(function(img) {
+        html += '<div style="text-align:center;min-width:90px;">';
+        html += '<img src="' + img.url + '" style="width:90px;height:60px;object-fit:cover;border-radius:var(--radius);border:1px solid var(--border);" loading="lazy" title="' + img.name + '">';
+        html += '<div style="font-size:7px;color:var(--text-dim);margin-top:2px;">' + img.name + '</div>';
+        html += '</div>';
+      });
+      shotContainer.innerHTML = html;
+    }
+
+    // Color grades
+    var gradeContainer = document.getElementById('lookbookColorGrades');
+    if (gradeContainer && images.grade && images.grade.length > 0) {
+      var html = '';
+      images.grade.forEach(function(img) {
+        html += '<div style="text-align:center;">';
+        html += '<img src="' + img.url + '" style="width:50px;height:50px;object-fit:cover;border-radius:var(--radius);border:1px solid var(--border);" loading="lazy" title="' + img.name + '">';
+        html += '<div style="font-size:6px;color:var(--text-dim);margin-top:2px;">' + img.name + '</div>';
+        html += '</div>';
+      });
+      gradeContainer.innerHTML = html;
+    }
+  })
+  .catch(function() {});
+};
+
+// Update lighting preview with real photo when available
+window._updateLightingPreviewWithPhoto = function(lightingType) {
+  var preview = document.getElementById('lightingPreview');
+  if (!preview) return;
+
+  // Check if we have a real photo for this lighting
+  var filename = 'light_' + lightingType.replace(/ /g, '_') + '.jpg';
+  var url = '/output/reference_demos/' + filename;
+
+  var img = new Image();
+  img.onload = function() {
+    preview.style.background = 'url(' + url + ') center/cover';
+    preview.style.color = '#fff';
+    preview.style.textShadow = '0 1px 3px #000';
+  };
+  img.onerror = function() {
+    // Fall back to CSS gradient
+    var p = window._LIGHTING_PREVIEWS[lightingType] || {bg: 'var(--surface2)', text: 'var(--text-dim)'};
+    preview.style.background = p.bg;
+    preview.style.color = p.text;
+    preview.style.textShadow = '';
+  };
+  img.src = url;
 };
 
 // Init lookbook when DOM is ready

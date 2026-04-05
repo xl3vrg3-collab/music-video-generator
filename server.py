@@ -4070,6 +4070,24 @@ class Handler(BaseHTTPRequestHandler):
                 "style_summary": brain.get_style_summary(),
             })
 
+        # ---- Reference Demo Images (Lookbook) ----
+        elif path == "/api/reference-demos":
+            refs_dir = os.path.join(OUTPUT_DIR, "reference_demos")
+            images = {}
+            if os.path.isdir(refs_dir):
+                for f in os.listdir(refs_dir):
+                    if f.endswith(('.jpg', '.png')):
+                        cat = f.split('_')[0]  # light, angle, shot, grade
+                        if cat not in images:
+                            images[cat] = []
+                        name = f.replace(cat + '_', '').replace('.jpg', '').replace('.png', '').replace('_', ' ')
+                        images[cat].append({
+                            "name": name,
+                            "url": f"/output/reference_demos/{f}",
+                            "filename": f,
+                        })
+            self._send_json(images)
+
         else:
             self.send_error(404)
 
@@ -5564,6 +5582,10 @@ Do not include any explanation, just the JSON object."""
             body = json.loads(self._read_body())
             self._handle_generate_album_art(body)
 
+        # ──── Reference Demo Image Generation (Lookbook) ────
+        elif path == "/api/generate-reference-images":
+            self._handle_generate_reference_images()
+
         else:
             self.send_error(404)
 
@@ -5870,6 +5892,136 @@ Do not include any explanation, just the JSON object."""
 
         except Exception as e:
             self._send_json({"error": f"Album art error: {str(e)[:200]}"}, 500)
+
+    # ---- Reference Demo Image Generation (Lookbook) ----
+
+    def _handle_generate_reference_images(self):
+        """Generate reference/demo images for creative controls.
+        Uses a consistent subject (golden retriever) to show how each
+        lighting, camera angle, shot type, and color grade looks."""
+
+        refs_dir = os.path.join(OUTPUT_DIR, "reference_demos")
+        os.makedirs(refs_dir, exist_ok=True)
+
+        from lib.video_generator import _runway_generate_scene_image
+
+        base_subject = "A golden retriever dog sitting in a sunlit park, green grass, trees in background"
+
+        # Define all options to generate
+        demos = []
+
+        # Lighting types
+        for light in ["natural soft", "harsh sunlight", "overcast diffused", "neon",
+                       "cinematic contrast", "low key dramatic", "high key bright",
+                       "practical lighting", "volumetric fog", "backlit silhouette"]:
+            demos.append({
+                "category": "lighting",
+                "name": light,
+                "filename": f"light_{light.replace(' ', '_')}.jpg",
+                "prompt": f"{base_subject}. Lighting: {light}. Photorealistic, 8K, professional photography.",
+            })
+
+        # Camera angles
+        for angle in ["eye level", "low angle", "high angle", "top down", "dutch tilt", "ground level"]:
+            demos.append({
+                "category": "camera_angle",
+                "name": angle,
+                "filename": f"angle_{angle.replace(' ', '_')}.jpg",
+                "prompt": f"{base_subject}. Camera angle: {angle}. Photorealistic, 8K, professional cinematography.",
+            })
+
+        # Shot types
+        for shot in ["close-up", "medium", "full", "wide", "establishing"]:
+            framing = {
+                "close-up": "Extreme close-up of the dog's face, shallow depth of field, 85mm lens",
+                "medium": "Medium shot showing the dog from chest up, 50mm lens",
+                "full": "Full body shot of the dog head to tail, 35mm lens",
+                "wide": "Wide shot with the dog small in frame, expansive park visible, 24mm lens",
+                "establishing": "Establishing shot of the entire park, dog barely visible in distance, 16mm ultra-wide",
+            }
+            demos.append({
+                "category": "shot_type",
+                "name": shot,
+                "filename": f"shot_{shot.replace('-', '_')}.jpg",
+                "prompt": f"{framing[shot]}. {base_subject}. Photorealistic, 8K.",
+            })
+
+        # Color grades
+        for grade in ["warm", "cool", "vintage", "noir", "cyberpunk", "golden"]:
+            grade_desc = {
+                "warm": "warm golden tones, amber highlights, cozy feel",
+                "cool": "cool blue tones, teal shadows, crisp atmosphere",
+                "vintage": "muted desaturated colors, slight sepia, film grain",
+                "noir": "black and white, high contrast, dramatic shadows",
+                "cyberpunk": "neon purple and cyan lighting, futuristic mood",
+                "golden": "golden hour lighting, warm orange glow, long shadows",
+            }
+            demos.append({
+                "category": "color_grade",
+                "name": grade,
+                "filename": f"grade_{grade}.jpg",
+                "prompt": f"{base_subject}. Color grading: {grade_desc[grade]}. Photorealistic, 8K, cinematic.",
+            })
+
+        # Check which already exist (skip regeneration)
+        to_generate = []
+        already_done = []
+        for d in demos:
+            fpath = os.path.join(refs_dir, d["filename"])
+            if os.path.isfile(fpath):
+                already_done.append(d["name"])
+            else:
+                to_generate.append(d)
+
+        if not to_generate:
+            self._send_json({
+                "ok": True,
+                "message": f"All {len(demos)} reference images already exist",
+                "total": len(demos),
+                "generated": 0,
+            })
+            return
+
+        # Generate in background thread
+        def _gen_refs():
+            generated = 0
+            failed = 0
+            for i, d in enumerate(to_generate):
+                try:
+                    print(f"[REF-DEMO] Generating {i+1}/{len(to_generate)}: {d['category']}/{d['name']}...")
+                    img_path = _runway_generate_scene_image(
+                        d["prompt"], [],
+                        ratio="1024:1024",
+                        model="gen4_image_turbo",
+                    )
+                    if img_path and os.path.isfile(img_path):
+                        import shutil
+                        dest = os.path.join(refs_dir, d["filename"])
+                        shutil.copy2(img_path, dest)
+                        generated += 1
+                    else:
+                        failed += 1
+                        print(f"[REF-DEMO] Failed: {d['name']}")
+                except Exception as e:
+                    failed += 1
+                    print(f"[REF-DEMO] Error generating {d['name']}: {e}")
+
+                # Brief pause between generations
+                import time as _t
+                _t.sleep(1)
+
+            print(f"[REF-DEMO] Done! Generated: {generated}, Failed: {failed}, Skipped: {len(already_done)}")
+
+        thread = threading.Thread(target=_gen_refs, daemon=True)
+        thread.start()
+
+        self._send_json({
+            "ok": True,
+            "message": f"Generating {len(to_generate)} reference images in background ({len(already_done)} already exist)",
+            "total": len(demos),
+            "toGenerate": len(to_generate),
+            "alreadyDone": len(already_done),
+        })
 
     # ---- Upload handlers ----
 
