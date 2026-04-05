@@ -3784,6 +3784,18 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 1
           <div id="brainStyleDetails" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:9px;"></div>
         </div>
 
+        <!-- Director Influence Presets -->
+        <div id="brainPresets" style="display:none;margin-top:12px;">
+          <div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:6px;">Director Influence Presets</div>
+          <div id="brainPresetsList" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+        </div>
+
+        <!-- Best Patterns -->
+        <div id="brainPatterns" style="display:none;margin-top:8px;">
+          <div style="font-size:10px;font-weight:600;color:var(--text-dim);margin-bottom:4px;">Best Combinations</div>
+          <div id="brainPatternsList" style="font-size:9px;"></div>
+        </div>
+
         <!-- Stats -->
         <div style="display:flex;gap:12px;font-size:9px;color:var(--text-dim);">
           <span>Scenes rated: <strong id="brainRatingCount" style="color:var(--amber);">0</strong></span>
@@ -17165,8 +17177,68 @@ document.addEventListener('DOMContentLoaded', function() {
           details.innerHTML = html;
         }
       }
+      window._loadBrainPresets && window._loadBrainPresets();
     })
     .catch(function() {});
+  };
+
+  window._loadBrainPresets = function() {
+    fetch('/api/director-brain/presets')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var presetsContainer = document.getElementById('brainPresets');
+      var presetsList = document.getElementById('brainPresetsList');
+      var patternsContainer = document.getElementById('brainPatterns');
+      var patternsList = document.getElementById('brainPatternsList');
+
+      if (data.presets && data.presets.length > 0 && presetsContainer && presetsList) {
+        presetsContainer.style.display = '';
+        var html = '';
+        data.presets.forEach(function(p) {
+          html += '<button class="btn btn-small" onclick="window._applyDirectorPreset(' + JSON.stringify(p.settings).replace(/"/g, '&quot;') + ')" title="' + p.description + ' (confidence: ' + Math.round(p.confidence * 100) + '%)" style="font-size:9px;padding:6px 12px;">';
+          html += p.icon + ' ' + p.name;
+          html += '</button>';
+        });
+        presetsList.innerHTML = html;
+      }
+
+      if (data.patterns && data.patterns.best_combinations && data.patterns.best_combinations.length > 0 && patternsContainer && patternsList) {
+        patternsContainer.style.display = '';
+        var html = '';
+        data.patterns.best_combinations.forEach(function(c) {
+          html += '<div style="display:inline-block;padding:2px 8px;margin:2px;background:var(--green-dim);color:var(--green);border-radius:10px;font-size:8px;">\u2713 ' + c.combo + ' (' + c.count + 'x)</div>';
+        });
+        if (data.patterns.avoid_combinations) {
+          data.patterns.avoid_combinations.forEach(function(c) {
+            html += '<div style="display:inline-block;padding:2px 8px;margin:2px;background:var(--red-dim);color:var(--red);border-radius:10px;font-size:8px;">\u2717 ' + c.combo + '</div>';
+          });
+        }
+        patternsList.innerHTML = html;
+      }
+    });
+  };
+
+  window._applyDirectorPreset = function(settings) {
+    // Apply preset to all scenes
+    var scenes = window._autoScenes || window._scenes || [];
+    if (!scenes.length) {
+      window._toast('No scenes to apply preset to \u2014 plan your video first', 'info');
+      return;
+    }
+
+    if (!confirm('Apply "' + (settings.shot_type || 'preset') + '" style to all ' + scenes.length + ' scenes?')) return;
+
+    scenes.forEach(function(scene) {
+      if (settings.shot_type) scene.shot_type = settings.shot_type;
+      if (settings.camera) scene.camera = settings.camera;
+      if (settings.color_grade) scene.color_grade = settings.color_grade;
+      if (settings.duration) scene.duration = settings.duration;
+      if (settings.engine) scene.engine = settings.engine;
+    });
+
+    window._refreshScenes && window._refreshScenes();
+    window._toast('Director preset applied to ' + scenes.length + ' scenes', 'success');
+    window._hasUnsavedChanges = true;
   };
 
   // Check if Director Brain has enough data

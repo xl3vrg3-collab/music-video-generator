@@ -4090,6 +4090,13 @@ class Handler(BaseHTTPRequestHandler):
                 "style_summary": brain.get_style_summary(),
             })
 
+        elif path == "/api/director-brain/presets":
+            brain = get_brain()
+            self._send_json({
+                "presets": brain.get_influence_presets(),
+                "patterns": brain.get_best_prompt_patterns(),
+            })
+
         # ---- Reference Demo Images (Lookbook) ----
         elif path == "/api/reference-demos":
             refs_dir = os.path.join(OUTPUT_DIR, "reference_demos")

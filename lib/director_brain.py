@@ -306,6 +306,135 @@ class DirectorBrain:
 
         return ". ".join(parts) + "."
 
+    # ─── Influence Presets ───
+
+    def get_influence_presets(self) -> list:
+        """Generate director influence presets from learned patterns.
+
+        Analyzes top-rated scenes to extract reusable style combinations
+        that can be applied as presets to new projects.
+        """
+        if len(self.ratings) < 5:
+            return []
+
+        presets = []
+
+        # Preset 1: "Your Best Style" — combination from highest-rated scenes
+        five_star = [r for r in self.ratings if r["rating"] == 5]
+        four_plus = [r for r in self.ratings if r["rating"] >= 4]
+
+        if five_star:
+            preset = {
+                "name": "Your Best Style",
+                "description": "Settings from your highest-rated scenes",
+                "icon": "\u2b50",
+                "settings": {},
+                "confidence": len(five_star) / len(self.ratings),
+            }
+            # Most common settings among 5-star scenes
+            shots = Counter(r["shot_type"] for r in five_star)
+            cameras = Counter(r["camera"] for r in five_star if r.get("camera"))
+            grades = Counter(r["color_grade"] for r in five_star if r.get("color_grade") and r["color_grade"] != "none")
+            durations = [r["duration"] for r in five_star if r.get("duration")]
+            engines = Counter(r["engine"] for r in five_star if r.get("engine"))
+
+            if shots: preset["settings"]["shot_type"] = shots.most_common(1)[0][0]
+            if cameras: preset["settings"]["camera"] = cameras.most_common(1)[0][0]
+            if grades: preset["settings"]["color_grade"] = grades.most_common(1)[0][0]
+            if durations: preset["settings"]["duration"] = round(sum(durations) / len(durations), 1)
+            if engines: preset["settings"]["engine"] = engines.most_common(1)[0][0]
+
+            presets.append(preset)
+
+        # Preset 2: "Cinematic Drama" — extracted if user rates dramatic scenes high
+        dramatic = [r for r in four_plus if r.get("camera") in ("low angle", "dutch tilt", "crane up")
+                     or r.get("color_grade") in ("noir", "cinematic contrast", "cool")]
+        if dramatic:
+            preset = {
+                "name": "Cinematic Drama",
+                "description": "Dramatic angles and moody grading",
+                "icon": "\U0001f3ad",
+                "settings": {
+                    "shot_type": Counter(r["shot_type"] for r in dramatic).most_common(1)[0][0],
+                    "color_grade": "cinematic contrast" if any(r.get("color_grade") == "cinematic contrast" for r in dramatic) else "cool",
+                    "camera": Counter(r["camera"] for r in dramatic if r.get("camera")).most_common(1)[0][0] if any(r.get("camera") for r in dramatic) else "low angle",
+                },
+                "confidence": len(dramatic) / len(self.ratings),
+            }
+            presets.append(preset)
+
+        # Preset 3: "Warm & Personal" — warm tones, close-ups
+        warm = [r for r in four_plus if r.get("color_grade") in ("warm", "golden", "vintage")
+                or r.get("shot_type") == "close-up"]
+        if warm:
+            preset = {
+                "name": "Warm & Personal",
+                "description": "Close-up focus with warm color palette",
+                "icon": "\U0001f305",
+                "settings": {
+                    "shot_type": "close-up",
+                    "color_grade": Counter(r["color_grade"] for r in warm if r.get("color_grade")).most_common(1)[0][0] if any(r.get("color_grade") for r in warm) else "warm",
+                    "camera": "eye level",
+                },
+                "confidence": len(warm) / len(self.ratings),
+            }
+            presets.append(preset)
+
+        # Preset 4: "Epic Scale" — wide shots, establishing
+        epic = [r for r in four_plus if r.get("shot_type") in ("wide", "establishing")]
+        if epic:
+            preset = {
+                "name": "Epic Scale",
+                "description": "Grand wide shots with environmental focus",
+                "icon": "\U0001f3d4\ufe0f",
+                "settings": {
+                    "shot_type": "wide",
+                    "color_grade": Counter(r["color_grade"] for r in epic if r.get("color_grade")).most_common(1)[0][0] if any(r.get("color_grade") for r in epic) else "golden",
+                    "camera": "crane up",
+                    "duration": 8,
+                },
+                "confidence": len(epic) / len(self.ratings),
+            }
+            presets.append(preset)
+
+        return presets
+
+    def get_best_prompt_patterns(self) -> dict:
+        """Analyze which prompt patterns correlate with high ratings."""
+        if len(self.ratings) < 5:
+            return {"patterns": [], "message": "Need more ratings"}
+
+        good = [r for r in self.ratings if r["rating"] >= 4]
+        bad = [r for r in self.ratings if r["rating"] <= 2]
+
+        patterns = {
+            "best_combinations": [],
+            "avoid_combinations": [],
+        }
+
+        # Best shot_type + camera combos
+        good_combos = Counter(
+            f"{r['shot_type']} + {r.get('camera', 'default')}"
+            for r in good
+        )
+        patterns["best_combinations"] = [
+            {"combo": combo, "count": count, "type": "recommended"}
+            for combo, count in good_combos.most_common(5)
+        ]
+
+        # Worst combos
+        if bad:
+            bad_combos = Counter(
+                f"{r['shot_type']} + {r.get('camera', 'default')}"
+                for r in bad
+            )
+            patterns["avoid_combinations"] = [
+                {"combo": combo, "count": count, "type": "avoid"}
+                for combo, count in bad_combos.most_common(3)
+            ]
+
+        return patterns
+
     # ─── Prompt Archaeology ───
 
     def analyze_success_factors(self, scene_data: dict) -> dict:
