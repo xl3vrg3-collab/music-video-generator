@@ -113,6 +113,51 @@ def _subprocess_kwargs() -> dict:
     return kw
 
 
+def _run_ffmpeg_with_progress(cmd: list, total_duration: float,
+                              progress_cb=None) -> None:
+    """Run an ffmpeg command, parsing real-time progress from stderr.
+
+    If progress_cb is provided and total_duration > 0, reports status strings
+    like "encoding 45% (12.3s / 27.5s)" via the callback.  Falls back to a
+    plain subprocess.run when no callback is given.
+    """
+    if not progress_cb or total_duration <= 0:
+        subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+        return
+
+    import re as _re_prog
+
+    kw = _subprocess_kwargs()
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        **kw,
+    )
+
+    # ffmpeg writes progress to stderr.  We read it line-by-line looking for
+    # "time=HH:MM:SS.mm" which tells us how far encoding has progressed.
+    _time_re = _re_prog.compile(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)")
+    last_pct = -1
+
+    for raw_line in iter(proc.stderr.readline, b""):
+        line = raw_line.decode("utf-8", errors="replace")
+        m = _time_re.search(line)
+        if m:
+            hours = int(m.group(1))
+            mins = int(m.group(2))
+            secs = float(m.group(3))
+            current = hours * 3600 + mins * 60 + secs
+            pct = min(99, int(current / total_duration * 100))
+            if pct != last_pct:
+                last_pct = pct
+                progress_cb(f"encoding {pct}% ({current:.1f}s / {total_duration:.1f}s)")
+
+    proc.wait()
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, cmd)
+
+
 def _check_ffmpeg():
     """Verify ffmpeg is available."""
     try:
@@ -792,6 +837,78 @@ def mix_audio_tracks(vocal_path: str, instrumental_path: str,
     return output_path
 
 
+def mix_multi_audio_tracks(track_paths: list, output_path: str,
+                           volumes: list | None = None,
+                           progress_cb=None) -> str:
+    """
+    Mix multiple audio tracks into a single audio file using ffmpeg.
+
+    Args:
+        track_paths: list of audio file paths to mix together
+        output_path: path for mixed output
+        volumes: optional list of volume multipliers (0.0 - 2.0) per track
+        progress_cb: optional callable(status_str)
+
+    Returns:
+        path to the mixed audio file
+    """
+    _check_ffmpeg()
+
+    if not track_paths:
+        raise RuntimeError("No audio tracks to mix")
+
+    if len(track_paths) == 1:
+        # Single track: just copy with optional volume adjustment
+        vol = 1.0
+        if volumes and len(volumes) > 0:
+            vol = max(0.0, min(2.0, volumes[0]))
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", track_paths[0],
+            "-af", f"volume={vol:.2f}",
+            "-c:a", "aac", "-b:a", "192k",
+            output_path,
+        ]
+        subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+        return output_path
+
+    if progress_cb:
+        progress_cb(f"mixing {len(track_paths)} audio tracks...")
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
+    # Build ffmpeg filter_complex for N tracks
+    inputs = []
+    filter_parts = []
+    for i, tp in enumerate(track_paths):
+        inputs.extend(["-i", tp])
+        vol = 1.0
+        if volumes and i < len(volumes):
+            vol = max(0.0, min(2.0, volumes[i]))
+        filter_parts.append(f"[{i}:a]volume={vol:.2f}[a{i}]")
+
+    mix_inputs = "".join(f"[a{i}]" for i in range(len(track_paths)))
+    filter_parts.append(
+        f"{mix_inputs}amix=inputs={len(track_paths)}:duration=longest:dropout_transition=2[out]"
+    )
+
+    filter_complex = ";".join(filter_parts)
+
+    cmd = [
+        "ffmpeg", "-y",
+        *inputs,
+        "-filter_complex", filter_complex,
+        "-map", "[out]",
+        "-c:a", "aac", "-b:a", "192k",
+        output_path,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+
+    if progress_cb:
+        progress_cb("multi-track audio mixed")
+    return output_path
+
+
 def export_for_platform(input_path: str, output_path: str,
                         platform: str, progress_cb=None) -> str:
     """
@@ -1243,7 +1360,7 @@ def _stitch_with_crossfades(clips: list, audio: str | None, output: str,
     if progress_cb:
         progress_cb("running ffmpeg...")
 
-    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+    _run_ffmpeg_with_progress(cmd, total_dur, progress_cb)
 
     if progress_cb:
         progress_cb("done")
@@ -1545,7 +1662,7 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
     if progress_cb:
         progress_cb("running ffmpeg...")
 
-    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+    _run_ffmpeg_with_progress(cmd, total_dur, progress_cb)
 
     if progress_cb:
         progress_cb("done")

@@ -182,33 +182,35 @@ def build_shot_prompt(shot_type: str, scene_prompt: str,
     shot_type = (shot_type or "medium").lower().strip()
 
     # Quality suffix applied to all prompts
-    quality = "Hyper-realistic, photorealistic, 8K, cinematic lighting, sharp focus."
+    quality = "Hyper-realistic, photorealistic, 8K UHD, cinematic lighting, sharp focus, professional cinematography."
 
-    # Shot-type specific modifiers
+    # Shot-type specific modifiers — stronger identity language for better ref adherence
     if shot_type == "close-up":
-        framing = "Extreme close-up shot. Detailed skin texture, visible pores, catch-light in eyes, shallow depth of field."
+        framing = "Extreme close-up shot. Detailed skin texture, visible pores, catch-light in eyes, shallow depth of field, 85mm portrait lens bokeh."
         if has_char_ref:
-            framing += " PRESERVE EXACT LIKENESS from reference — same face, same features, same proportions."
+            framing += " CRITICAL: PRESERVE EXACT LIKENESS from @Character reference — identical face shape, identical features, identical proportions, identical skin tone. Do NOT alter or stylize the face."
     elif shot_type == "medium":
-        framing = "Medium shot, waist-up framing, balanced composition."
+        framing = "Medium shot, waist-up framing, balanced composition, 50mm lens."
         if has_char_ref:
-            framing += " PRESERVE EXACT LIKENESS from reference photos."
-    elif shot_type == "full":
-        framing = "Full body shot, head-to-toe framing, character centered in frame."
+            framing += " PRESERVE EXACT LIKENESS from @Character reference — same face, same build, same features."
         if has_costume_ref:
-            framing += " Show the complete outfit clearly."
+            framing += " Outfit matches @Costume reference exactly."
+    elif shot_type == "full":
+        framing = "Full body shot, head-to-toe framing, character centered, 35mm lens, full figure visible."
+        if has_costume_ref:
+            framing += " Show the COMPLETE outfit clearly — every detail from @Costume reference."
         if has_char_ref:
-            framing += " PRESERVE EXACT LIKENESS from reference."
+            framing += " PRESERVE EXACT LIKENESS from @Character reference."
     elif shot_type == "wide":
-        framing = "Wide shot, expansive environment, character small in frame, cinematic composition, atmosphere."
+        framing = "Wide shot, 24mm lens, expansive environment fills frame, character small in frame, cinematic composition, atmosphere, depth."
         if has_env_ref:
-            framing += " Match the exact environment from @Setting reference."
+            framing += " Match the EXACT environment from @Setting reference — same architecture, materials, lighting, atmosphere."
     elif shot_type == "establishing":
-        framing = "Establishing shot, sweeping vista, grand scale, environmental storytelling, dramatic atmosphere."
+        framing = "Establishing shot, 16mm ultra-wide, sweeping vista, grand scale, environmental storytelling, dramatic atmosphere, no characters in foreground."
         if has_env_ref:
-            framing += " Match the exact location from @Setting reference."
+            framing += " Match the EXACT location from @Setting reference — same environment, same lighting, same mood."
     else:
-        framing = "Cinematic shot."
+        framing = "Cinematic shot, professional cinematography."
 
     # Clean scene prompt — strip redundant quality keywords that we'll add ourselves
     import re as _re_shot
@@ -488,6 +490,66 @@ def _luma_poll(generation_id: str) -> dict:
     )
 
 
+def _runway_upload_file(file_path: str) -> str:
+    """Upload a file to Runway's upload service and return a runway:// URI.
+
+    This avoids base64 encoding large files in API calls.
+    Falls back to data URI if upload fails.
+    """
+    if not os.path.isfile(file_path):
+        return ""
+
+    filename = os.path.basename(file_path)
+    file_size = os.path.getsize(file_path)
+
+    # Only use uploads API for files > 1MB (smaller files are fine as data URIs)
+    if file_size < 1024 * 1024:
+        return _photo_to_data_uri(file_path)
+
+    try:
+        # Step 1: Get upload URL
+        resp = requests.post(
+            f"{RUNWAY_API_BASE}/uploads",
+            headers=_runway_headers(),
+            json={"filename": filename, "type": "ephemeral"},
+            timeout=30,
+        )
+
+        if resp.status_code not in (200, 201):
+            print(f"[RUNWAY/upload] Failed to get upload URL: {resp.status_code} {resp.text[:200]}")
+            return _photo_to_data_uri(file_path)
+
+        data = resp.json()
+        upload_url = data.get("uploadUrl", "")
+        fields = data.get("fields", {})
+        runway_uri = data.get("runwayUri", "")
+
+        if not upload_url or not runway_uri:
+            print(f"[RUNWAY/upload] Missing uploadUrl or runwayUri in response")
+            return _photo_to_data_uri(file_path)
+
+        # Step 2: Upload the file (multipart form to the presigned URL)
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+
+        # Build multipart form with fields + file
+        upload_fields = dict(fields)
+        files = {"file": (filename, file_data)}
+
+        upload_resp = requests.post(upload_url, data=upload_fields, files=files, timeout=120)
+
+        if upload_resp.status_code not in (200, 201, 204):
+            print(f"[RUNWAY/upload] File upload failed: {upload_resp.status_code}")
+            return _photo_to_data_uri(file_path)
+
+        print(f"[RUNWAY/upload] Uploaded {filename} ({file_size/1024:.0f}KB) -> {runway_uri}")
+        return runway_uri
+
+    except Exception as e:
+        print(f"[RUNWAY/upload] Error: {e}, falling back to data URI")
+        return _photo_to_data_uri(file_path)
+
+
 def _photo_to_data_uri(photo_path: str) -> str:
     """Convert a local photo to a base64 data URI string."""
     with open(photo_path, "rb") as f:
@@ -498,6 +560,25 @@ def _photo_to_data_uri(photo_path: str) -> str:
         ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif",
     }
     mime = mime_map.get(ext, "image/jpeg")
+    # Safety: downscale if file is too large for data URI (Runway ~5MB limit)
+    MAX_FILE_SIZE = 4 * 1024 * 1024  # 4MB to be safe
+    if len(photo_bytes) > MAX_FILE_SIZE:
+        try:
+            from PIL import Image
+            import io
+            with Image.open(io.BytesIO(photo_bytes)) as img:
+                # Downscale to fit within size limit
+                scale = (MAX_FILE_SIZE / len(photo_bytes)) ** 0.5
+                new_w = int(img.width * scale)
+                new_h = int(img.height * scale)
+                img = img.resize((new_w, new_h), Image.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=92)
+                photo_bytes = buf.getvalue()
+                mime = "image/jpeg"
+                print(f"[REF ASSET] Downscaled {os.path.basename(photo_path)} to {new_w}x{new_h} ({len(photo_bytes)/1024:.0f}KB) for API limit")
+        except Exception as e:
+            print(f"[REF ASSET] WARNING: Could not downscale large photo: {e}")
     b64_data = base64.b64encode(photo_bytes).decode("ascii")
     data_uri = f"data:{mime};base64,{b64_data}"
     # Diagnostic: log actual dimensions and size being sent
@@ -650,15 +731,26 @@ IMAGE_TO_VIDEO_RATIO_MAP = {
     "16:9": "1280:720",
     "9:16": "720:1280",
     "4:3": "1104:832",
+    "3:4": "832:1104",
     "1:1": "960:960",
     "4:5": "832:1104",
     "21:9": "1584:672",
+    # Direct valid values
     "1280:720": "1280:720",
     "720:1280": "720:1280",
     "1104:832": "1104:832",
     "960:960": "960:960",
     "832:1104": "832:1104",
     "1584:672": "1584:672",
+    # Common generated frame pixel dimensions -> nearest valid i2v ratio
+    "1920:1080": "1280:720",
+    "1536:864": "1280:720",
+    "1080:1920": "720:1280",
+    "864:1536": "720:1280",
+    "1024:1024": "960:960",
+    "1536:1536": "960:960",
+    "1536:1152": "1104:832",
+    "1152:1536": "832:1104",
 }
 
 # text_to_video ONLY accepts these two ratios per API spec
@@ -679,7 +771,8 @@ def _get_ratio_for_endpoint(endpoint: str, ratio: str = "16:9") -> str:
 
 def _runway_generate_scene_image(prompt: str, reference_photos: list,
                                   ratio: str = "1280:720",
-                                  model: str = "gen4_image") -> str:
+                                  model: str = "gen4_image",
+                                  seed: int = None) -> str:
     """
     Generate a scene image using text_to_image with @tag referenceImages.
 
@@ -697,16 +790,13 @@ def _runway_generate_scene_image(prompt: str, reference_photos: list,
     Returns:
         path to downloaded image, or "" on failure
     """
-    if not reference_photos:
-        return ""
-
     ref_images = []
-    for ref in reference_photos[:3]:  # API max 3
+    for ref in (reference_photos or [])[:3]:  # API max 3
         path = ref.get("path", "")
         tag = ref.get("tag", "")
         if not path or not os.path.isfile(path):
             continue
-        entry = {"uri": _photo_to_data_uri(path)}
+        entry = {"uri": _runway_upload_file(path)}
         if tag:
             # Tag must be 3-16 chars
             tag = tag[:16]
@@ -715,31 +805,77 @@ def _runway_generate_scene_image(prompt: str, reference_photos: list,
             entry["tag"] = tag
         ref_images.append(entry)
 
+    # Strip @Tag mentions from prompt if no matching refs were resolved
+    clean_prompt = prompt
     if not ref_images:
-        return ""
+        import re as _re_strip
+        clean_prompt = _re_strip.sub(r'@\w+\s*', '', prompt).strip()
 
     payload = {
         "model": model,
-        "promptText": prompt[:1000],
+        "promptText": clean_prompt[:1000],
         "ratio": ratio,
-        "referenceImages": ref_images,
         "contentModeration": {"publicFigureThreshold": "low"},
     }
+    if ref_images:
+        payload["referenceImages"] = ref_images
+    if seed is not None:
+        payload["seed"] = seed
 
     print(f"[RUNWAY/text_to_image] Generating scene image with {len(ref_images)} references, "
-          f"tags={[r.get('tag','') for r in ref_images]}, prompt={prompt[:80]}...")
+          f"seed={seed}, tags={[r.get('tag','') for r in ref_images]}, prompt={prompt[:80]}...")
 
-    resp = requests.post(
-        f"{RUNWAY_API_BASE}/text_to_image",
-        headers=_runway_headers(),
-        json=payload,
-        timeout=120,
-    )
+    # Retry logic for transient failures
+    max_retries = 3
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            resp = requests.post(
+                f"{RUNWAY_API_BASE}/text_to_image",
+                headers=_runway_headers(),
+                json=payload,
+                timeout=120,
+            )
 
-    if resp.status_code not in (200, 201):
-        err_body = resp.text[:500]
-        print(f"[RUNWAY/text_to_image] Error {resp.status_code}: {err_body}")
-        raise RuntimeError(f"text_to_image API {resp.status_code}: {err_body}")
+            if resp.status_code == 429:
+                # Rate limited — wait and retry
+                wait = min(30, 5 * (attempt + 1))
+                print(f"[RUNWAY/text_to_image] Rate limited (429), waiting {wait}s (attempt {attempt+1}/{max_retries})")
+                time.sleep(wait)
+                continue
+
+            if resp.status_code in (500, 502, 503):
+                # Server error — retry
+                wait = min(20, 3 * (attempt + 1))
+                print(f"[RUNWAY/text_to_image] Server error ({resp.status_code}), retrying in {wait}s (attempt {attempt+1}/{max_retries})")
+                time.sleep(wait)
+                continue
+
+            if resp.status_code not in (200, 201):
+                err_body = resp.text[:500]
+                print(f"[RUNWAY/text_to_image] Error {resp.status_code}: {err_body}")
+                raise RuntimeError(f"text_to_image API {resp.status_code}: {err_body}")
+
+            # Success — continue with polling
+            break
+
+        except requests.exceptions.Timeout:
+            print(f"[RUNWAY/text_to_image] Timeout (attempt {attempt+1}/{max_retries})")
+            last_error = "Request timed out"
+            if attempt < max_retries - 1:
+                time.sleep(5)
+                continue
+            raise RuntimeError(f"text_to_image timed out after {max_retries} attempts")
+        except requests.exceptions.ConnectionError as e:
+            print(f"[RUNWAY/text_to_image] Connection error: {e} (attempt {attempt+1}/{max_retries})")
+            last_error = str(e)
+            if attempt < max_retries - 1:
+                time.sleep(5)
+                continue
+            raise RuntimeError(f"text_to_image connection failed after {max_retries} attempts")
+    else:
+        # All retries exhausted (loop completed without break)
+        raise RuntimeError(f"text_to_image failed after {max_retries} retries: {last_error or 'server errors'}")
 
     data = resp.json()
     task_id = data.get("id", "")
@@ -842,6 +978,8 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
                                   ratio: str = "16:9",
                                   model: str = "gen4.5",
                                   first_frame_path: str = None,
+                                  last_frame_path: str = None,
+                                  seed: int = None,
                                   **_kwargs) -> str:
     """
     Submit a text-to-video or image-to-video request to Runway.
@@ -883,25 +1021,73 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
 
     # Only image_to_video gets promptImage
     if _use_i2v and first_frame_path:
-        payload["promptImage"] = _photo_to_data_uri(first_frame_path)
+        if last_frame_path and os.path.isfile(last_frame_path):
+            # Multi-keyframe: first + last frame for angle interpolation
+            payload["promptImage"] = [
+                {"uri": _runway_upload_file(first_frame_path), "position": "first"},
+                {"uri": _runway_upload_file(last_frame_path), "position": "last"},
+            ]
+            print(f"[RUNWAY] Multi-keyframe: first + last frame")
+        else:
+            # Single frame
+            payload["promptImage"] = _runway_upload_file(first_frame_path)
+    if seed is not None:
+        payload["seed"] = seed
 
     print(f"[RUNWAY] Submitting {_endpoint}: model={model}, "
           f"duration={duration}s, ratio={payload['ratio']}, "
-          f"publicFigureThreshold=low, "
+          f"seed={seed}, publicFigureThreshold=low, "
           f"prompt={prompt[:80]}...")
 
-    resp = requests.post(
-        f"{RUNWAY_API_BASE}/{_endpoint}",
-        headers=_runway_headers(),
-        json=payload,
-        timeout=60,
-    )
+    # Retry logic for transient failures
+    max_retries = 3
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            resp = requests.post(
+                f"{RUNWAY_API_BASE}/{_endpoint}",
+                headers=_runway_headers(),
+                json=payload,
+                timeout=60,
+            )
 
-    if resp.status_code not in (200, 201):
-        err_body = resp.text[:500]
-        print(f"[RUNWAY] Submit error {resp.status_code}: {err_body}")
-        print(f"[RUNWAY] Payload: model={payload.get('model')}, duration={payload.get('duration')}, ratio={payload.get('ratio')}")
-        raise RuntimeError(f"Runway API {resp.status_code}: {err_body}")
+            if resp.status_code == 429:
+                wait = min(30, 5 * (attempt + 1))
+                print(f"[RUNWAY/{_endpoint}] Rate limited (429), waiting {wait}s (attempt {attempt+1}/{max_retries})")
+                time.sleep(wait)
+                continue
+
+            if resp.status_code in (500, 502, 503):
+                wait = min(20, 3 * (attempt + 1))
+                print(f"[RUNWAY/{_endpoint}] Server error ({resp.status_code}), retrying in {wait}s (attempt {attempt+1}/{max_retries})")
+                time.sleep(wait)
+                continue
+
+            if resp.status_code not in (200, 201):
+                err_body = resp.text[:500]
+                print(f"[RUNWAY] Submit error {resp.status_code}: {err_body}")
+                print(f"[RUNWAY] Payload: model={payload.get('model')}, duration={payload.get('duration')}, ratio={payload.get('ratio')}")
+                raise RuntimeError(f"Runway API {resp.status_code}: {err_body}")
+
+            # Success
+            break
+
+        except requests.exceptions.Timeout:
+            print(f"[RUNWAY/{_endpoint}] Timeout (attempt {attempt+1}/{max_retries})")
+            last_error = "Request timed out"
+            if attempt < max_retries - 1:
+                time.sleep(5)
+                continue
+            raise RuntimeError(f"{_endpoint} timed out after {max_retries} attempts")
+        except requests.exceptions.ConnectionError as e:
+            print(f"[RUNWAY/{_endpoint}] Connection error: {e} (attempt {attempt+1}/{max_retries})")
+            last_error = str(e)
+            if attempt < max_retries - 1:
+                time.sleep(5)
+                continue
+            raise RuntimeError(f"{_endpoint} connection failed after {max_retries} attempts")
+    else:
+        raise RuntimeError(f"{_endpoint} failed after {max_retries} retries: {last_error or 'server errors'}")
 
     data = resp.json()
     task_id = data.get("id", "")
@@ -919,12 +1105,22 @@ def _runway_poll(task_id: str, progress_cb=None) -> dict:
     poll_count = 0
 
     while time.time() < deadline:
-        resp = requests.get(
-            f"{RUNWAY_API_BASE}/tasks/{task_id}",
-            headers=_runway_headers(),
-            timeout=30,
-        )
-        resp.raise_for_status()
+        try:
+            resp = requests.get(
+                f"{RUNWAY_API_BASE}/tasks/{task_id}",
+                headers=_runway_headers(),
+                timeout=30,
+            )
+            if resp.status_code in (429, 500, 502, 503):
+                print(f"[RUNWAY/poll] Transient {resp.status_code}, will retry...")
+                time.sleep(RUNWAY_POLL_INTERVAL)
+                continue
+            if resp.status_code != 200:
+                raise RuntimeError(f"Poll error {resp.status_code}")
+        except requests.exceptions.RequestException as e:
+            print(f"[RUNWAY/poll] Request error: {e}, retrying...")
+            time.sleep(RUNWAY_POLL_INTERVAL)
+            continue
         data = resp.json()
         status = data.get("status", "")
         elapsed = int(time.time() - start_time)

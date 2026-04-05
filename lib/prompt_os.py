@@ -25,9 +25,12 @@ WORLD_RULES_PATH = os.path.join(PROMPT_OS_DIR, "world_rules.json")
 CONTINUITY_RULES_PATH = os.path.join(PROMPT_OS_DIR, "continuity_rules.json")
 PROPS_PATH = os.path.join(PROMPT_OS_DIR, "props.json")
 VOICES_PATH = os.path.join(PROMPT_OS_DIR, "voices.json")
+SHEETS_DIR = os.path.join(PROMPT_OS_DIR, "sheets")
+PROJECT_STYLE_PATH = os.path.join(PROMPT_OS_DIR, "project_style.json")
 
-# Ensure directory exists
+# Ensure directories exist
 os.makedirs(PROMPT_OS_DIR, exist_ok=True)
+os.makedirs(SHEETS_DIR, exist_ok=True)
 
 
 def _now():
@@ -212,6 +215,18 @@ class PromptOS:
             "updatedAt": _now(),
             "notes": data.get("notes", ""),
             "isCharacterSheet": bool(data.get("isCharacterSheet", False)),
+            "approvalState": data.get("approvalState", "draft"),  # draft|generated|selected|approved|locked|archived
+            "sheetImages": data.get("sheetImages", []),  # list of {url, type, resolution, generatedAt, model}
+            "approvedSheet": data.get("approvedSheet", ""),  # URL of approved sheet image
+            "approvedFaceCloseUp": data.get("approvedFaceCloseUp", ""),  # dedicated face close-up
+            "approvedHeroPortrait": data.get("approvedHeroPortrait", ""),  # hero portrait
+            "approvedFullBody": data.get("approvedFullBody", ""),  # full body reference
+            "approvedSideAngle": data.get("approvedSideAngle", ""),  # side view
+            "linkedCostumeIds": data.get("linkedCostumeIds", []),
+            "linkedPropIds": data.get("linkedPropIds", []),
+            "continuityNotes": data.get("continuityNotes", ""),
+            "versionHistory": data.get("versionHistory", []),  # list of {version, sheetUrl, timestamp, notes}
+            "sourceResolution": data.get("sourceResolution", {}),  # {width, height, format}
         }
         chars.append(record)
         _save_json(CHARACTERS_PATH, chars)
@@ -230,10 +245,18 @@ class PromptOS:
         chars = _load_json(CHARACTERS_PATH)
         for i, c in enumerate(chars):
             if c["id"] == cid:
-                for key in ("name", "physicalDescription", "hair", "skinTone", "bodyType",
+                for key in ("name", "role", "description", "physicalDescription",
+                             "hair", "skinTone", "bodyType", "posture",
+                             "outfitDescription", "accessories", "movementRules",
                              "distinguishingFeatures", "defaultExpression", "ageRange",
-                             "referencePhoto", "previewImage", "costumes", "tags", "notes",
-                             "isCharacterSheet"):
+                             "referencePhoto", "previewImage", "costumes",
+                             "styleOverrides", "tags", "linkedPromptIds", "notes",
+                             "isCharacterSheet",
+                             "approvalState", "sheetImages", "approvedSheet",
+                             "approvedFaceCloseUp", "approvedHeroPortrait",
+                             "approvedFullBody", "approvedSideAngle",
+                             "linkedCostumeIds", "linkedPropIds",
+                             "continuityNotes", "versionHistory", "sourceResolution"):
                     if key in data:
                         c[key] = data[key]
                 c["updatedAt"] = _now()
@@ -270,6 +293,16 @@ class PromptOS:
             "createdAt": _now(),
             "updatedAt": _now(),
             "notes": data.get("notes", ""),
+            "approvalState": data.get("approvalState", "draft"),
+            "sheetImages": data.get("sheetImages", []),
+            "approvedSheet": data.get("approvedSheet", ""),
+            "detailCrops": data.get("detailCrops", []),  # material/detail crop images
+            "linkedCharacterIds": data.get("linkedCharacterIds", []),  # multiple characters can wear it
+            "linkedAccessoryIds": data.get("linkedAccessoryIds", []),
+            "materialNotes": data.get("materialNotes", ""),
+            "continuityNotes": data.get("continuityNotes", ""),
+            "versionHistory": data.get("versionHistory", []),
+            "sourceResolution": data.get("sourceResolution", {}),
         }
         costumes.append(record)
         _save_json(COSTUMES_PATH, costumes)
@@ -293,7 +326,11 @@ class PromptOS:
             if c["id"] == cid:
                 for key in ("name", "characterId", "description", "upperBody", "lowerBody",
                              "footwear", "accessories", "colorPalette",
-                             "referenceImagePath", "previewImage", "tags", "notes"):
+                             "referenceImagePath", "previewImage", "tags", "notes",
+                             "approvalState", "sheetImages", "approvedSheet",
+                             "detailCrops", "linkedCharacterIds", "linkedAccessoryIds",
+                             "materialNotes", "continuityNotes", "versionHistory",
+                             "sourceResolution"):
                     if key in data:
                         c[key] = data[key]
                 c["updatedAt"] = _now()
@@ -335,6 +372,14 @@ class PromptOS:
             "createdAt": _now(),
             "updatedAt": _now(),
             "notes": data.get("notes", ""),
+            "approvalState": data.get("approvalState", "draft"),
+            "sheetImages": data.get("sheetImages", []),
+            "approvedSheet": data.get("approvedSheet", ""),
+            "alternateViews": data.get("alternateViews", []),  # different angles of same location
+            "architectureNotes": data.get("architectureNotes", ""),
+            "materialNotes": data.get("materialNotes", ""),
+            "versionHistory": data.get("versionHistory", []),
+            "sourceResolution": data.get("sourceResolution", {}),
         }
         envs.append(record)
         _save_json(ENVIRONMENTS_PATH, envs)
@@ -353,9 +398,14 @@ class PromptOS:
         envs = _load_json(ENVIRONMENTS_PATH)
         for i, e in enumerate(envs):
             if e["id"] == eid:
-                for key in ("name", "description", "location", "timeOfDay", "weather",
-                             "lighting", "keyProps", "atmosphere",
-                             "referenceImagePath", "previewImage", "tags", "notes"):
+                for key in ("name", "locationType", "description", "architecture",
+                             "location", "timeOfDay", "weather",
+                             "lighting", "keyProps", "atmosphere", "props",
+                             "continuityNotes", "referenceImagePath", "previewImage",
+                             "linkedPromptIds", "tags", "notes",
+                             "approvalState", "sheetImages", "approvedSheet",
+                             "alternateViews", "architectureNotes", "materialNotes",
+                             "versionHistory", "sourceResolution"):
                     if key in data:
                         e[key] = data[key]
                 e["updatedAt"] = _now()
@@ -385,6 +435,14 @@ class PromptOS:
             "tags": data.get("tags", []),
             "createdAt": _now(),
             "updatedAt": _now(),
+            "approvalState": data.get("approvalState", "draft"),
+            "sheetImages": data.get("sheetImages", []),
+            "approvedSheet": data.get("approvedSheet", ""),
+            "linkedCharacterIds": data.get("linkedCharacterIds", []),
+            "linkedCostumeIds": data.get("linkedCostumeIds", []),
+            "continuityNotes": data.get("continuityNotes", ""),
+            "versionHistory": data.get("versionHistory", []),
+            "sourceResolution": data.get("sourceResolution", {}),
         }
         props.append(record)
         _save_json(PROPS_PATH, props)
@@ -404,7 +462,10 @@ class PromptOS:
         for i, p in enumerate(props):
             if p["id"] == pid:
                 for key in ("name", "description", "category",
-                             "referenceImagePath", "tags"):
+                             "referenceImagePath", "tags",
+                             "approvalState", "sheetImages", "approvedSheet",
+                             "linkedCharacterIds", "linkedCostumeIds",
+                             "continuityNotes", "versionHistory", "sourceResolution"):
                     if key in data:
                         p[key] = data[key]
                 p["updatedAt"] = _now()
@@ -556,6 +617,112 @@ class PromptOS:
         _save_json(CONTINUITY_RULES_PATH, rules)
         return rules
 
+    # ───── Project Style Lock ─────
+
+    def get_project_style(self):
+        return _load_json(PROJECT_STYLE_PATH, default={})
+
+    def set_project_style(self, style):
+        """Save structured project style lock.
+        Expected fields: worldSetting, tone, visualLanguage, colorPalette,
+        textureMaterial, cameraLanguage, continuityRules, negativePrompt"""
+        if not isinstance(style, dict):
+            return {"error": "Style must be a dict"}
+        style["updatedAt"] = _now()
+        _save_json(PROJECT_STYLE_PATH, style)
+        return style
+
+    # ───── Sheet Management ─────
+
+    def add_sheet_image(self, asset_type, asset_id, sheet_data):
+        """Add a generated sheet image to an asset.
+        asset_type: 'character'|'costume'|'environment'|'prop'
+        sheet_data: {url, type, resolution:{width,height}, model, generatedAt}
+        """
+        getter = getattr(self, f'get_{asset_type}', None)
+        updater = getattr(self, f'update_{asset_type}', None)
+        if not getter or not updater:
+            return {"error": f"Unknown asset type: {asset_type}"}
+        asset = getter(asset_id)
+        if not asset:
+            return {"error": f"{asset_type} not found: {asset_id}"}
+        sheets = asset.get("sheetImages", [])
+        sheet_data["addedAt"] = _now()
+        sheets.append(sheet_data)
+        updater(asset_id, {"sheetImages": sheets, "approvalState": "generated"})
+        return getter(asset_id)
+
+    def approve_sheet(self, asset_type, asset_id, sheet_url, slot="approvedSheet"):
+        """Promote a sheet image to an approved slot.
+        slot: 'approvedSheet'|'approvedFaceCloseUp'|'approvedHeroPortrait'|'approvedFullBody'|'approvedSideAngle'
+        """
+        getter = getattr(self, f'get_{asset_type}', None)
+        updater = getattr(self, f'update_{asset_type}', None)
+        if not getter or not updater:
+            return {"error": f"Unknown asset type: {asset_type}"}
+        asset = getter(asset_id)
+        if not asset:
+            return {"error": f"{asset_type} not found: {asset_id}"}
+        update = {slot: sheet_url}
+        if slot == "approvedSheet":
+            update["approvalState"] = "approved"
+        # Add to version history
+        history = asset.get("versionHistory", [])
+        history.append({
+            "version": len(history) + 1,
+            "sheetUrl": sheet_url,
+            "slot": slot,
+            "timestamp": _now(),
+        })
+        update["versionHistory"] = history
+        updater(asset_id, update)
+        return getter(asset_id)
+
+    def lock_asset(self, asset_type, asset_id):
+        """Lock an approved asset to prevent accidental changes."""
+        getter = getattr(self, f'get_{asset_type}', None)
+        updater = getattr(self, f'update_{asset_type}', None)
+        if not getter or not updater:
+            return {"error": f"Unknown asset type: {asset_type}"}
+        asset = getter(asset_id)
+        if not asset:
+            return {"error": f"{asset_type} not found: {asset_id}"}
+        if asset.get("approvalState") not in ("approved", "locked"):
+            return {"error": "Asset must be approved before locking"}
+        updater(asset_id, {"approvalState": "locked"})
+        return getter(asset_id)
+
+    def get_asset_readiness(self, asset_type, asset_id):
+        """Check production readiness of an asset."""
+        getter = getattr(self, f'get_{asset_type}', None)
+        if not getter:
+            return {"error": f"Unknown asset type: {asset_type}"}
+        asset = getter(asset_id)
+        if not asset:
+            return {"error": f"{asset_type} not found: {asset_id}"}
+
+        readiness = {
+            "hasUploadedRef": bool(asset.get("referencePhoto") or asset.get("referenceImagePath")),
+            "hasGeneratedSheets": len(asset.get("sheetImages", [])) > 0,
+            "hasApprovedSheet": bool(asset.get("approvedSheet")),
+            "isLocked": asset.get("approvalState") == "locked",
+            "approvalState": asset.get("approvalState", "draft"),
+        }
+
+        if asset_type == "character":
+            readiness["hasFaceCloseUp"] = bool(asset.get("approvedFaceCloseUp"))
+            readiness["hasHeroPortrait"] = bool(asset.get("approvedHeroPortrait"))
+            readiness["hasFullBody"] = bool(asset.get("approvedFullBody"))
+            readiness["closeUpReady"] = bool(asset.get("approvedFaceCloseUp"))
+            readiness["productionReady"] = all([
+                readiness["hasApprovedSheet"],
+                readiness["hasFaceCloseUp"],
+            ])
+        else:
+            readiness["productionReady"] = readiness["hasApprovedSheet"]
+
+        return readiness
+
     # ───── Assembly ─────
 
     def assemble_prompt(self, scene_id):
@@ -567,6 +734,18 @@ class PromptOS:
 
         sections = []
         warnings = []
+
+        # 0. Project Style Lock
+        project_style = self.get_project_style()
+        if project_style:
+            style_parts = []
+            for key in ("worldSetting", "tone", "visualLanguage", "colorPalette", "textureMaterial", "cameraLanguage"):
+                if project_style.get(key):
+                    style_parts.append(project_style[key])
+            if style_parts:
+                sections.append({"label": "Project Style", "text": ". ".join(style_parts)})
+            if project_style.get("negativePrompt"):
+                sections.append({"label": "Negative", "text": "AVOID: " + project_style["negativePrompt"]})
 
         # 1. Style locks
         style_locks = self.get_style_locks()

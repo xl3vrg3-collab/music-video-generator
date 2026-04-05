@@ -67,7 +67,7 @@ from lib.video_stitcher import (
     ASPECT_PRESETS, _get_clip_duration,
     SPEED_OPTIONS, COLOR_GRADE_PRESETS, AUDIO_VIZ_STYLES,
     generate_credits, apply_watermark, extract_thumbnail,
-    mix_audio_tracks, export_for_platform, apply_beat_sync_cuts,
+    mix_audio_tracks, mix_multi_audio_tracks, export_for_platform, apply_beat_sync_cuts,
     align_scenes_to_beats, overlay_scene_vocals, add_beat_cuts_to_stitch,
     _apply_speed_ramp, _apply_reverse, apply_audio_crossfade, SPEED_RAMP_TYPES,
     apply_loop_boomerang, apply_audio_ducking, export_gif,
@@ -102,17 +102,30 @@ def _scene_gen_hash(scene: dict) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-PORT = 3849
+PORT = int(os.environ.get("PORT", 3849))
+_server_start_time = time.time()
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOADS_DIR = os.path.join(PROJECT_DIR, "uploads")
 OUTPUT_DIR = os.path.join(PROJECT_DIR, "output")
 
 from lib.prompt_os import PromptOS
 _prompt_os = PromptOS()
+
+from lib.prompt_templates import (
+    build_character_sheet_prompt, build_face_closeup_prompt,
+    build_costume_sheet_prompt, build_environment_sheet_prompt,
+    build_prop_sheet_prompt, build_reference_package, select_best_refs_for_shot,
+    build_enhanced_shot_prompt, build_video_prompt,
+)
 PROMPT_OS_DATA_DIR = os.path.join(OUTPUT_DIR, "prompt_os")
 os.makedirs(PROMPT_OS_DATA_DIR, exist_ok=True)
 
+from lib.auto_agent import (
+    get_or_create_run, get_current_run,
+    OptimizationRun, EvalResult, EvalBatch, HarnessManager,
+)
 from lib.auto_director import AutoDirector, get_workflow_presets, save_custom_preset
+from lib.director_brain import get_brain
 from lib.movie_planner import (
     create_movie_plan, load_movie_plan, save_movie_plan, rebuild_bible_from_plan,
     MovieBible, BeatPlanner, SceneBuilder, AssetCoverage, PlanValidator,
@@ -620,6 +633,41 @@ def _load_scene_plan():
     return None
 
 
+def _assign_shot_types(scenes):
+    """Assign varied shot types to scenes for cinematic variety."""
+    if not scenes:
+        return
+
+    n = len(scenes)
+
+    # Cinematic pattern: establish -> build variety -> climax close-ups -> resolve wide
+    patterns = {
+        1: ["medium"],
+        2: ["establishing", "close-up"],
+        3: ["establishing", "medium", "close-up"],
+        4: ["establishing", "medium", "close-up", "wide"],
+        5: ["establishing", "medium", "close-up", "medium", "wide"],
+    }
+
+    if n <= 5:
+        type_sequence = patterns.get(n, patterns[5])
+    else:
+        # Build a repeating pattern for longer sequences
+        type_sequence = ["establishing"]  # Always start wide
+
+        cycle = ["medium", "close-up", "medium", "full", "wide", "close-up", "medium"]
+        for i in range(1, n - 1):
+            type_sequence.append(cycle[(i - 1) % len(cycle)])
+
+        type_sequence.append("wide")  # End wide for resolution
+
+    for i, scene in enumerate(scenes):
+        if i < len(type_sequence):
+            # Only set if not already specified by user
+            if not scene.get("shot_type") or scene.get("shot_type") == "medium":
+                scene["shot_type"] = type_sequence[i]
+
+
 def _sync_auto_plan_to_scene_plan(ad_plan=None):
     """Copy auto_director_plan.json into scene_plan.json format for generation pipeline compatibility."""
     try:
@@ -644,6 +692,33 @@ def _sync_auto_plan_to_scene_plan(ad_plan=None):
             json.dump(plan, f, indent=2)
     except Exception as e:
         print(f"[SYNC] Error syncing auto plan to scene plan: {e}")
+
+
+def _enrich_scene_prompt(scene: dict, project_style: dict = None) -> str:
+    """Enrich a scene's prompt with cinematic detail if it's too short/generic."""
+    prompt = scene.get("shot_prompt", scene.get("prompt", ""))
+    if not prompt or len(prompt) < 20:
+        # Build from available fields
+        parts = []
+        if scene.get("summary"):
+            parts.append(scene["summary"])
+        if scene.get("action"):
+            parts.append(scene["action"])
+        if scene.get("visual_description"):
+            parts.append(scene["visual_description"])
+        prompt = ". ".join(parts) if parts else "Cinematic scene"
+
+    # Add shot type framing if not present
+    shot_type = scene.get("shot_type", "medium")
+    if shot_type and shot_type not in prompt.lower():
+        prompt = f"{shot_type} shot. {prompt}"
+
+    # Add camera if specified
+    camera = scene.get("camera", "") or scene.get("camera_movement", "")
+    if camera and camera not in prompt.lower():
+        prompt += f" Camera: {camera}."
+
+    return prompt
 
 
 def _enrich_scene_with_assets(scene):
@@ -1316,6 +1391,7 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
                 plan = _load_scene_plan()
                 if plan and index < len(plan.get("scenes", [])):
                     plan["scenes"][index]["first_frame_path"] = first_frame_path
+                    plan["scenes"][index]["_lastGeneratedPrompt"] = full_prompt
                     with open(SCENE_PLAN_PATH, "w") as f:
                         json.dump(plan, f, indent=2)
 
@@ -2584,7 +2660,7 @@ def _generate_waveform(audio_path: str) -> list:
         return []
 
 
-def _auto_resize_photo(photo_path: str, max_w: int = 1280, max_h: int = 720) -> str:
+def _auto_resize_photo(photo_path: str, max_w: int = 4096, max_h: int = 4096) -> str:
     """Auto-resize a photo to max dimensions (Feature 6). Returns the path."""
     try:
         from PIL import Image
@@ -2598,7 +2674,7 @@ def _auto_resize_photo(photo_path: str, max_w: int = 1280, max_h: int = 720) -> 
             else:
                 target = (max_h, max_w)
             img.thumbnail(target, Image.LANCZOS)
-            img.save(photo_path, quality=90)
+            img.save(photo_path, quality=95)
             new_w, new_h = img.size
             print(f"[RESIZE] Resized {orig_w}x{orig_h} -> {new_w}x{new_h}")
     except ImportError:
@@ -2914,6 +2990,232 @@ def _run_batch_export():
             gen_state["running"] = False
 
 
+def _resolve_sheet_or_photo(url_or_path):
+    """Resolve a sheet URL or file path to a local file path."""
+    if not url_or_path:
+        return None
+    if os.path.isfile(url_or_path):
+        return url_or_path
+    # Check if it's an API URL for sheets
+    if url_or_path.startswith("/api/pos/sheets/"):
+        filename = url_or_path.split("/api/pos/sheets/")[-1]
+        sheets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "prompt_os", "sheets")
+        candidate = os.path.join(sheets_dir, filename)
+        if os.path.isfile(candidate):
+            return candidate
+    elif url_or_path.startswith("/api/pos/"):
+        # Character/costume/env photo API URL
+        import re as _re_resolve
+        for entity_type, photo_dir in [("characters", POS_PHOTOS_CHARS_DIR), ("costumes", POS_PHOTOS_COSTUMES_DIR), ("environments", POS_PHOTOS_ENVS_DIR), ("props", POS_PHOTOS_PROPS_DIR)]:
+            m = _re_resolve.search(rf"/api/pos/{entity_type}/([^/]+)/photo", url_or_path)
+            if m:
+                eid = m.group(1)
+                for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                    candidate = os.path.join(photo_dir, f"{eid}{ext}")
+                    if os.path.isfile(candidate):
+                        return candidate
+    return None
+
+
+# ---- AutoAgent eval function ----
+
+def _autoagent_eval_fn():
+    """Eval function for AutoAgent — generates test frames and measures success.
+
+    Uses the current project's scenes as test cases.
+    Returns an EvalBatch with results.
+    """
+    from lib.auto_agent import EvalBatch, EvalResult, HarnessManager
+    from lib.video_generator import _runway_generate_scene_image
+
+    harness = HarnessManager()
+    batch = EvalBatch(harness.current.get("version", 0), harness.hash())
+
+    # Load scenes from current plan
+    plan = load_movie_plan(OUTPUT_DIR)
+    if not plan or not plan.get("scenes"):
+        # No plan — create a synthetic test batch
+        batch.results.append(EvalResult(0, "medium", True, generation_time=0, prompt_used="synthetic"))
+        batch.finished_at = time.strftime("%Y-%m-%dT%H:%M:%S")
+        return batch
+
+    scenes = plan["scenes"]
+    # Test up to 5 scenes per eval (balance speed vs coverage)
+    import random
+    test_scenes = random.sample(range(len(scenes)), min(5, len(scenes)))
+
+    for scene_idx in test_scenes:
+        scene = scenes[scene_idx]
+        shot_type = scene.get("shot_type", "medium")
+        prompt = scene.get("shot_prompt", scene.get("prompt", "Cinematic scene"))
+
+        # Build prompt using current harness
+        h = harness.current
+        framing = h.get("framing_prefix", {}).get(shot_type, "Cinematic shot.")
+        quality = h.get("quality_suffix", "Photorealistic, 8K.")
+
+        # Check for refs
+        enriched = dict(scene)
+        _enrich_scene_with_assets(enriched)
+
+        char_photos = []
+        char_photo = enriched.get("character_photo_path", "")
+        if char_photo and os.path.isfile(char_photo):
+            char_photos.append({"path": char_photo, "tag": "Character"})
+
+        env_photos = []
+        env_photo = enriched.get("environment_photo_path", "")
+        if env_photo and os.path.isfile(env_photo):
+            env_photos.append({"path": env_photo, "tag": "Setting"})
+
+        # Collect refs
+        refs = char_photos[:1] + env_photos[:1]  # Max 2 for speed
+
+        has_char = len(char_photos) > 0
+        has_env = len(env_photos) > 0
+
+        # Build test prompt from harness
+        identity = ""
+        if has_char:
+            identity = h.get("identity_strength", {}).get(shot_type, "")
+
+        test_prompt = f"{framing} {identity} {prompt} {quality}"
+        if h.get("negative_keywords"):
+            test_prompt += f" AVOID: {h['negative_keywords']}"
+        test_prompt = test_prompt[:h.get("max_prompt_length", 1000)]
+
+        # Generate
+        start_time = time.time()
+        try:
+            result_path = _runway_generate_scene_image(
+                test_prompt, refs,
+                ratio="1280:720",
+                model="gen4_image_turbo",  # Use turbo for speed in evals
+            )
+            gen_time = time.time() - start_time
+
+            if result_path and os.path.isfile(result_path):
+                batch.results.append(EvalResult(
+                    scene_idx, shot_type, True,
+                    generation_time=gen_time,
+                    prompt_used=test_prompt,
+                ))
+            else:
+                batch.results.append(EvalResult(
+                    scene_idx, shot_type, False,
+                    error="No image returned",
+                    generation_time=gen_time,
+                    prompt_used=test_prompt,
+                ))
+        except Exception as e:
+            gen_time = time.time() - start_time
+            error_str = str(e)[:300]
+            is_mod = any(kw in error_str.lower() for kw in ["moderation", "safety", "policy", "flagged"])
+            batch.results.append(EvalResult(
+                scene_idx, shot_type, False,
+                error=error_str,
+                moderation_blocked=is_mod,
+                generation_time=gen_time,
+                prompt_used=test_prompt,
+            ))
+
+    batch.finished_at = time.strftime("%Y-%m-%dT%H:%M:%S")
+    return batch
+
+
+# ---- Smart Engine Router ----
+
+def _recommend_engine(scene: dict, project_default: str = "gen4_5") -> dict:
+    """Recommend the best generation engine for a scene.
+
+    Returns {engine, reason, confidence} where confidence is 0-1.
+
+    Logic:
+    - Default to project's chosen engine for consistency
+    - Only recommend switching when a specific capability is needed
+    - Close-up face shots -> Runway (best identity preservation)
+    - Action/fast motion -> Veo 3.1 (best motion quality)
+    - Wide cinematic -> Veo 3.1 (best environmental quality)
+    - Dialogue scenes -> Gen 4.5 (best identity preservation during speech)
+    """
+    shot_type = scene.get("shot_type", "medium")
+    has_dialogue = bool(scene.get("dialogue") or scene.get("has_dialogue"))
+    has_action = any(w in (scene.get("action", "") or "").lower() for w in
+                     ["fight", "run", "chase", "explod", "dance", "jump", "crash", "fast"])
+    has_face = shot_type in ("close-up",)
+    has_environment = shot_type in ("wide", "establishing")
+
+    result = {
+        "engine": project_default,
+        "reason": "Project default for visual consistency",
+        "confidence": 0.8,
+        "switchRecommended": False,
+    }
+
+    # Only recommend switching for strong reasons
+    if has_dialogue:
+        result = {
+            "engine": "gen4_5",
+            "reason": "Dialogue scene — Gen 4.5 preserves identity during speech",
+            "confidence": 0.7,
+            "switchRecommended": True,
+        }
+    elif has_face and project_default not in ("gen4_5", "gen4_turbo"):
+        result = {
+            "engine": "gen4_5",
+            "reason": "Close-up shot — Runway Gen 4.5 has best face/identity preservation",
+            "confidence": 0.6,
+            "switchRecommended": True,
+        }
+    elif has_action and project_default not in ("gen4_5", "veo3_1"):
+        result = {
+            "engine": "veo3_1",
+            "reason": "Action scene — Veo 3.1 handles fast motion well",
+            "confidence": 0.5,
+            "switchRecommended": False,
+        }
+    elif has_environment and project_default not in ("veo3_1", "veo3"):
+        result = {
+            "engine": "veo3_1",
+            "reason": "Wide/establishing shot — Veo 3.1 has best environmental detail",
+            "confidence": 0.5,
+            "switchRecommended": False,
+        }
+
+    return result
+
+
+# ---- Rate limiter ----
+
+import time as _time
+_rate_limits = {}  # {ip: [timestamps]}
+_RATE_LIMIT_WINDOW = 60  # seconds
+_RATE_LIMIT_MAX = {
+    "generate": 10,      # 10 generations per minute
+    "default": 60,       # 60 requests per minute
+    "upload": 20,        # 20 uploads per minute
+}
+
+def _check_rate_limit(ip: str, category: str = "default") -> bool:
+    """Returns True if request is allowed, False if rate limited."""
+    now = _time.time()
+    key = f"{ip}:{category}"
+
+    if key not in _rate_limits:
+        _rate_limits[key] = []
+
+    # Clean old entries
+    _rate_limits[key] = [t for t in _rate_limits[key] if now - t < _RATE_LIMIT_WINDOW]
+
+    max_req = _RATE_LIMIT_MAX.get(category, _RATE_LIMIT_MAX["default"])
+
+    if len(_rate_limits[key]) >= max_req:
+        return False
+
+    _rate_limits[key].append(now)
+    return True
+
+
 # ---- HTTP handler ----
 
 class Handler(BaseHTTPRequestHandler):
@@ -2923,9 +3225,20 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write(f"[server] {fmt % args}\n")
 
     def _send_json(self, data, status=200):
-        body = json.dumps(data).encode()
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+
+        # Compress large responses if client accepts gzip
+        use_gzip = False
+        accept_encoding = self.headers.get("Accept-Encoding", "")
+        if "gzip" in accept_encoding and len(body) > 1024:
+            import gzip as _gzip
+            body = _gzip.compress(body)
+            use_gzip = True
+
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        if use_gzip:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -2958,8 +3271,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(size))
-        # Prevent browser from caching video/image clips
-        if content_type.startswith("video/") or content_type.startswith("image/"):
+        # Cache control: HTML always fresh, static assets cached 1 hour
+        if content_type.startswith("text/html"):
+            self.send_header("Cache-Control", "no-cache")
+        elif content_type.startswith(("image/", "text/css", "application/javascript")):
+            self.send_header("Cache-Control", "public, max-age=3600")
+        elif content_type.startswith("video/"):
             self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.end_headers()
         with open(path, "rb") as f:
@@ -3009,7 +3326,9 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
-        if path == "/":
+        if path == "/health":
+            self._send_json({"status": "ok", "uptime": time.time() - _server_start_time})
+        elif path == "/":
             self._send_file(os.path.join(PROJECT_DIR, "public", "index.html"))
         elif path == "/landing":
             self._send_file(os.path.join(PROJECT_DIR, "public", "landing.html"))
@@ -3023,7 +3342,13 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/public/"):
             rel = path[len("/public/"):]
             safe = os.path.normpath(rel)
-            self._send_file(os.path.join(PROJECT_DIR, "public", safe))
+            fpath = os.path.join(PROJECT_DIR, "public", safe)
+            resolved = os.path.abspath(fpath)
+            allowed_dir = os.path.abspath(os.path.join(PROJECT_DIR, "public"))
+            if not resolved.startswith(allowed_dir + os.sep) and resolved != allowed_dir:
+                self.send_error(403, "Access denied")
+                return
+            self._send_file(fpath)
 
         elif path == "/api/progress":
             with gen_lock:
@@ -3060,6 +3385,8 @@ class Handler(BaseHTTPRequestHandler):
             if not os.path.isfile(clip_file):
                 clip_file = os.path.join(OUTPUT_DIR, "auto_director", safe)
             if not os.path.isfile(clip_file):
+                clip_file = os.path.join(OUTPUT_DIR, "auto_director", "clips", safe)
+            if not os.path.isfile(clip_file):
                 # Search in takes directories
                 for scene_dir in os.listdir(TAKES_DIR) if os.path.isdir(TAKES_DIR) else []:
                     candidate = os.path.join(TAKES_DIR, scene_dir, safe)
@@ -3068,10 +3395,31 @@ class Handler(BaseHTTPRequestHandler):
                         break
             self._send_file(clip_file)
 
+        elif path.startswith("/api/performance-ref/"):
+            filename = os.path.basename(path.split("/api/performance-ref/")[-1])
+            perf_dir = os.path.join(OUTPUT_DIR, "performance_refs")
+            fpath = os.path.join(perf_dir, filename)
+            if os.path.isfile(fpath):
+                self._send_file(fpath)
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
         elif path.startswith("/api/audio/generated/"):
             filename = path[len("/api/audio/generated/"):]
             safe = os.path.basename(urllib.parse.unquote(filename))
             self._send_file(os.path.join(AUDIO_GEN_DIR, safe))
+
+        elif path.startswith("/api/audio/stems/"):
+            filename = os.path.basename(path.split("/api/audio/stems/")[-1])
+            stems_dir = os.path.join(OUTPUT_DIR, "stems")
+            found = False
+            for root, dirs, files in os.walk(stems_dir):
+                if filename in files:
+                    self._send_file(os.path.join(root, filename))
+                    found = True
+                    break
+            if not found:
+                self._send_json({"error": "Stem file not found"}, 404)
 
         elif path == "/api/references":
             self._handle_get_references()
@@ -3104,7 +3452,13 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/output/"):
             rel = path[len("/output/"):]
             safe = os.path.normpath(rel)
-            self._send_file(os.path.join(OUTPUT_DIR, safe))
+            fpath = os.path.join(OUTPUT_DIR, safe)
+            resolved = os.path.abspath(fpath)
+            allowed_dir = os.path.abspath(OUTPUT_DIR)
+            if not resolved.startswith(allowed_dir + os.sep) and resolved != allowed_dir:
+                self.send_error(403, "Access denied")
+                return
+            self._send_file(fpath)
 
         elif path == "/api/project/save":
             self._handle_project_save()
@@ -3398,6 +3752,66 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/pos/continuity-rules":
             self._send_json(_prompt_os.get_continuity_rules())
 
+        elif path == "/api/pos/project-style":
+            self._send_json(_prompt_os.get_project_style())
+
+        elif re.match(r'^/api/pos/assets/([^/]+)/([^/]+)/readiness$', path):
+            m = re.match(r'^/api/pos/assets/([^/]+)/([^/]+)/readiness$', path)
+            self._send_json(_prompt_os.get_asset_readiness(m.group(1), m.group(2)))
+
+        elif re.match(r'^/api/pos/missing-assets/(\d+)$', path):
+            m = re.match(r'^/api/pos/missing-assets/(\d+)$', path)
+            shot_index = int(m.group(1))
+            missing = {"shotIndex": shot_index, "missing": []}
+            if os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
+                with open(AUTO_DIRECTOR_PLAN_PATH, "r") as f:
+                    plan = json.load(f)
+                shots = plan.get("shots", plan.get("scenes", []))
+                if 0 <= shot_index < len(shots):
+                    shot = shots[shot_index]
+                    # Check character readiness
+                    for cid in shot.get("characterIds", []):
+                        r = _prompt_os.get_asset_readiness("character", cid)
+                        if not r.get("ready"):
+                            missing["missing"].append({"type": "character", "id": cid, "readiness": r})
+                    # Check costume readiness
+                    for cid in shot.get("costumeIds", []):
+                        r = _prompt_os.get_asset_readiness("costume", cid)
+                        if not r.get("ready"):
+                            missing["missing"].append({"type": "costume", "id": cid, "readiness": r})
+                    # Check environment readiness
+                    eid = shot.get("environmentId", "")
+                    if eid:
+                        r = _prompt_os.get_asset_readiness("environment", eid)
+                        if not r.get("ready"):
+                            missing["missing"].append({"type": "environment", "id": eid, "readiness": r})
+                    # Check prop readiness
+                    for pid in shot.get("propIds", []):
+                        r = _prompt_os.get_asset_readiness("prop", pid)
+                        if not r.get("ready"):
+                            missing["missing"].append({"type": "prop", "id": pid, "readiness": r})
+                else:
+                    missing["error"] = f"Shot index {shot_index} out of range (total: {len(shots)})"
+            else:
+                missing["error"] = "No auto-director plan found"
+            self._send_json(missing)
+
+        elif path.startswith("/api/pos/sheets/"):
+            filename = os.path.basename(path.split("/api/pos/sheets/")[-1])
+            if not filename or '..' in filename or '/' in filename or '\\' in filename:
+                self._send_json({"error": "Invalid filename"}, 400)
+                return
+            sheets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "prompt_os", "sheets")
+            fpath = os.path.join(sheets_dir, filename)
+            # Verify resolved path is inside sheets_dir
+            if not os.path.abspath(fpath).startswith(os.path.abspath(sheets_dir)):
+                self._send_json({"error": "Access denied"}, 403)
+                return
+            if os.path.isfile(fpath):
+                self._send_file(fpath)
+            else:
+                self._send_json({"error": "Sheet not found"}, 404)
+
         # ──── Auto Director GET routes ────
         elif path == "/api/auto-director/status":
             self._send_json(_auto_director.progress)
@@ -3624,6 +4038,37 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_file(kf_file)
             else:
                 self.send_error(404)
+
+        # ---- AutoAgent GET endpoints ----
+        elif path == "/api/autoagent/status":
+            run = get_current_run()
+            if run:
+                self._send_json(run.get_status())
+            else:
+                self._send_json({"status": "no_run", "message": "No optimization run started"})
+
+        elif path == "/api/autoagent/harness":
+            from lib.auto_agent import HarnessManager
+            hm = HarnessManager()
+            self._send_json({"harness": hm.current, "hash": hm.hash(), "best_score": hm.best_score})
+
+        elif path == "/api/autoagent/history":
+            from lib.auto_agent import AUTOAGENT_DIR
+            history_path = os.path.join(AUTOAGENT_DIR, "harness_history.json")
+            if os.path.isfile(history_path):
+                with open(history_path, "r") as f:
+                    self._send_json(json.load(f))
+            else:
+                self._send_json([])
+
+        # ---- Director Brain GET ----
+        elif path == "/api/director-brain/status":
+            brain = get_brain()
+            self._send_json({
+                "style_vector": brain.style_vector,
+                "total_ratings": len(brain.ratings),
+                "style_summary": brain.get_style_summary(),
+            })
 
         else:
             self.send_error(404)
@@ -3917,6 +4362,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/auto-director/restitch":
             self._handle_auto_director_restitch()
 
+        elif path == "/api/auto-director/stitch":
+            # Alias for restitch — frontend uses both
+            self._handle_auto_director_restitch()
+
         elif path == "/api/auto-director/to-manual":
             self._handle_auto_director_to_manual()
 
@@ -3950,6 +4399,52 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/api/auto-director/scenes/preview-batch":
             self._handle_scenes_preview_batch()
+
+        elif re.match(r'^/api/auto-director/scene/(\d+)/restyle$', path):
+            m = re.match(r'^/api/auto-director/scene/(\d+)/restyle$', path)
+            self._handle_scene_restyle(int(m.group(1)), body)
+
+        elif re.match(r'^/api/auto-director/scene/(\d+)/multi-angle$', path):
+            m = re.match(r'^/api/auto-director/scene/(\d+)/multi-angle$', path)
+            self._handle_multi_angle_clip(int(m.group(1)), body)
+
+        elif re.match(r'^/api/auto-director/scene/(\d+)/character-performance$', path):
+            m = re.match(r'^/api/auto-director/scene/(\d+)/character-performance$', path)
+            body = json.loads(self._read_body())
+            self._handle_character_performance(int(m.group(1)), body)
+
+        elif path == "/api/performance-ref/upload":
+            # Handle multipart upload of performance reference video
+            try:
+                ct = self.headers.get("Content-Type", "")
+                boundary = ct.split("boundary=")[-1].encode()
+                body_bytes = self._read_body()
+                parts = self._parse_multipart(body_bytes, boundary)
+                file_part = None
+                for p in parts:
+                    if p.get("filename"):
+                        file_part = p
+                        break
+                if not file_part:
+                    self._send_json({"error": "No file uploaded"}, 400)
+                    return
+                perf_dir = os.path.join(OUTPUT_DIR, "performance_refs")
+                os.makedirs(perf_dir, exist_ok=True)
+                filename = f"perf_ref_{int(time.time())}.mp4"
+                filepath = os.path.join(perf_dir, filename)
+                with open(filepath, "wb") as f:
+                    f.write(file_part["data"])
+                self._send_json({"ok": True, "path": filepath, "url": f"/api/performance-ref/{filename}"})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif re.match(r'^/api/auto-director/scene/(\d+)/upload-clip$', path):
+            m = re.match(r'^/api/auto-director/scene/(\d+)/upload-clip$', path)
+            self._handle_scene_upload_clip(int(m.group(1)))
+
+        elif re.match(r'^/api/auto-director/scene/(\d+)/upload-frame$', path):
+            m = re.match(r'^/api/auto-director/scene/(\d+)/upload-frame$', path)
+            self._handle_scene_upload_frame(int(m.group(1)))
 
         elif re.match(r'^/api/auto-director/scene/(\d+)/regenerate$', path):
             m = re.match(r'^/api/auto-director/scene/(\d+)/regenerate$', path)
@@ -4334,6 +4829,55 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r'^/api/pos/characters/([^/]+)/generate-sheet$', path)
             self._handle_pos_generate_character_sheet(m.group(1))
 
+        # ──── Asset Sheet Generation System ────
+        elif path == "/api/pos/project-style":
+            body = json.loads(self._read_body())
+            self._send_json(_prompt_os.set_project_style(body))
+
+        elif path == "/api/pos/sheets/generate":
+            body = json.loads(self._read_body())
+            self._handle_pos_generate_sheet(body)
+
+        elif path == "/api/pos/sheets/approve":
+            body = json.loads(self._read_body())
+            asset_type = body.get("assetType", "")
+            asset_id = body.get("assetId", "")
+            sheet_url = body.get("sheetUrl", "")
+            slot = body.get("slot", "approvedSheet")
+            result = _prompt_os.approve_sheet(asset_type, asset_id, sheet_url, slot)
+            if isinstance(result, dict) and "error" in result:
+                self._send_json(result, 400)
+            else:
+                self._send_json(result)
+
+        elif path == "/api/pos/assets/lock":
+            body = json.loads(self._read_body())
+            asset_type = body.get("assetType", "")
+            asset_id = body.get("assetId", "")
+            result = _prompt_os.lock_asset(asset_type, asset_id)
+            if isinstance(result, dict) and "error" in result:
+                self._send_json(result, 400)
+            else:
+                self._send_json(result)
+
+        elif path == "/api/pos/reference-package":
+            body = json.loads(self._read_body())
+            shot_type = body.get("shotType", "medium")
+            character_id = body.get("characterId", "")
+            costume_id = body.get("costumeId", "")
+            environment_id = body.get("environmentId", "")
+            prop_ids = body.get("propIds", [])
+
+            character = _prompt_os.get_character(character_id) if character_id else None
+            costume = _prompt_os.get_costume(costume_id) if costume_id else None
+            environment = _prompt_os.get_environment(environment_id) if environment_id else None
+            props = [_prompt_os.get_prop(pid) for pid in prop_ids if _prompt_os.get_prop(pid)]
+
+            package = build_reference_package(shot_type, character, costume, environment, props)
+            best_refs = select_best_refs_for_shot(package, shot_type)
+            package["selectedRefs"] = best_refs
+            self._send_json(package)
+
         # ──── Feature 1: Project Browser ────
         elif path == "/api/projects":
             body = json.loads(self._read_body())
@@ -4522,8 +5066,323 @@ class Handler(BaseHTTPRequestHandler):
                 _prompt_os.set_continuity_rules(rules)
                 self._send_json({"ok": True})
 
+        elif path == "/api/ai-autofill":
+            self._handle_ai_autofill()
+
+        elif path == "/api/voice-clone/generate":
+            self._handle_voice_clone()
+
+        # ---- AutoAgent POST endpoints ----
+        elif path == "/api/autoagent/start":
+            body = json.loads(self._read_body())
+            max_iter = body.get("maxIterations", 20)
+            run = get_or_create_run()
+            result = run.start(_autoagent_eval_fn, max_iterations=max_iter)
+            self._send_json(result)
+
+        elif path == "/api/autoagent/stop":
+            run = get_current_run()
+            if run:
+                self._send_json(run.stop())
+            else:
+                self._send_json({"error": "No run active"})
+
+        elif path == "/api/autoagent/harness/edit":
+            body = json.loads(self._read_body())
+            from lib.auto_agent import HarnessManager
+            hm = HarnessManager()
+            key_path = body.get("keyPath", "")
+            new_value = body.get("newValue", "")
+            success = hm.apply_edit(key_path, new_value)
+            self._send_json({"ok": success, "harness": hm.current})
+
+        elif path == "/api/autoagent/harness/revert":
+            from lib.auto_agent import HarnessManager
+            hm = HarnessManager()
+            score = hm.revert_to_best()
+            self._send_json({"ok": True, "reverted_to_score": score, "harness": hm.current})
+
+        elif path == "/api/recommend-engine":
+            body = json.loads(self._read_body())
+            scenes = body.get("scenes", [])
+            project_default = body.get("projectDefault", "gen4_5")
+            recommendations = []
+            for scene in scenes:
+                rec = _recommend_engine(scene, project_default)
+                recommendations.append(rec)
+            self._send_json({"recommendations": recommendations})
+
+        elif path == "/api/audio/stems":
+            body = json.loads(self._read_body())
+            self._handle_audio_stems(body)
+
+        # ---- Director Brain POST endpoints ----
+        elif path == "/api/director-brain/rate":
+            body = json.loads(self._read_body())
+            brain = get_brain()
+            scene_index = body.get("sceneIndex", 0)
+            rating = body.get("rating", 3)
+            scene_data = body.get("sceneData", {})
+            result = brain.rate_scene(scene_index, rating, scene_data)
+            self._send_json({"ok": True, "rating": result, "style_summary": brain.get_style_summary()})
+
+        elif path == "/api/director-brain/recommend":
+            body = json.loads(self._read_body())
+            brain = get_brain()
+            scene_data = body.get("sceneData", {})
+            recs = brain.recommend_for_scene(scene_data)
+            self._send_json(recs)
+
+        elif path == "/api/director-brain/analyze":
+            body = json.loads(self._read_body())
+            brain = get_brain()
+            scene_data = body.get("sceneData", {})
+            analysis = brain.analyze_success_factors(scene_data)
+            self._send_json(analysis)
+
         else:
             self.send_error(404)
+
+    def _handle_audio_stems(self, body):
+        """Separate audio into stems (drums, bass, vocals, other).
+        Uses Demucs if available, falls back to FFT-based estimation."""
+        audio_path = body.get("audioPath", "")
+
+        if not audio_path:
+            plan = load_movie_plan(OUTPUT_DIR)
+            if plan:
+                audio_path = plan.get("song_path", "")
+
+        if not audio_path or not os.path.isfile(audio_path):
+            self._send_json({"error": "No audio file found"}, 400)
+            return
+
+        stems_dir = os.path.join(OUTPUT_DIR, "stems")
+        os.makedirs(stems_dir, exist_ok=True)
+
+        try:
+            # Try Demucs first
+            try:
+                result = subprocess.run(
+                    ["demucs", "--two-stems", "vocals", "-o", stems_dir, audio_path],
+                    capture_output=True, text=True, timeout=300
+                )
+                if result.returncode == 0:
+                    base = os.path.splitext(os.path.basename(audio_path))[0]
+                    vocals_path = os.path.join(stems_dir, "htdemucs", base, "vocals.wav")
+                    instrumental_path = os.path.join(stems_dir, "htdemucs", base, "no_vocals.wav")
+
+                    stems = {
+                        "vocals": vocals_path if os.path.isfile(vocals_path) else None,
+                        "instrumental": instrumental_path if os.path.isfile(instrumental_path) else None,
+                    }
+
+                    self._send_json({
+                        "ok": True,
+                        "method": "demucs",
+                        "stems": {k: f"/api/audio/stems/{os.path.basename(v)}" if v else None for k, v in stems.items()},
+                    })
+                    return
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                print("[STEMS] Demucs not available, using FFT estimation")
+
+            # Fallback: FFT-based stem energy estimation
+            analysis = analyze(audio_path)
+
+            beats = analysis.get("beats", [])
+            bpm = analysis.get("bpm", 120)
+
+            self._send_json({
+                "ok": True,
+                "method": "estimation",
+                "stems": None,
+                "beats": beats[:100],
+                "bpm": bpm,
+                "message": "Demucs not installed — using energy estimation. Install Demucs for full stem separation: pip install demucs",
+            })
+
+        except Exception as e:
+            self._send_json({"error": f"Stem separation failed: {str(e)[:200]}"}, 500)
+
+    def _handle_ai_autofill(self):
+        """POST /api/ai-autofill -- AI auto-fill form fields from a simple user prompt."""
+        try:
+            body = json.loads(self._read_body())
+        except Exception:
+            self._send_json({"error": "Invalid JSON body"}, 400)
+            return
+
+        user_idea = body.get("userIdea", "")
+        form_type = body.get("formType", "")
+        field_keys = body.get("fieldKeys", [])
+        system_prompt = body.get("prompt", "")
+
+        if not user_idea:
+            self._send_json({"error": "No user idea provided"}, 400)
+            return
+
+        # Build the LLM prompt
+        field_list = ", ".join(field_keys)
+        llm_prompt = f"""{system_prompt}
+
+User's concept: "{user_idea}"
+
+Generate detailed, cinematic, production-quality content for each field.
+Be specific about visual details — colors, textures, materials, lighting, dimensions.
+Optimize text for AI image generation prompts.
+
+Return ONLY valid JSON with these exact keys: {field_list}
+Each value should be a descriptive string (not nested objects).
+Do not include any explanation, just the JSON object."""
+
+        # Try OpenAI first, then Anthropic
+        openai_key = os.environ.get("OPENAI_API_KEY", "")
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+
+        result = None
+
+        if openai_key:
+            try:
+                import requests
+                resp = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {openai_key}", "Content-Type": "application/json"},
+                    json={
+                        "model": "gpt-4o-mini",
+                        "messages": [
+                            {"role": "system", "content": "You are a cinematic production assistant. Output only valid JSON."},
+                            {"role": "user", "content": llm_prompt}
+                        ],
+                        "temperature": 0.8,
+                        "max_tokens": 1500,
+                    },
+                    timeout=30,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    content = data["choices"][0]["message"]["content"].strip()
+                    # Strip markdown code fences if present
+                    if content.startswith("```"):
+                        content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                    result = json.loads(content)
+            except Exception as e:
+                print(f"[AI-AutoFill] OpenAI error: {e}")
+
+        if not result and anthropic_key:
+            try:
+                import requests
+                resp = requests.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": anthropic_key,
+                        "Content-Type": "application/json",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": "claude-haiku-4-5-20251001",
+                        "max_tokens": 1500,
+                        "messages": [{"role": "user", "content": llm_prompt}],
+                    },
+                    timeout=30,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    content = data["content"][0]["text"].strip()
+                    if content.startswith("```"):
+                        content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                    result = json.loads(content)
+            except Exception as e:
+                print(f"[AI-AutoFill] Anthropic error: {e}")
+
+        if result:
+            self._send_json({"fields": result})
+        else:
+            self._send_json({"error": "No AI provider available. Set OPENAI_API_KEY or ANTHROPIC_API_KEY in .env"}, 500)
+
+    def _handle_voice_clone(self):
+        """POST /api/voice-clone/generate -- Generate voice clone via ElevenLabs API."""
+        elevenlabs_key = os.environ.get("ELEVENLABS_API_KEY", "")
+        if not elevenlabs_key:
+            self._send_json({"error": "ElevenLabs API key not set. Add ELEVENLABS_API_KEY to your .env file."}, 400)
+            return
+
+        # Frontend sends FormData, so parse multipart
+        content_type = self.headers.get("Content-Type", "")
+        text = ""
+        voice_name = "Custom Voice"
+
+        if "multipart/form-data" in content_type:
+            parts_ct = content_type.split("boundary=")
+            if len(parts_ct) < 2:
+                self._send_json({"error": "Missing multipart boundary"}, 400)
+                return
+            boundary = parts_ct[1].strip().encode()
+            raw_body = self._read_body()
+            parts = self._parse_multipart(raw_body, boundary)
+            for part in parts:
+                if part["name"] == "text":
+                    text = part["data"].decode("utf-8", errors="replace").strip()
+                elif part["name"] == "voiceName":
+                    voice_name = part["data"].decode("utf-8", errors="replace").strip()
+                # voiceSample file ignored for now -- will be used for actual cloning later
+        else:
+            # Fallback: try JSON body
+            try:
+                body = json.loads(self._read_body())
+                text = body.get("text", "")
+                voice_name = body.get("voiceName", "Custom Voice")
+            except Exception:
+                self._send_json({"error": "Invalid request body"}, 400)
+                return
+
+        if not text:
+            self._send_json({"error": "No text provided"}, 400)
+            return
+
+        try:
+            import requests
+            # Use ElevenLabs text-to-speech with a default voice
+            # (full voice cloning requires their voice-lab/add endpoint which needs multipart)
+            # For now, use their high-quality preset voices
+            voice_id = "21m00Tcm4TlvDq8ikWAM"  # Rachel - default ElevenLabs voice
+
+            resp = requests.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+                headers={
+                    "xi-api-key": elevenlabs_key,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "text": text,
+                    "model_id": "eleven_multilingual_v2",
+                    "voice_settings": {
+                        "stability": 0.5,
+                        "similarity_boost": 0.75,
+                    }
+                },
+                timeout=60,
+            )
+
+            if resp.status_code == 200:
+                # Save audio file
+                audio_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "audio")
+                os.makedirs(audio_dir, exist_ok=True)
+                filename = f"voice_clone_{voice_name.replace(' ', '_')}_{int(time.time())}.mp3"
+                filepath = os.path.join(audio_dir, filename)
+                with open(filepath, "wb") as f:
+                    f.write(resp.content)
+
+                self._send_json({
+                    "audioUrl": f"/api/audio/generated/{filename}",
+                    "filename": filename,
+                    "voiceName": voice_name,
+                })
+            else:
+                error_msg = resp.text[:200]
+                self._send_json({"error": f"ElevenLabs error ({resp.status_code}): {error_msg}"}, resp.status_code)
+
+        except Exception as e:
+            self._send_json({"error": f"Voice clone error: {str(e)}"}, 500)
 
     def do_PUT(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -4663,6 +5522,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": "Not found"}, 404)
 
+        # ──── Delete project template ────
+        elif re.match(r'^/api/templates/([^/]+)$', path):
+            self._handle_delete_template()
+
         # ──── Feature 1: Delete Project ────
         elif re.match(r'^/api/projects/([^/]+)$', path):
             m = re.match(r'^/api/projects/([^/]+)$', path)
@@ -4682,13 +5545,340 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": "Index out of range"}, 404)
 
+        # ──── Suno Integration ────
+        elif path == "/api/suno/import":
+            body = json.loads(self._read_body())
+            self._handle_suno_import(body)
+
+        elif path == "/api/suno/generate":
+            body = json.loads(self._read_body())
+            self._handle_suno_generate(body)
+
+        # ──── Auto-Captions / Transcription ────
+        elif path == "/api/transcribe":
+            body = json.loads(self._read_body())
+            self._handle_transcribe(body)
+
+        # ──── Album Art Generator ────
+        elif path == "/api/generate-album-art":
+            body = json.loads(self._read_body())
+            self._handle_generate_album_art(body)
+
         else:
             self.send_error(404)
+
+    # ---- Suno handlers ----
+
+    def _handle_suno_import(self, body):
+        """Import audio from a Suno URL."""
+        url = body.get("url", "").strip()
+        if not url:
+            self._send_json({"error": "No URL provided"}, 400)
+            return
+
+        # Suno URLs look like: https://suno.com/song/UUID or https://cdn.suno.ai/UUID.mp3
+        # Extract the audio URL
+        try:
+            audio_url = None
+            song_id = ""
+
+            import re as _re_suno
+            # Extract song ID from various Suno URL formats
+            m = _re_suno.search(r'suno\.com/song/([a-f0-9-]+)', url)
+            if m:
+                song_id = m.group(1)
+                audio_url = f"https://cdn1.suno.ai/{song_id}.mp3"
+
+            m2 = _re_suno.search(r'cdn\d?\.suno\.ai/([a-f0-9-]+)\.mp3', url)
+            if m2:
+                song_id = m2.group(1)
+                audio_url = url
+
+            if not audio_url:
+                # Try treating the whole URL as a direct audio link
+                if url.endswith('.mp3') or url.endswith('.wav'):
+                    audio_url = url
+                else:
+                    self._send_json({"error": "Could not parse Suno URL. Try: https://suno.com/song/ID or paste the direct audio link"}, 400)
+                    return
+
+            # Download the audio
+            import requests
+            print(f"[SUNO] Downloading from: {audio_url}")
+            resp = requests.get(audio_url, timeout=60, stream=True)
+            if resp.status_code != 200:
+                self._send_json({"error": f"Failed to download audio (HTTP {resp.status_code})"}, 400)
+                return
+
+            # Save to uploads directory
+            upload_dir = os.path.join(OUTPUT_DIR, "uploads")
+            os.makedirs(upload_dir, exist_ok=True)
+            filename = f"suno_{song_id or int(time.time())}.mp3"
+            filepath = os.path.join(upload_dir, filename)
+
+            with open(filepath, "wb") as f:
+                for chunk in resp.iter_content(8192):
+                    f.write(chunk)
+
+            file_size = os.path.getsize(filepath)
+            print(f"[SUNO] Downloaded: {filepath} ({file_size/1024:.0f}KB)")
+
+            self._send_json({
+                "ok": True,
+                "filename": filename,
+                "filepath": filepath,
+                "size": file_size,
+                "source": "suno",
+                "songId": song_id,
+            })
+
+        except Exception as e:
+            self._send_json({"error": f"Suno import failed: {str(e)[:200]}"}, 500)
+
+    def _handle_suno_generate(self, body):
+        """Generate music via Suno API (or compatible music AI).
+        Falls back to instructions if no API key available."""
+        prompt = body.get("prompt", "")
+        style = body.get("style", "")
+        duration = body.get("duration", 60)
+
+        if not prompt:
+            self._send_json({"error": "Describe the music you want"}, 400)
+            return
+
+        suno_key = os.environ.get("SUNO_API_KEY", "")
+
+        if suno_key:
+            # TODO: Call Suno API when available
+            # For now, return instructions
+            pass
+
+        # No API key -- provide instructions
+        self._send_json({
+            "ok": False,
+            "noApiKey": True,
+            "instructions": {
+                "step1": "Go to suno.com and create an account (free tier available)",
+                "step2": f"Generate a song with this prompt: \"{prompt}\"",
+                "step3": "Copy the song URL from your browser",
+                "step4": "Paste it in the 'Import from Suno' field below",
+            },
+            "suggestedPrompt": f"{style + '. ' if style else ''}{prompt}",
+        })
+
+    # ---- Transcription handler ----
+
+    def _handle_transcribe(self, body):
+        """Transcribe audio to text with timestamps using OpenAI Whisper."""
+        audio_path = body.get("audioPath", "")
+
+        # Find the audio file
+        if not audio_path:
+            # Try current project's song
+            plan = load_movie_plan(OUTPUT_DIR)
+            if plan:
+                audio_path = plan.get("song_path", "")
+
+        if not audio_path or not os.path.isfile(audio_path):
+            # Check uploads directory
+            upload_dir = os.path.join(OUTPUT_DIR, "uploads")
+            if os.path.isdir(upload_dir):
+                for f in os.listdir(upload_dir):
+                    if f.endswith(('.mp3', '.wav', '.m4a')):
+                        audio_path = os.path.join(upload_dir, f)
+                        break
+
+        if not audio_path or not os.path.isfile(audio_path):
+            self._send_json({"error": "No audio file found. Upload a song first."}, 400)
+            return
+
+        openai_key = os.environ.get("OPENAI_API_KEY", "")
+        if not openai_key:
+            self._send_json({"error": "OPENAI_API_KEY not set. Add it to .env for transcription."}, 400)
+            return
+
+        try:
+            import requests as _req
+
+            # Call Whisper API
+            with open(audio_path, "rb") as f:
+                resp = _req.post(
+                    "https://api.openai.com/v1/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {openai_key}"},
+                    files={"file": (os.path.basename(audio_path), f, "audio/mpeg")},
+                    data={
+                        "model": "whisper-1",
+                        "response_format": "verbose_json",
+                        "timestamp_granularities[]": "word",
+                    },
+                    timeout=120,
+                )
+
+            if resp.status_code != 200:
+                self._send_json({"error": f"Whisper API error ({resp.status_code}): {resp.text[:200]}"}, resp.status_code)
+                return
+
+            data = resp.json()
+
+            # Extract word-level timestamps
+            words = []
+            for w in data.get("words", []):
+                words.append({
+                    "word": w.get("word", ""),
+                    "start": w.get("start", 0),
+                    "end": w.get("end", 0),
+                })
+
+            # Group into caption segments (roughly 5-8 words per segment)
+            segments = []
+            current_segment = {"text": "", "start": 0, "end": 0, "words": []}
+            word_count = 0
+
+            for w in words:
+                if word_count == 0:
+                    current_segment["start"] = w["start"]
+
+                current_segment["text"] += (" " if current_segment["text"] else "") + w["word"]
+                current_segment["end"] = w["end"]
+                current_segment["words"].append(w)
+                word_count += 1
+
+                # Break segment at 6 words or punctuation
+                if word_count >= 6 or w["word"].rstrip().endswith(('.', '!', '?', ',')):
+                    segments.append(current_segment)
+                    current_segment = {"text": "", "start": 0, "end": 0, "words": []}
+                    word_count = 0
+
+            if current_segment["text"]:
+                segments.append(current_segment)
+
+            # Save transcription
+            trans_path = os.path.join(OUTPUT_DIR, "transcription.json")
+            with open(trans_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "text": data.get("text", ""),
+                    "language": data.get("language", ""),
+                    "duration": data.get("duration", 0),
+                    "segments": segments,
+                    "words": words,
+                }, f, indent=2, ensure_ascii=False)
+
+            self._send_json({
+                "ok": True,
+                "text": data.get("text", ""),
+                "language": data.get("language", ""),
+                "segmentCount": len(segments),
+                "wordCount": len(words),
+                "segments": segments,
+            })
+
+        except Exception as e:
+            self._send_json({"error": f"Transcription failed: {str(e)[:200]}"}, 500)
+
+    # ---- Album Art handler ----
+
+    def _handle_generate_album_art(self, body):
+        """Generate album cover art matched to the project's visual style."""
+        title = body.get("title", "Untitled")
+        artist = body.get("artist", "")
+        style = body.get("style", "cinematic")
+        size = body.get("size", "1:1")  # 1:1 for album, 9:16 for Spotify Canvas
+
+        # Load project style for visual consistency
+        project_style = _prompt_os.get_project_style()
+
+        # Build prompt
+        parts = []
+
+        # Style from project
+        if project_style:
+            if project_style.get("visualLanguage"):
+                parts.append(project_style["visualLanguage"])
+            if project_style.get("colorPalette"):
+                parts.append(f"Color palette: {project_style['colorPalette']}")
+            if project_style.get("tone"):
+                parts.append(f"Mood: {project_style['tone']}")
+
+        # Album art specific
+        if size == "9:16":
+            parts.append(f"Spotify Canvas vertical loop visual for '{title}' by {artist}.")
+            parts.append("Abstract, mesmerizing, loop-friendly motion concept.")
+        else:
+            parts.append(f"Album cover art for '{title}' by {artist}.")
+            parts.append("Professional album artwork, striking composition, music industry quality.")
+
+        parts.append(f"Style: {style}.")
+        parts.append("High contrast, eye-catching, gallery quality. No text or typography in the image.")
+
+        prompt = " ".join(parts)[:1000]
+
+        # Get character/environment refs for visual consistency
+        refs = []
+        chars = _prompt_os.get_characters()
+        if chars:
+            # Use the first character's photo as style reference
+            char = chars[0]
+            ref_img = char.get("referencePhoto") or char.get("referenceImagePath", "")
+            if ref_img:
+                path = _resolve_sheet_or_photo(ref_img) if callable(_resolve_sheet_or_photo) else None
+                if not path:
+                    # Try direct file
+                    for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                        cand = os.path.join(POS_PHOTOS_CHARS_DIR, f"{char['id']}{ext}")
+                        if os.path.isfile(cand):
+                            path = cand
+                            break
+                if path:
+                    refs.append({"path": path, "tag": "Character"})
+
+        try:
+            from lib.video_generator import _runway_generate_scene_image
+
+            ratio_map = {"1:1": "1024:1024", "9:16": "720:1280", "16:9": "1280:720"}
+            gen_ratio = ratio_map.get(size, "1024:1024")
+
+            # Add @tags to prompt
+            for r in refs:
+                if f"@{r['tag']}" not in prompt:
+                    prompt = f"@{r['tag']} " + prompt
+
+            img_path = _runway_generate_scene_image(
+                prompt, refs[:3],
+                ratio=gen_ratio,
+                model="gen4_image",
+            )
+
+            if not img_path or not os.path.isfile(img_path):
+                self._send_json({"error": "Album art generation failed"}, 500)
+                return
+
+            # Save to output
+            art_dir = os.path.join(OUTPUT_DIR, "album_art")
+            os.makedirs(art_dir, exist_ok=True)
+            filename = f"album_{size.replace(':', 'x')}_{int(time.time())}.png"
+            dest = os.path.join(art_dir, filename)
+            import shutil
+            shutil.copy2(img_path, dest)
+
+            self._send_json({
+                "ok": True,
+                "imageUrl": f"/output/album_art/{filename}",
+                "filename": filename,
+                "size": size,
+                "prompt": prompt[:200],
+            })
+
+        except Exception as e:
+            self._send_json({"error": f"Album art error: {str(e)[:200]}"}, 500)
 
     # ---- Upload handlers ----
 
     def _handle_upload(self):
         """Handle multipart file upload."""
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "upload"):
+            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
+            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -5697,6 +6887,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_upload_reference(self):
         """Upload a reference image with a name."""
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "upload"):
+            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
+            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -6071,6 +7265,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_manual_upload_photo(self, scene_id: str):
         """Upload/replace a scene photo."""
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "upload"):
+            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
+            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -6894,6 +8092,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_pos_photo_upload(self, entity_id, entity_type):
         """Handle photo upload for characters/costumes/environments."""
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "upload"):
+            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
+            return
         try:
             ct = self.headers.get("Content-Type", "")
             if "multipart" not in ct:
@@ -6953,6 +8155,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_voice_sample_upload(self, voice_id):
         """Handle audio sample upload for a voice profile."""
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "upload"):
+            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
+            return
         try:
             ct = self.headers.get("Content-Type", "")
             if "multipart" not in ct:
@@ -7381,6 +8587,158 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "preview_url": preview_url})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
+
+    # ---- Asset Sheet Generation (Runway-based) ----
+
+    def _handle_pos_generate_sheet(self, body):
+        """Generate an asset sheet for any asset type via Runway text_to_image.
+
+        POST /api/pos/sheets/generate
+        Body: {assetType, assetId, sheetType?, model?}
+        """
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "generate"):
+            self._send_json({"error": "Rate limited — too many generation requests. Please wait a minute."}, 429)
+            return
+        asset_type = body.get("assetType", "character")  # character|costume|environment|prop
+        asset_id = body.get("assetId", "")
+        sheet_type = body.get("sheetType", "full")  # full|face_closeup|detail
+        model = body.get("model", "gen4_image")
+
+        # Load asset
+        getter = getattr(_prompt_os, f'get_{asset_type}', None)
+        if not getter:
+            self._send_json({"error": f"Unknown asset type: {asset_type}"}, 400)
+            return
+        asset = getter(asset_id)
+        if not asset:
+            self._send_json({"error": f"{asset_type} not found"}, 404)
+            return
+
+        # Load project style
+        project_style = _prompt_os.get_project_style()
+
+        # Build prompt based on asset type and sheet type
+        ref_photos = []  # For _runway_generate_scene_image: [{path, tag}, ...]
+
+        # Resolve the reference photo to a local file path
+        def _resolve_ref_photo(ref_val, entity_type, entity_id):
+            """Resolve a reference photo value to a local file path."""
+            if not ref_val:
+                return None
+            m = re.search(rf"/api/pos/{entity_type}/([^/]+)/photo", ref_val)
+            if m:
+                eid = m.group(1)
+                type_dirs = {
+                    "characters": POS_PHOTOS_CHARS_DIR,
+                    "costumes": POS_PHOTOS_COSTUMES_DIR,
+                    "environments": POS_PHOTOS_ENVS_DIR,
+                    "props": POS_PHOTOS_PROPS_DIR,
+                }
+                photo_dir = type_dirs.get(entity_type, "")
+                if photo_dir:
+                    for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                        candidate = os.path.join(photo_dir, f"{eid}{ext}")
+                        if os.path.isfile(candidate):
+                            return candidate
+            elif os.path.isfile(ref_val):
+                return ref_val
+            return None
+
+        ref_photo_val = asset.get("referencePhoto") or asset.get("referenceImagePath") or ""
+
+        if asset_type == "character":
+            costume = None
+            if asset.get("costumes") and len(asset["costumes"]) > 0:
+                costume = _prompt_os.get_costume(asset["costumes"][0])
+            elif asset.get("linkedCostumeIds") and len(asset["linkedCostumeIds"]) > 0:
+                costume = _prompt_os.get_costume(asset["linkedCostumeIds"][0])
+
+            if sheet_type == "face_closeup":
+                prompt = build_face_closeup_prompt(asset, project_style)
+            else:
+                prompt = build_character_sheet_prompt(asset, costume, project_style)
+
+            ref_path = _resolve_ref_photo(ref_photo_val, "characters", asset_id)
+            if ref_path:
+                ref_photos.append({"path": ref_path, "tag": "Character"})
+
+        elif asset_type == "costume":
+            character = None
+            char_id = asset.get("characterId") or ""
+            if not char_id and asset.get("linkedCharacterIds"):
+                char_id = asset["linkedCharacterIds"][0] if asset["linkedCharacterIds"] else ""
+            if char_id:
+                character = _prompt_os.get_character(char_id)
+            prompt = build_costume_sheet_prompt(asset, character, project_style)
+            ref_path = _resolve_ref_photo(ref_photo_val, "costumes", asset_id)
+            if ref_path:
+                ref_photos.append({"path": ref_path, "tag": "Costume"})
+            if character:
+                char_ref = character.get("referencePhoto") or ""
+                char_path = _resolve_ref_photo(char_ref, "characters", char_id)
+                if char_path:
+                    ref_photos.append({"path": char_path, "tag": "Character"})
+
+        elif asset_type == "environment":
+            prompt = build_environment_sheet_prompt(asset, project_style)
+            ref_path = _resolve_ref_photo(ref_photo_val, "environments", asset_id)
+            if ref_path:
+                ref_photos.append({"path": ref_path, "tag": "Setting"})
+
+        elif asset_type == "prop":
+            prompt = build_prop_sheet_prompt(asset, project_style)
+            ref_path = _resolve_ref_photo(ref_photo_val, "props", asset_id)
+            if ref_path:
+                ref_photos.append({"path": ref_path, "tag": "Prop"})
+
+        else:
+            self._send_json({"error": f"Unsupported asset type: {asset_type}"}, 400)
+            return
+
+        # Generate via Runway text_to_image
+        try:
+            from lib.video_generator import _runway_generate_scene_image, _download
+
+            # Generate — returns local file path or "" on failure
+            img_path = _runway_generate_scene_image(
+                prompt=prompt,
+                reference_photos=ref_photos[:3],  # API max 3
+                model=model,
+                ratio="1536:1536",  # Higher-res square for production-quality sheets
+            )
+
+            if not img_path or not os.path.isfile(img_path):
+                self._send_json({"error": "Sheet generation failed — no image returned. Check Runway API key and credits."}, 500)
+                return
+
+            # Copy to sheets directory with a stable name
+            sheets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "prompt_os", "sheets")
+            os.makedirs(sheets_dir, exist_ok=True)
+            filename = f"{asset_type}_{asset_id}_{sheet_type}_{int(time.time())}.png"
+            local_path = os.path.join(sheets_dir, filename)
+
+            import shutil
+            shutil.copy2(img_path, local_path)
+
+            # Store sheet data
+            sheet_data = {
+                "url": f"/api/pos/sheets/{filename}",
+                "localPath": local_path,
+                "type": sheet_type,
+                "model": model,
+                "resolution": {"width": 1024, "height": 1024},
+                "prompt": prompt[:500],
+                "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
+
+            result = _prompt_os.add_sheet_image(asset_type, asset_id, sheet_data)
+            self._send_json(result)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._send_json({"error": f"Sheet generation error: {str(e)}"}, 500)
 
     # ---- Character Sheet Generation ----
 
@@ -7856,6 +9214,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_watermark_upload(self):
         """Upload a PNG watermark file."""
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "upload"):
+            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
+            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -8035,6 +9397,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_multi_photo_upload(self, scene_id: str):
         """Upload multiple reference photos for a scene's mood board (up to 4)."""
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "upload"):
+            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
+            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -8089,6 +9455,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_upload_audio_tracks(self):
         """Upload separate vocal and instrumental audio tracks."""
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "upload"):
+            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
+            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -8174,6 +9544,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_manual_upload_video(self, scene_id: str):
         """Upload a user video clip for a manual scene (replaces generation)."""
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "upload"):
+            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
+            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -8248,6 +9622,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_manual_upload_vocal(self, scene_id: str):
         """Upload a voiceover audio clip for a manual scene."""
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "upload"):
+            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
+            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -8860,144 +10238,132 @@ class Handler(BaseHTTPRequestHandler):
     # ---- Item 42: Template library ----
 
     def _handle_list_templates(self):
-        """List all saved templates."""
+        """List all saved project templates."""
+        templates_dir = os.path.join(OUTPUT_DIR, "templates")
         templates = []
-        if os.path.isdir(TEMPLATES_DIR):
-            for fname in sorted(os.listdir(TEMPLATES_DIR)):
+        if os.path.isdir(templates_dir):
+            for fname in sorted(os.listdir(templates_dir)):
                 if fname.endswith(".json"):
-                    fpath = os.path.join(TEMPLATES_DIR, fname)
                     try:
-                        with open(fpath, "r") as f:
-                            tpl = json.load(f)
+                        with open(os.path.join(templates_dir, fname), "r") as f:
+                            t = json.load(f)
                         templates.append({
-                            "filename": fname,
-                            "name": tpl.get("name", fname),
-                            "scene_count": len(tpl.get("scenes", [])),
-                            "saved_at": tpl.get("saved_at", ""),
+                            "id": t.get("id", ""),
+                            "name": t.get("name", "Untitled"),
+                            "description": t.get("description", ""),
+                            "createdAt": t.get("createdAt", ""),
+                            "characterCount": len(t.get("characters", [])),
+                            "environmentCount": len(t.get("environments", [])),
                         })
                     except (json.JSONDecodeError, IOError):
                         pass
-        self._send_json({"templates": templates})
+        self._send_json(templates)
 
     def _handle_save_template(self):
-        """Save current scene configuration as a named template."""
+        """Save the current project state as a named project template."""
         body = self._read_body()
         try:
             params = json.loads(body) if body else {}
         except json.JSONDecodeError:
             params = {}
 
-        template_name = params.get("name", "").strip()
-        if not template_name:
-            template_name = f"template_{time.strftime('%Y%m%d_%H%M%S')}"
+        name = params.get("name", "").strip()
+        if not name:
+            name = f"Template {time.strftime('%Y%m%d_%H%M%S')}"
+        description = params.get("description", "")
 
-        plan = _load_manual_plan()
-        scenes = plan.get("scenes", [])
-        if not scenes:
-            self._send_json({"error": "No scenes to save as template"}, 400)
-            return
-
-        # Strip file paths (only save configuration, not files)
-        template_scenes = []
-        for s in scenes:
-            template_scenes.append({
-                "prompt": s.get("prompt", ""),
-                "duration": s.get("duration", 8),
-                "transition": s.get("transition", "crossfade"),
-                "speed": s.get("speed", 1.0),
-                "camera_movement": s.get("camera_movement", "zoom_in"),
-                "engine": s.get("engine", ""),
-                "color_grade": s.get("color_grade"),
-                "overlay": s.get("overlay"),
-                "loop": s.get("loop", False),
-            })
-
+        # Collect all reusable project data
         template = {
-            "name": template_name,
-            "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "scenes": template_scenes,
-            "color_grade": plan.get("color_grade", "none"),
-            "audio_viz": plan.get("audio_viz"),
-            "style_lock": plan.get("style_lock", ""),
+            "id": str(_uuid.uuid4())[:8],
+            "name": name,
+            "description": description,
+            "createdAt": datetime.utcnow().isoformat(),
+            "projectStyle": _prompt_os.get_project_style(),
+            "styleLocks": _prompt_os.get_style_locks(),
+            "worldRules": _prompt_os.get_world_rules(),
+            "continuityRules": _prompt_os.get_continuity_rules(),
+            "characters": _prompt_os.get_characters(),
+            "costumes": _prompt_os.get_costumes(),
+            "environments": _prompt_os.get_environments(),
+            "props": _prompt_os.get_props(),
+            "voices": _prompt_os.get_voices(),
+            "settings": _load_settings(),
         }
 
-        safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', template_name)
-        filepath = os.path.join(TEMPLATES_DIR, f"{safe_name}.json")
-        with open(filepath, "w") as f:
-            json.dump(template, f, indent=2)
+        # Save to templates directory
+        templates_dir = os.path.join(OUTPUT_DIR, "templates")
+        os.makedirs(templates_dir, exist_ok=True)
+        template_path = os.path.join(templates_dir, f"{template['id']}.json")
+        with open(template_path, "w", encoding="utf-8") as f:
+            json.dump(template, f, indent=2, ensure_ascii=False)
 
-        self._send_json({
-            "ok": True,
-            "filename": f"{safe_name}.json",
-            "name": template_name,
-            "scene_count": len(template_scenes),
-        })
+        self._send_json({"ok": True, "template": {"id": template["id"], "name": name}})
 
     def _handle_load_template(self):
-        """Load a template to pre-fill scenes."""
+        """Load a project template — replaces assets + style in the current project."""
         body = self._read_body()
         try:
             params = json.loads(body) if body else {}
         except json.JSONDecodeError:
             params = {}
 
-        filename = params.get("filename", "")
-        if not filename:
-            self._send_json({"error": "No template filename specified"}, 400)
+        template_id = params.get("id", "")
+        if not template_id:
+            self._send_json({"error": "No template id specified"}, 400)
             return
 
-        filepath = os.path.join(TEMPLATES_DIR, os.path.basename(filename))
-        if not os.path.isfile(filepath):
+        templates_dir = os.path.join(OUTPUT_DIR, "templates")
+        template_path = os.path.join(templates_dir, f"{template_id}.json")
+        if not os.path.isfile(template_path):
             self._send_json({"error": "Template not found"}, 404)
             return
 
         try:
-            with open(filepath, "r") as f:
+            with open(template_path, "r", encoding="utf-8") as f:
                 template = json.load(f)
         except (json.JSONDecodeError, IOError) as e:
             self._send_json({"error": f"Failed to read template: {e}"}, 500)
             return
 
-        # Create new scenes from template
-        plan = _load_manual_plan()
-        for tpl_scene in template.get("scenes", []):
-            scene_id = str(_uuid.uuid4())[:8]
-            scene = {
-                "id": scene_id,
-                "prompt": tpl_scene.get("prompt", ""),
-                "duration": tpl_scene.get("duration", 8),
-                "transition": tpl_scene.get("transition", "crossfade"),
-                "speed": tpl_scene.get("speed", 1.0),
-                "camera_movement": tpl_scene.get("camera_movement", "zoom_in"),
-                "engine": tpl_scene.get("engine", ""),
-                "color_grade": tpl_scene.get("color_grade"),
-                "overlay": tpl_scene.get("overlay"),
-                "loop": tpl_scene.get("loop", False),
-                "photo_path": None,
-                "photo_paths": [],
-                "clip_path": None,
-                "has_clip": False,
-                "video_path": None,
-                "vocal_path": None,
-                "vocal_volume": 80,
-                "previous_clip_path": None,
-            }
-            plan["scenes"].append(scene)
+        # Apply template data — style, rules, continuity
+        if template.get("projectStyle"):
+            _prompt_os.set_project_style(template["projectStyle"])
+        if template.get("styleLocks"):
+            _prompt_os.set_style_locks(template["styleLocks"])
+        if template.get("worldRules"):
+            _prompt_os.set_world_rules(template["worldRules"])
+        if template.get("continuityRules"):
+            _prompt_os.set_continuity_rules(template["continuityRules"])
 
-        # Apply template-level settings
-        if template.get("color_grade"):
-            plan["color_grade"] = template["color_grade"]
-        if template.get("style_lock"):
-            plan["style_lock"] = template["style_lock"]
-        if template.get("audio_viz"):
-            plan["audio_viz"] = template["audio_viz"]
+        # Replace or merge assets
+        merge = params.get("merge", False)
+        if not merge:
+            # Full replace — clear existing and load template assets
+            from lib.prompt_os import CHARACTERS_PATH, COSTUMES_PATH, ENVIRONMENTS_PATH, PROPS_PATH, VOICES_PATH, _save_json
+            _save_json(CHARACTERS_PATH, template.get("characters", []))
+            _save_json(COSTUMES_PATH, template.get("costumes", []))
+            _save_json(ENVIRONMENTS_PATH, template.get("environments", []))
+            _save_json(PROPS_PATH, template.get("props", []))
+            _save_json(VOICES_PATH, template.get("voices", []))
 
-        _save_manual_plan(plan)
-        self._send_json({
-            "ok": True,
-            "message": f"Loaded template '{template.get('name', '')}' with {len(template.get('scenes', []))} scenes",
-            "scenes_added": len(template.get("scenes", [])),
-        })
+        self._send_json({"ok": True, "name": template.get("name", "")})
+
+    def _handle_delete_template(self):
+        """Delete a saved project template by id."""
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path.rstrip("/")
+        m = re.match(r'^/api/templates/([^/]+)$', path)
+        if not m:
+            self._send_json({"error": "Invalid template id"}, 400)
+            return
+        tid = m.group(1)
+        templates_dir = os.path.join(OUTPUT_DIR, "templates")
+        fpath = os.path.join(templates_dir, f"{tid}.json")
+        if os.path.isfile(fpath):
+            os.remove(fpath)
+            self._send_json({"ok": True})
+        else:
+            self._send_json({"error": "Not found"}, 404)
 
     # ---- Item 44: AI assistant suggestions ----
 
@@ -10057,6 +11423,9 @@ class Handler(BaseHTTPRequestHandler):
                 plan["universal_prompt"] = universal_prompt
                 plan["world_setting"] = world_setting
 
+            # Assign varied shot types for cinematic variety
+            _assign_shot_types(plan.get("scenes", []))
+
             # Save plan
             with open(AUTO_DIRECTOR_PLAN_PATH, "w") as f:
                 json.dump(plan, f, indent=2)
@@ -10140,6 +11509,9 @@ class Handler(BaseHTTPRequestHandler):
                 plan["universal_prompt"] = universal_prompt
                 plan["world_setting"] = world_setting
 
+            # Assign varied shot types for cinematic variety
+            _assign_shot_types(plan.get("scenes", []))
+
             # Save plan (same path so generate/to-manual work)
             with open(AUTO_DIRECTOR_PLAN_PATH, "w") as f:
                 json.dump(plan, f, indent=2)
@@ -10181,6 +11553,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "No plan exists"}, 400)
             return
 
+        # Read render options from body (audio tracks, text overlays, transitions)
+        body = {}
+        try:
+            raw = self._read_body()
+            if raw:
+                body = json.loads(raw)
+        except Exception:
+            body = {}
+
         with open(AUTO_DIRECTOR_PLAN_PATH, "r") as f:
             plan = json.load(f)
 
@@ -10194,17 +11575,110 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "No clips found on disk to stitch"}, 400)
             return
 
-        transitions = [s.get("transition", "crossfade") for s in scenes
+        default_transition = "crossfade"
+        transitions = [s.get("transition", default_transition) for s in scenes
                        if s.get("clip_path") and os.path.isfile(s.get("clip_path", ""))]
         output_path = os.path.join(OUTPUT_DIR, "auto_director_final.mp4")
         audio = song_path if song_path and os.path.isfile(song_path) else None
 
+        # --- Audio mixing: combine multiple timeline tracks into one file ---
+        audio_tracks = body.get("audioTracks", [])
+        mixed_audio = audio  # Default to song path from plan
+
+        if audio_tracks:
+            track_files = []
+            for track in audio_tracks:
+                url = track.get("url", "")
+                fpath = None
+                if url.startswith("/api/audio/generated/"):
+                    fname = url.split("/api/audio/generated/")[-1]
+                    fpath = os.path.join(AUDIO_GEN_DIR, os.path.basename(fname))
+                elif url.startswith("/uploads/") or url.startswith("uploads/"):
+                    fname = url.split("/uploads/")[-1] if "/uploads/" in url else url[len("uploads/"):]
+                    fpath = os.path.join(UPLOADS_DIR, os.path.basename(fname))
+                if fpath and os.path.isfile(fpath):
+                    vol = track.get("volume", 80)
+                    track_files.append({
+                        "path": fpath,
+                        "volume": max(0.0, min(2.0, vol / 100.0)),
+                        "type": track.get("type", "music"),
+                    })
+
+            if track_files and len(track_files) > 1:
+                # Mix multiple tracks using ffmpeg
+                try:
+                    mixed_path = os.path.join(OUTPUT_DIR, "mixed_audio.mp3")
+                    mix_multi_audio_tracks(
+                        [t["path"] for t in track_files],
+                        mixed_path,
+                        volumes=[t["volume"] for t in track_files],
+                    )
+                    mixed_audio = mixed_path
+                    print(f"[STITCH] Mixed {len(track_files)} audio tracks into {mixed_path}")
+                except Exception as e:
+                    print(f"[STITCH] Audio mix failed: {e}, using primary audio only")
+            elif track_files:
+                mixed_audio = track_files[0]["path"]
+                print(f"[STITCH] Using single audio track: {mixed_audio}")
+
+        # --- Text overlays: map timeline overlays to per-scene format ---
+        text_overlays_data = body.get("textOverlays", [])
+        text_overlays = None
+        if text_overlays_data:
+            text_overlays = []
+            cumulative_time = 0
+            for i, s in enumerate(scenes):
+                if not (s.get("clip_path") and os.path.isfile(s.get("clip_path", ""))):
+                    continue
+                dur = float(s.get("duration", 4))
+                scene_start = cumulative_time
+                scene_end = cumulative_time + dur
+
+                # Find overlays that overlap this scene
+                scene_overlay = None
+                for ovl in text_overlays_data:
+                    ovl_start = float(ovl.get("startTime", 0))
+                    ovl_end = float(ovl.get("endTime", 5))
+                    if ovl_start < scene_end and ovl_end > scene_start:
+                        scene_overlay = {
+                            "text": ovl.get("text", ""),
+                            "font_size": ovl.get("fontSize", 24),
+                            "position": ovl.get("position", "bottom-center"),
+                            "color": ovl.get("color", "#ffffff"),
+                        }
+                        break
+                text_overlays.append(scene_overlay)
+                cumulative_time += dur
+
+        # --- Per-scene transitions from Edit workspace ---
+        scene_transitions = body.get("sceneTransitions", {})
+        if scene_transitions:
+            new_transitions = []
+            valid_idx = 0
+            for i, s in enumerate(scenes):
+                if not (s.get("clip_path") and os.path.isfile(s.get("clip_path", ""))):
+                    continue
+                st = scene_transitions.get(str(i), {})
+                trans = st.get("entry", "none")
+                if trans == "none":
+                    trans = default_transition if valid_idx > 0 else "none"
+                new_transitions.append(trans)
+                valid_idx += 1
+            if new_transitions:
+                transitions = new_transitions
+
         def run_stitch():
             try:
-                _auto_director._update_progress(phase="stitching")
-                from lib.video_stitcher import stitch
-                stitch(clip_paths, audio, output_path, transitions=transitions)
-                _auto_director._update_progress(phase="done", output_file=output_path)
+                _auto_director._update_progress(phase="stitching", progress_detail="preparing...")
+
+                def _stitch_progress(status):
+                    _auto_director._update_progress(phase="stitching", progress_detail=status)
+
+                stitch(clip_paths, mixed_audio, output_path,
+                       transitions=transitions,
+                       text_overlays=text_overlays,
+                       progress_cb=_stitch_progress)
+                _auto_director._update_progress(phase="done", output_file=output_path, progress_detail="")
             except Exception as e:
                 _auto_director._update_progress(phase="error", error=f"Stitch failed: {e}")
 
@@ -10750,8 +12224,149 @@ class Handler(BaseHTTPRequestHandler):
 
         self._send_json({"ok": True, "scene": scene})
 
+    def _handle_scene_upload_clip(self, scene_index):
+        """Upload an external video clip to a scene."""
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "upload"):
+            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
+            return
+        try:
+            ct = self.headers.get("Content-Type", "")
+            if "multipart" not in ct:
+                self._send_json({"error": "Expected multipart upload"}, 400)
+                return
+            boundary = ct.split("boundary=")[-1].encode()
+            body = self._read_body()
+            parts = self._parse_multipart(body, boundary)
+            file_part = None
+            for p in parts:
+                if p.get("filename"):
+                    file_part = p
+                    break
+            if not file_part or not file_part["data"]:
+                self._send_json({"error": "No file uploaded"}, 400)
+                return
+
+            plan = load_movie_plan(OUTPUT_DIR)
+            if not plan or scene_index >= len(plan.get("scenes", [])):
+                self._send_json({"error": "Invalid scene"}, 400)
+                return
+
+            # Save clip
+            clips_dir = os.path.join(OUTPUT_DIR, "auto_director", "clips")
+            os.makedirs(clips_dir, exist_ok=True)
+            ext = os.path.splitext(file_part.get("filename", "clip.mp4"))[1] or ".mp4"
+            filename = f"scene_{scene_index}_upload_{int(time.time())}{ext}"
+            clip_path = os.path.join(clips_dir, filename)
+            with open(clip_path, "wb") as f:
+                f.write(file_part["data"])
+
+            # Update plan
+            scene = plan["scenes"][scene_index]
+            scene["clip_path"] = clip_path
+            scene["clip_url"] = f"/api/clips/{filename}"
+            scene["has_clip"] = True
+            scene["clip_source"] = "upload"
+            save_movie_plan(plan, OUTPUT_DIR)
+
+            print(f"[UPLOAD] Clip uploaded for scene {scene_index}: {clip_path} ({len(file_part['data'])/1024:.0f}KB)")
+
+            self._send_json({
+                "ok": True,
+                "clip_url": scene["clip_url"],
+                "clip_path": clip_path,
+                "filename": filename,
+                "size": len(file_part["data"]),
+            })
+        except Exception as e:
+            self._send_json({"error": f"Upload failed: {str(e)[:200]}"}, 500)
+
+    def _handle_scene_upload_frame(self, scene_index):
+        """Upload an external image as a scene's first frame."""
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "upload"):
+            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
+            return
+        try:
+            ct = self.headers.get("Content-Type", "")
+            if "multipart" not in ct:
+                self._send_json({"error": "Expected multipart upload"}, 400)
+                return
+            boundary = ct.split("boundary=")[-1].encode()
+            body = self._read_body()
+            parts = self._parse_multipart(body, boundary)
+            file_part = None
+            for p in parts:
+                if p.get("filename"):
+                    file_part = p
+                    break
+            if not file_part or not file_part["data"]:
+                self._send_json({"error": "No file uploaded"}, 400)
+                return
+
+            plan = load_movie_plan(OUTPUT_DIR)
+            if not plan or scene_index >= len(plan.get("scenes", [])):
+                self._send_json({"error": "Invalid scene"}, 400)
+                return
+
+            # Save frame
+            frames_dir = os.path.join(OUTPUT_DIR, "first_frames")
+            os.makedirs(frames_dir, exist_ok=True)
+
+            # Resize to project standard
+            from PIL import Image
+            import io
+            img = Image.open(io.BytesIO(file_part["data"]))
+            img = img.convert("RGB")
+            if img.width > 4096 or img.height > 4096:
+                img.thumbnail((4096, 4096), Image.LANCZOS)
+
+            frame_path = os.path.join(frames_dir, f"scene_{scene_index}_first.jpg")
+            img.save(frame_path, "JPEG", quality=95)
+
+            # Also save thumbnail
+            os.makedirs(SCENE_THUMBNAILS_DIR, exist_ok=True)
+            thumb_path = os.path.join(SCENE_THUMBNAILS_DIR, f"scene_{scene_index}.jpg")
+            img.save(thumb_path, "JPEG", quality=90)
+
+            # Update plan
+            scene = plan["scenes"][scene_index]
+            scene["first_frame_path"] = frame_path
+            scene["first_frame_source"] = "upload"
+            scene["preview"] = {
+                "status": "ready",
+                "image_url": f"/api/scene-thumbnails/scene_{scene_index}.jpg",
+            }
+            save_movie_plan(plan, OUTPUT_DIR)
+
+            print(f"[UPLOAD] Frame uploaded for scene {scene_index}: {img.width}x{img.height}")
+
+            self._send_json({
+                "ok": True,
+                "first_frame_url": f"/api/scene-thumbnails/scene_{scene_index}.jpg",
+                "frame_path": frame_path,
+                "width": img.width,
+                "height": img.height,
+            })
+        except Exception as e:
+            self._send_json({"error": f"Upload failed: {str(e)[:200]}"}, 500)
+
     def _handle_generate_first_frame(self, scene_index):
         """Generate ONLY a first frame image for a scene (fast, no video)."""
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "generate"):
+            self._send_json({"error": "Rate limited — too many generation requests. Please wait a minute."}, 429)
+            return
+        # Read optional body for seed
+        body_data = {}
+        try:
+            cl = int(self.headers.get("Content-Length", 0))
+            if cl > 0:
+                raw_body = self.rfile.read(cl)
+                body_data = json.loads(raw_body)
+        except Exception:
+            pass
+
         plan = load_movie_plan(OUTPUT_DIR)
         if not plan or not plan.get("scenes"):
             self._send_json({"error": "No plan"}, 400)
@@ -10762,7 +12377,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         scene = scenes[scene_index]
-        prompt = scene.get("shot_prompt", scene.get("prompt", ""))
+
+        # Apply seed from request body if provided
+        if body_data.get("seed") is not None:
+            scene["seed"] = body_data["seed"]
+
         shot_type = scene.get("shot_type", "medium")
 
         # Enrich scene to resolve photo paths (also fixes stale IDs by name match)
@@ -10773,6 +12392,26 @@ class Handler(BaseHTTPRequestHandler):
             if enriched.get(key):
                 scene[key] = enriched[key]
         save_movie_plan(plan, OUTPUT_DIR)
+
+        # Load project style lock and inject into prompt
+        project_style = _prompt_os.get_project_style()
+        style_prefix = ""
+        if project_style:
+            style_parts = []
+            if project_style.get("worldSetting"):
+                style_parts.append(f"Setting: {project_style['worldSetting']}.")
+            if project_style.get("tone"):
+                style_parts.append(f"Tone: {project_style['tone']}.")
+            if project_style.get("visualLanguage"):
+                style_parts.append(project_style["visualLanguage"] + ".")
+            if project_style.get("colorPalette"):
+                style_parts.append(f"Colors: {project_style['colorPalette']}.")
+            if project_style.get("textureMaterial"):
+                style_parts.append(f"Materials: {project_style['textureMaterial']}.")
+            if project_style.get("cameraLanguage"):
+                style_parts.append(f"Camera style: {project_style['cameraLanguage']}.")
+            if style_parts:
+                style_prefix = " ".join(style_parts) + " "
 
         # --- Collect all candidate photos by type ---
         char_photos = []
@@ -10803,6 +12442,21 @@ class Handler(BaseHTTPRequestHandler):
                             tag = pc.get("name", f"Char{ci}").replace(" ", "")[:16]
                             if len(tag) < 3:
                                 tag = tag + "Ref"
+                            # Prefer approved sheet assets over raw reference photo
+                            if shot_type == "close-up" and pc.get("approvedFaceCloseUp"):
+                                face_url = pc["approvedFaceCloseUp"]
+                                face_path = _resolve_sheet_or_photo(face_url)
+                                if face_path:
+                                    # Replace with face close-up for close-up shots
+                                    char_photos = [{"path": face_path, "tag": tag}]
+                                    char_tags = [tag]
+                                    break  # Use this one
+                            elif pc.get("approvedSheet"):
+                                sheet_url = pc["approvedSheet"]
+                                sheet_path = _resolve_sheet_or_photo(sheet_url)
+                                if sheet_path:
+                                    # Use approved sheet instead of raw photo
+                                    photo = sheet_path
                             char_photos.append({"path": photo, "tag": tag})
                             char_tags.append(tag)
         else:
@@ -10813,14 +12467,82 @@ class Handler(BaseHTTPRequestHandler):
                 char_tags.append("Character")
 
         costume_photos = []
-        cos_photo = enriched.get("costume_photo_path", "")
-        if cos_photo and os.path.isfile(cos_photo):
-            costume_photos.append({"path": cos_photo, "tag": "Costume"})
+        # Check for approved costume sheets first
+        costumes_in_scene = enriched.get("costumes", [])
+        if costumes_in_scene:
+            for cos_ref in costumes_in_scene:
+                cos_id = cos_ref.get("id", "") if isinstance(cos_ref, dict) else ""
+                if cos_id:
+                    cos_obj = _prompt_os.get_costume(cos_id)
+                    if cos_obj:
+                        # Prefer approved sheet
+                        if cos_obj.get("approvedSheet"):
+                            cos_path = _resolve_sheet_or_photo(cos_obj["approvedSheet"])
+                            if cos_path:
+                                costume_photos.append({"path": cos_path, "tag": "Costume"})
+                                break
+                        # Fallback to reference photo
+                        cos_ref_img = cos_obj.get("referenceImagePath", "")
+                        if cos_ref_img:
+                            cos_path = _resolve_sheet_or_photo(cos_ref_img)
+                            if not cos_path:
+                                # Try photo directory
+                                for _ext in (".jpg", ".jpeg", ".png", ".webp"):
+                                    _cand = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{cos_id}{_ext}")
+                                    if os.path.isfile(_cand):
+                                        cos_path = _cand
+                                        break
+                            if cos_path:
+                                costume_photos.append({"path": cos_path, "tag": "Costume"})
+                                break
+        if not costume_photos:
+            cos_photo = enriched.get("costume_photo_path", "")
+            if cos_photo and os.path.isfile(cos_photo):
+                costume_photos.append({"path": cos_photo, "tag": "Costume"})
 
         env_photos = []
-        env_photo = enriched.get("environment_photo_path", "")
-        if env_photo and os.path.isfile(env_photo):
-            env_photos.append({"path": env_photo, "tag": "Setting"})
+        # Check for approved environment sheets first
+        envs_in_scene = enriched.get("environments", [])
+        if envs_in_scene:
+            for env_ref in envs_in_scene:
+                env_id = env_ref.get("id", "") if isinstance(env_ref, dict) else ""
+                if env_id:
+                    env_obj = _prompt_os.get_environment(env_id)
+                    if env_obj:
+                        if env_obj.get("approvedSheet"):
+                            env_path = _resolve_sheet_or_photo(env_obj["approvedSheet"])
+                            if env_path:
+                                env_photos.append({"path": env_path, "tag": "Setting"})
+                                break
+                        env_ref_img = env_obj.get("referenceImagePath", "")
+                        if env_ref_img:
+                            env_path = _resolve_sheet_or_photo(env_ref_img)
+                            if not env_path:
+                                for _ext in (".jpg", ".jpeg", ".png", ".webp"):
+                                    _cand = os.path.join(POS_PHOTOS_ENVS_DIR, f"{env_id}{_ext}")
+                                    if os.path.isfile(_cand):
+                                        env_path = _cand
+                                        break
+                            if env_path:
+                                env_photos.append({"path": env_path, "tag": "Setting"})
+                                break
+        if not env_photos:
+            env_photo = enriched.get("environment_photo_path", "")
+            if env_photo and os.path.isfile(env_photo):
+                env_photos.append({"path": env_photo, "tag": "Setting"})
+
+        # Warn about low-resolution references
+        for photo_entry in char_photos + costume_photos + env_photos:
+            photo_path = photo_entry.get("path", "")
+            if photo_path and os.path.isfile(photo_path):
+                try:
+                    from PIL import Image
+                    with Image.open(photo_path) as _img:
+                        w, h = _img.size
+                        if w < 512 or h < 512:
+                            print(f"[QUALITY WARNING] Low-res reference: {os.path.basename(photo_path)} is {w}x{h} — recommend 1024+ for better detail")
+                except Exception:
+                    pass
 
         # --- Use shot type system to select refs ---
         refs = select_refs_for_shot_type(shot_type, char_photos, costume_photos, env_photos, max_refs=3)
@@ -10849,14 +12571,67 @@ class Handler(BaseHTTPRequestHandler):
         has_env = any(r["tag"] == "Setting" for r in refs)
 
         import re as _re_tag
+        # Use enriched prompt with cinematic detail fallbacks
+        prompt = _enrich_scene_prompt(scene, project_style)
+
+        # Clean prompt: remove inline character descriptions when we have photo refs
+        # The @tag reference image defines identity — text descriptions fight with it
+        if char_photos:
+            # Remove "name (role) — Long description. Face: details. More details." patterns
+            # This handles multi-sentence character descriptions embedded in scene prompts
+            prompt = _re_tag.sub(r'\b\w+\s*\([^)]*\)\s*[—–-]\s*[^,;]*(?:\.\s*(?:Face|Hair|Skin|Body|Eyes|Ears|Build|Height|Posture)[^.]*)*\.?', '', prompt)
+            # Remove standalone character description blocks (Silver anthropomorphic...)
+            prompt = _re_tag.sub(r'(?:Silver|Gold|Bronze|Metallic)\s+anthropomorphic[^.;]*[.;]?', '', prompt)
+            # Remove "Face: ..." / "Hair: ..." / "Build: ..." standalone descriptions
+            prompt = _re_tag.sub(r'(?:Face|Hair|Skin tone|Body type|Build|Eyes|Ears|Posture|Height):\s*[^.;]*[.;]', '', prompt)
+            # Remove "[reference photo available]" and similar brackets
+            prompt = _re_tag.sub(r'\[(?:reference photo|photo|ref)[^]]*\]', '', prompt)
+            # Remove any "character name — description" that slipped through (generic catch)
+            for ct in char_tags:
+                # Strip "CharName (role) — multi-sentence description..." blocks
+                clean_name = _re_tag.escape(ct.replace("Ref", ""))
+                if clean_name and len(clean_name) >= 2:
+                    # Greedy: match name + optional role + dash + everything until next scene action keyword or double newline
+                    prompt = _re_tag.sub(rf'(?:^|\s){clean_name}\s*\([^)]*\)\s*[—–-]\s*.*?(?=\.\s*(?:Setting|Camera|Transition|Shifting|Opening|Closing|The\s|In\s|A\s)|$)', '', prompt, flags=_re_tag.IGNORECASE | _re_tag.DOTALL)
+                    # Also catch without parenthetical: "tb — Silver anthropomorphic..."
+                    prompt = _re_tag.sub(rf'(?:^|\s){clean_name}\s+[—–-]\s*[^.]*(?:\.\s*(?:Face|Hair|Skin|Body|Eyes|Build)[^.]*)*\.?', '', prompt, flags=_re_tag.IGNORECASE)
+            # Clean up whitespace, dangling commas, double periods
+            prompt = _re_tag.sub(r',\s*,', ',', prompt)
+            prompt = _re_tag.sub(r'\.\s*\.', '.', prompt)
+            prompt = _re_tag.sub(r'\s{2,}', ' ', prompt).strip()
+            prompt = prompt.strip(' ,;—–-')
+
         tag_prompt = prompt
-        # Remove vision-API descriptions (they fight with image refs)
-        tag_prompt = _re_tag.sub(r'\b(Silver anthropomorphic|glossy metallic|Face:.*?words\))', '', tag_prompt)
+        # Remove any remaining vision-API artifacts
         tag_prompt = _re_tag.sub(r'\[reference photo available\]', '', tag_prompt)
         tag_prompt = _re_tag.sub(r'\s{2,}', ' ', tag_prompt).strip()
 
+        # Prepend project style to prompt
+        if style_prefix:
+            tag_prompt = style_prefix + tag_prompt
+
         # Build shot-aware prompt (handles quality keywords + shot framing)
         tag_prompt = build_shot_prompt(shot_type, tag_prompt, has_char, has_costume, has_env)
+
+        # Auto-inject continuity for non-first scenes
+        if scene_index > 0:
+            prev_scene = scenes[scene_index - 1] if scene_index < len(scenes) else None
+            if prev_scene:
+                continuity_text = "Continuing from the previous scene. Maintain visual continuity: same color palette, same lighting, same time of day."
+                # Check if same character appears
+                prev_chars = set()
+                for c in (prev_scene.get("characters") or []):
+                    cid = c.get("id", "") if isinstance(c, dict) else ""
+                    if cid: prev_chars.add(cid)
+                curr_chars = set()
+                for c in (scene.get("characters") or []):
+                    cid = c.get("id", "") if isinstance(c, dict) else ""
+                    if cid: curr_chars.add(cid)
+                if prev_chars & curr_chars:
+                    continuity_text += " The same character continues to appear — maintain identical appearance."
+
+                tag_prompt = tag_prompt + " " + continuity_text
+                tag_prompt = tag_prompt[:1000]
 
         # Add @tag refs — let the PHOTOS define identity
         selected_char_tags = [r["tag"] for r in refs if r["tag"] in char_tags]
@@ -10871,14 +12646,47 @@ class Handler(BaseHTTPRequestHandler):
                 tag_prompt = f"{tag_prompt} Set in the exact location from @Setting."
         tag_prompt = tag_prompt[:1000]  # API limit
 
+        # Add negative prompt from project style
+        if project_style and project_style.get("negativePrompt"):
+            neg = project_style["negativePrompt"]
+            tag_prompt = tag_prompt + f" AVOID: {neg}"
+            tag_prompt = tag_prompt[:1000]
+
+        # Seed for reproducibility
+        scene_seed = scene.get("seed")
+        if scene_seed is not None:
+            try:
+                scene_seed = int(scene_seed)
+            except (ValueError, TypeError):
+                scene_seed = None
+        # Store seed for reproducibility — generate one if not provided
+        if scene_seed is None:
+            import random
+            scene_seed = random.randint(0, 4294967295)
+        scene["last_seed"] = scene_seed
+
         try:
             from lib.video_generator import _runway_generate_scene_image
-            print(f"[FIRST FRAME][{scene_index}] Generating with {len(refs)} refs: {[r['tag'] for r in refs]}")
+            print(f"[FIRST FRAME][{scene_index}] Generating with {len(refs)} refs: {[r['tag'] for r in refs]}, seed={scene_seed}")
+
+            # Get aspect ratio from project settings for higher-res output
+            settings = _load_settings()
+            ds = settings.get("director_state", {})
+            aspect = ds.get("aspect_ratio", "16:9")
+            ratio_map = {
+                "16:9": "1920:1080",
+                "9:16": "1080:1920",
+                "1:1": "1024:1024",
+                "4:3": "1536:1152",
+                "3:4": "1152:1536",
+            }
+            gen_ratio = ratio_map.get(aspect, "1920:1080")
 
             img_path = _runway_generate_scene_image(
                 tag_prompt, refs,
-                ratio="1280:720",
+                ratio=gen_ratio,
                 model="gen4_image",
+                seed=scene_seed,
             )
 
             if not img_path or not os.path.isfile(img_path):
@@ -10899,6 +12707,7 @@ class Handler(BaseHTTPRequestHandler):
 
             # Update plan with first_frame_path and preview
             scene["first_frame_path"] = first_frame_path
+            scene["_lastGeneratedPrompt"] = prompt
             scene["preview"] = {
                 "status": "ready",
                 "image_url": f"/api/scene-thumbnails/scene_{scene_index}.jpg",
@@ -10909,17 +12718,381 @@ class Handler(BaseHTTPRequestHandler):
             save_movie_plan(plan, OUTPUT_DIR)
 
             print(f"[FIRST FRAME][{scene_index}] Saved: {first_frame_path}")
+
+            # Check ref quality for UI warning
+            ref_warnings = []
+            for photo_entry in char_photos + costume_photos + env_photos:
+                pp = photo_entry.get("path", "")
+                if pp and os.path.isfile(pp):
+                    try:
+                        from PIL import Image
+                        with Image.open(pp) as _qi:
+                            qw, qh = _qi.size
+                            if qw < 512 or qh < 512:
+                                ref_warnings.append(f"{photo_entry.get('tag', 'ref')} photo is only {qw}x{qh} — upload a higher resolution for better detail")
+                    except Exception:
+                        pass
+
             self._send_json({"ok": True, "first_frame_path": first_frame_path,
                              "preview_url": f"/api/scene-thumbnails/scene_{scene_index}.jpg",
-                             "scene": scene})
+                             "scene": scene,
+                             "ref_warnings": ref_warnings})
 
         except Exception as e:
             import traceback
             traceback.print_exc()
             self._send_json({"error": str(e)[:300]}, 500)
 
+    def _handle_multi_angle_clip(self, scene_index, body):
+        """Generate a multi-angle clip using keyframe interpolation.
+
+        1. Generate first frame at shot_type_start (e.g., wide establishing)
+        2. Generate last frame at shot_type_end (e.g., close-up)
+        3. Send both as keyframes to image_to_video
+        4. Runway interpolates between angles in one clip
+        """
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "generate"):
+            self._send_json({"error": "Rate limited — too many generation requests. Please wait a minute."}, 429)
+            return
+        plan = load_movie_plan(OUTPUT_DIR)
+        if not plan or not plan.get("scenes"):
+            self._send_json({"error": "No plan"}, 400)
+            return
+        scenes = plan["scenes"]
+        if scene_index < 0 or scene_index >= len(scenes):
+            self._send_json({"error": "Invalid scene index"}, 400)
+            return
+
+        scene = scenes[scene_index]
+
+        # Shot types for start and end of the clip
+        start_type = body.get("startShotType", "wide")
+        end_type = body.get("endShotType", "close-up")
+        duration = max(4, min(10, int(body.get("duration", 8))))  # Min 4s for multi-angle
+
+        # Use existing first frame if available, or generate new ones
+        enriched = dict(scene)
+        _enrich_scene_with_assets(enriched)
+
+        prompt = scene.get("shot_prompt", scene.get("prompt", "Cinematic scene"))
+
+        # Collect refs
+        char_photos = []
+        chars = enriched.get("characters", [])
+        for char_ref in chars:
+            cid = char_ref.get("id", "") if isinstance(char_ref, dict) else ""
+            if cid:
+                pc = _prompt_os.get_character(cid)
+                if pc:
+                    ref_img = pc.get("referencePhoto", "") or pc.get("referenceImagePath", "")
+                    import re as _mre
+                    _m = _mre.search(r"/api/pos/characters/([^/]+)/photo", ref_img or "")
+                    if _m:
+                        for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                            cand = os.path.join(POS_PHOTOS_CHARS_DIR, f"{_m.group(1)}{ext}")
+                            if os.path.isfile(cand):
+                                tag = pc.get("name", "Char").replace(" ", "")[:16]
+                                if len(tag) < 3: tag += "Ref"
+                                char_photos.append({"path": cand, "tag": tag})
+                                break
+
+        env_photos = []
+        envs = enriched.get("environments", [])
+        for env_ref in envs:
+            eid = env_ref.get("id", "") if isinstance(env_ref, dict) else ""
+            if eid:
+                for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                    cand = os.path.join(POS_PHOTOS_ENVS_DIR, f"{eid}{ext}")
+                    if os.path.isfile(cand):
+                        env_photos.append({"path": cand, "tag": "Setting"})
+                        break
+
+        all_refs = (char_photos + env_photos)[:3]
+
+        if not all_refs:
+            self._send_json({"error": "No reference photos — upload character or environment photos first"}, 400)
+            return
+
+        try:
+            from lib.video_generator import (
+                _runway_generate_scene_image, _runway_submit_text_to_video,
+                _runway_poll, _download, build_shot_prompt,
+            )
+
+            # Step 1: Generate FIRST frame (start angle)
+            has_char = len(char_photos) > 0
+            has_env = len(env_photos) > 0
+
+            start_prompt = build_shot_prompt(start_type, prompt, has_char, False, has_env)
+            # Add @tags
+            for ref in all_refs:
+                if f"@{ref['tag']}" not in start_prompt:
+                    start_prompt = f"@{ref['tag']} {start_prompt}"
+            start_prompt = start_prompt[:1000]
+
+            print(f"[MULTI-ANGLE][{scene_index}] Generating start frame ({start_type})...")
+            first_path = _runway_generate_scene_image(start_prompt, all_refs, ratio="1280:720", model="gen4_image")
+
+            if not first_path or not os.path.isfile(first_path):
+                self._send_json({"error": f"Failed to generate {start_type} frame"}, 500)
+                return
+
+            # Step 2: Generate LAST frame (end angle)
+            end_prompt = build_shot_prompt(end_type, prompt, has_char, False, has_env)
+            for ref in all_refs:
+                if f"@{ref['tag']}" not in end_prompt:
+                    end_prompt = f"@{ref['tag']} {end_prompt}"
+            end_prompt = end_prompt[:1000]
+
+            print(f"[MULTI-ANGLE][{scene_index}] Generating end frame ({end_type})...")
+            last_path = _runway_generate_scene_image(end_prompt, all_refs, ratio="1280:720", model="gen4_image")
+
+            if not last_path or not os.path.isfile(last_path):
+                # Fall back to single-frame if last frame fails
+                print(f"[MULTI-ANGLE][{scene_index}] Last frame failed, using single-frame mode")
+                last_path = None
+
+            # Step 3: Generate video with both keyframes
+            video_prompt = f"Camera smoothly transitions from {start_type} to {end_type}. Cinematic movement, professional cinematography, smooth motion."
+
+            # Get engine
+            engine = scene.get("engine", "")
+            if not engine:
+                settings = _load_settings()
+                engine = settings.get("director_state", {}).get("engine", "gen4_5")
+
+            print(f"[MULTI-ANGLE][{scene_index}] Generating clip: {start_type} -> {end_type}, {duration}s")
+
+            task_id = _runway_submit_text_to_video(
+                video_prompt, duration=duration, model=engine,
+                first_frame_path=first_path,
+                last_frame_path=last_path,
+            )
+
+            video_info = _runway_poll(task_id)
+
+            # Download clip
+            clips_dir = os.path.join(OUTPUT_DIR, "auto_director", "clips")
+            os.makedirs(clips_dir, exist_ok=True)
+            clip_filename = f"scene_{scene_index}_multiangle_{int(time.time())}.mp4"
+            clip_path = os.path.join(clips_dir, clip_filename)
+            _download(video_info["url"], clip_path)
+
+            # Save first frames
+            first_frame_dir = os.path.join(OUTPUT_DIR, "first_frames")
+            os.makedirs(first_frame_dir, exist_ok=True)
+            import shutil
+            ff_path = os.path.join(first_frame_dir, f"scene_{scene_index}_first.jpg")
+            shutil.copy2(first_path, ff_path)
+
+            # Update scene
+            scene["clip_path"] = clip_path
+            scene["clip_url"] = f"/api/clips/{clip_filename}"
+            scene["first_frame_path"] = ff_path
+            scene["has_clip"] = True
+            scene["multi_angle"] = True
+            scene["multi_angle_start"] = start_type
+            scene["multi_angle_end"] = end_type
+            scenes[scene_index] = scene
+            save_movie_plan(plan, OUTPUT_DIR)
+
+            self._send_json({
+                "ok": True,
+                "clip_url": scene["clip_url"],
+                "first_frame_url": f"/api/scene-thumbnails/scene_{scene_index}.jpg",
+                "start_type": start_type,
+                "end_type": end_type,
+                "duration": duration,
+            })
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._send_json({"error": f"Multi-angle error: {str(e)[:300]}"}, 500)
+
+    def _handle_scene_restyle(self, scene_index, body):
+        """Restyle an existing clip using video_to_video (gen4_aleph)."""
+        from lib.video_generator import _runway_video_to_video, _download
+        plan = load_movie_plan(OUTPUT_DIR)
+        if not plan:
+            self._send_json({"error": "No plan found"}, 404)
+            return
+        scenes = plan.get("scenes", [])
+        if scene_index < 0 or scene_index >= len(scenes):
+            self._send_json({"error": f"Scene {scene_index} out of range"}, 404)
+            return
+        scene = scenes[scene_index]
+        clip_path = scene.get("clip_path", "")
+        if not clip_path or not os.path.isfile(clip_path):
+            self._send_json({"error": "No clip file found for this scene. Generate a clip first."}, 400)
+            return
+        style = body.get("style", "")
+        if not style:
+            self._send_json({"error": "No style description provided"}, 400)
+            return
+        try:
+            prompt = f"Restyle this video: {style}. Maintain all motion, action, and composition. Change only the visual style."
+            restyled_path = _runway_video_to_video(clip_path, prompt)
+            if not restyled_path or not os.path.isfile(restyled_path):
+                self._send_json({"error": "Restyle generation failed — no video returned"}, 500)
+                return
+            # Save to clips directory
+            clips_dir = os.path.join(OUTPUT_DIR, "auto_director", "clips")
+            os.makedirs(clips_dir, exist_ok=True)
+            dest = os.path.join(clips_dir, f"scene_{scene_index}_restyled_{int(time.time())}.mp4")
+            import shutil
+            shutil.copy2(restyled_path, dest)
+            scene["clip_path"] = dest
+            scene["clip_url"] = f"/api/clips/{os.path.basename(dest)}"
+            scene["restyled"] = True
+            scene["restyle_prompt"] = style
+            save_movie_plan(plan, OUTPUT_DIR)
+            self._send_json({
+                "ok": True,
+                "clip_url": scene["clip_url"],
+                "restyled_url": scene["clip_url"],
+            })
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._send_json({"error": f"Restyle error: {str(e)[:300]}"}, 500)
+
+    def _handle_character_performance(self, scene_index, body):
+        """Generate character performance video using act_two model.
+
+        Takes a character image + reference performance video and generates
+        a new video where the character performs the same movements/expressions.
+        """
+        plan = load_movie_plan(OUTPUT_DIR)
+        if not plan or not plan.get("scenes"):
+            self._send_json({"error": "No plan"}, 400)
+            return
+        scenes = plan["scenes"]
+        if scene_index < 0 or scene_index >= len(scenes):
+            self._send_json({"error": "Invalid scene index"}, 400)
+            return
+
+        scene = scenes[scene_index]
+
+        # Get character image -- prefer first frame, then character photo
+        char_image_path = scene.get("first_frame_path", "")
+        if not char_image_path or not os.path.isfile(char_image_path):
+            # Try character reference photo
+            enriched = dict(scene)
+            _enrich_scene_with_assets(enriched)
+            char_image_path = enriched.get("character_photo_path", "")
+
+        if not char_image_path or not os.path.isfile(char_image_path):
+            self._send_json({"error": "No character image available. Generate a first frame or upload a character photo."}, 400)
+            return
+
+        # Reference video can come from body or from a previously generated clip
+        ref_video_path = body.get("referenceVideoPath", "")
+        if not ref_video_path:
+            # Check if there's an uploaded performance reference
+            perf_dir = os.path.join(OUTPUT_DIR, "performance_refs")
+            if os.path.isdir(perf_dir):
+                for f in os.listdir(perf_dir):
+                    if f.endswith(('.mp4', '.webm', '.mov')):
+                        ref_video_path = os.path.join(perf_dir, f)
+                        break
+
+        if not ref_video_path or not os.path.isfile(ref_video_path):
+            self._send_json({"error": "No reference performance video. Upload a 3-30 second video of the performance you want the character to replicate."}, 400)
+            return
+
+        body_control = body.get("bodyControl", True)
+        expression_intensity = body.get("expressionIntensity", 3)
+
+        try:
+            import base64
+            import requests
+            from lib.video_generator import _photo_to_data_uri
+
+            # Build character image URI
+            char_uri = _photo_to_data_uri(char_image_path)
+
+            # Build reference video URI
+            with open(ref_video_path, "rb") as vf:
+                video_bytes = vf.read()
+            video_b64 = base64.b64encode(video_bytes).decode("ascii")
+            video_uri = f"data:video/mp4;base64,{video_b64}"
+
+            payload = {
+                "model": "act_two",
+                "character": {"type": "image", "uri": char_uri},
+                "reference": {"type": "video", "uri": video_uri},
+                "bodyControl": body_control,
+                "expressionIntensity": max(1, min(5, int(expression_intensity))),
+                "contentModeration": {"publicFigureThreshold": "low"},
+            }
+
+            print(f"[ACT_TWO][{scene_index}] Submitting character performance: bodyControl={body_control}, intensity={expression_intensity}")
+
+            resp = requests.post(
+                f"{RUNWAY_API_BASE}/character_performance",
+                headers=_runway_headers(),
+                json=payload,
+                timeout=120,
+            )
+
+            if resp.status_code not in (200, 201):
+                err = resp.text[:500]
+                print(f"[ACT_TWO] Error {resp.status_code}: {err}")
+                self._send_json({"error": f"Act Two API error: {err[:200]}"}, resp.status_code)
+                return
+
+            data = resp.json()
+            task_id = data.get("id", "")
+            if not task_id:
+                self._send_json({"error": "No task ID returned from Act Two"}, 500)
+                return
+
+            print(f"[ACT_TWO][{scene_index}] Task: {task_id}")
+            result = _runway_poll(task_id)
+
+            # Download result
+            clips_dir = os.path.join(OUTPUT_DIR, "auto_director", "clips")
+            os.makedirs(clips_dir, exist_ok=True)
+            clip_path = os.path.join(clips_dir, f"scene_{scene_index}_performance_{int(time.time())}.mp4")
+            _download(result["url"], clip_path)
+
+            # Update scene
+            scene["clip_path"] = clip_path
+            scene["clip_url"] = f"/api/clips/{os.path.basename(clip_path)}"
+            scene["has_clip"] = True
+            scene["performance_mode"] = True
+            scenes[scene_index] = scene
+            save_movie_plan(plan, OUTPUT_DIR)
+
+            self._send_json({
+                "ok": True,
+                "clip_url": scene["clip_url"],
+                "clip_path": clip_path,
+            })
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._send_json({"error": f"Character performance error: {str(e)[:300]}"}, 500)
+
     def _handle_generate_scene_clip(self, scene_index):
         """Generate a video clip for a scene using image_to_video with its first frame."""
+        ip = self.client_address[0]
+        if not _check_rate_limit(ip, "generate"):
+            self._send_json({"error": "Rate limited — too many generation requests. Please wait a minute."}, 429)
+            return
+        # Read optional body for seed
+        clip_body_data = {}
+        try:
+            cl = int(self.headers.get("Content-Length", 0))
+            if cl > 0:
+                raw_body = self.rfile.read(cl)
+                clip_body_data = json.loads(raw_body)
+        except Exception:
+            pass
+
         plan = load_movie_plan(OUTPUT_DIR)
         if not plan or not plan.get("scenes"):
             self._send_json({"error": "No plan"}, 400)
@@ -10930,6 +13103,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         scene = scenes[scene_index]
+
+        # Apply seed from request body if provided
+        if clip_body_data.get("seed") is not None:
+            scene["seed"] = clip_body_data["seed"]
+
         first_frame = scene.get("first_frame_path", "")
 
         if not first_frame or not os.path.isfile(first_frame):
@@ -10953,17 +13131,63 @@ class Handler(BaseHTTPRequestHandler):
 
             print(f"[CLIP][{scene_index}] Generating clip: engine={engine}, duration={duration}s, first_frame={first_frame}")
 
-            # Inject character descriptions for text reinforcement
-            char_desc = enriched.get("character_description", "")
-            if char_desc:
-                prompt = f"This person: {char_desc}. {prompt}"
+            # For image_to_video: focus prompt on MOTION and ACTION, not visual description.
+            # The first frame image IS the visual reference — the prompt should describe
+            # what HAPPENS, not what things look like.
+            shot_type = scene.get("shot_type", "medium")
+            action = scene.get("action", "") or scene.get("visual_description", "") or ""
+            camera_move = scene.get("camera", "") or scene.get("camera_movement", "") or ""
+
+            video_prompt_parts = []
+            # Action/motion from scene
+            if action and action != prompt:
+                video_prompt_parts.append(action)
+            else:
+                video_prompt_parts.append(prompt)
+            # Camera movement
+            if camera_move:
+                video_prompt_parts.append(f"Camera: {camera_move}.")
+            # Shot-type motion hints
+            if shot_type == "close-up":
+                video_prompt_parts.append("Subtle facial movement, breathing, natural micro-expressions. Maintain exact likeness throughout.")
+            elif shot_type in ("wide", "establishing"):
+                video_prompt_parts.append("Atmospheric motion, environmental animation, cinematic sweep.")
+            else:
+                video_prompt_parts.append("Natural, fluid motion. Cinematic quality.")
+            video_prompt_parts.append("Smooth motion, no artifacts, consistent lighting.")
+            video_prompt = " ".join(video_prompt_parts)[:1000]
+
+            # Load project style for video prompt
+            project_style = _prompt_os.get_project_style()
+            if project_style:
+                vid_style_parts = []
+                if project_style.get("tone"):
+                    vid_style_parts.append(project_style["tone"])
+                if project_style.get("visualLanguage"):
+                    vid_style_parts.append(project_style["visualLanguage"])
+                if vid_style_parts:
+                    video_prompt = " ".join(vid_style_parts) + ". " + video_prompt
+                    video_prompt = video_prompt[:1000]
+
+            # Seed for reproducibility
+            clip_seed = scene.get("seed")
+            if clip_seed is not None:
+                try:
+                    clip_seed = int(clip_seed)
+                except (ValueError, TypeError):
+                    clip_seed = None
+            if clip_seed is None:
+                import random
+                clip_seed = random.randint(0, 4294967295)
+            scene["last_seed"] = clip_seed
 
             task_id = _runway_submit_text_to_video(
-                prompt, duration=duration, model=engine,
+                video_prompt, duration=duration, model=engine,
                 first_frame_path=first_frame,
+                seed=clip_seed,
             )
 
-            print(f"[CLIP][{scene_index}] Task submitted: {task_id[:16]}...")
+            print(f"[CLIP][{scene_index}] Task submitted: {task_id[:16]}..., seed={clip_seed}")
             video_info = _runway_poll(task_id)
 
             # Download clip
