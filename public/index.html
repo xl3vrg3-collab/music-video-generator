@@ -3455,6 +3455,10 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 1
           newContainer.scrollTop = window._scrollPositions[mode];
         }, 50);
       }
+      // Update tab badges and global stats on every tab switch
+      if (window._updateTabBadges) window._updateTabBadges();
+      if (window._updateGlobalStats) window._updateGlobalStats();
+
       // Call the main _setMode if it exists (for data loading)
       if (window._setMode && window._setMode !== window._switchTab) {
         try { window._setMode(mode); } catch(e) { console.warn('_setMode error:', e); }
@@ -6660,6 +6664,8 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 1
       <span class="shortcut-key">1-6</span><span class="shortcut-desc">Switch workspace (Project→Output)</span>
       <span class="shortcut-key">D</span><span class="shortcut-desc">Duplicate hovered scene</span>
       <span class="shortcut-key">Delete</span><span class="shortcut-desc">Delete hovered scene</span>
+      <span class="shortcut-key">G</span><span class="shortcut-desc">Generate first frame for hovered scene</span>
+      <span class="shortcut-key">R</span><span class="shortcut-desc">Regenerate/refresh hovered scene</span>
     </div>
   </div>
 </div>
@@ -9286,6 +9292,25 @@ document.addEventListener('DOMContentLoaded', function() {
           if (window._refreshScenes) window._refreshScenes();
           else renderManualScenes();
           window._toast && window._toast('Scene deleted', 'success');
+        }
+      }
+    }
+    // G: Quick generate first frame for hovered scene
+    if (e.key === 'g' && !e.ctrlKey && !e.altKey && tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+      var hoveredCard = document.querySelector('.scene-card-structured:hover');
+      if (hoveredCard) {
+        var genBtn = hoveredCard.querySelector('[onclick*="generateFirstFrame"], [onclick*="_generateFirstFrame"]');
+        if (genBtn) genBtn.click();
+      }
+    }
+    // R: Regenerate/refresh hovered scene (re-generate first frame)
+    if (e.key === 'r' && !e.ctrlKey && !e.altKey && tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+      var hoveredCard = document.querySelector('.scene-card-structured:hover');
+      if (hoveredCard) {
+        var genBtn = hoveredCard.querySelector('[onclick*="generateFirstFrame"], [onclick*="_generateFirstFrame"]');
+        if (genBtn) {
+          genBtn.click();
+          window._toast && window._toast('Regenerating scene...', 'info');
         }
       }
     }
@@ -15840,6 +15865,68 @@ document.addEventListener('DOMContentLoaded', function() {
     if (container) {
       window._renderAutoSceneCards(container, stats, scenes);
     }
+    // Update tab badges and global stats after scene refresh
+    if (window._updateTabBadges) window._updateTabBadges();
+    if (window._updateGlobalStats) window._updateGlobalStats();
+  };
+
+  // ---- Tab Badge Counts ----
+  window._updateTabBadges = function() {
+    var scenes = window._autoScenes || window._scenes || [];
+
+    // Shots tab badge
+    var shotsBtn = document.getElementById('wsShotsBtn');
+    if (shotsBtn) {
+      var count = scenes.length;
+      var badge = shotsBtn.querySelector('.tab-badge');
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'tab-badge';
+        badge.style.cssText = 'display:inline-block;background:var(--cyan);color:#000;font-size:8px;font-weight:700;padding:1px 5px;border-radius:8px;margin-left:4px;min-width:14px;text-align:center;';
+        shotsBtn.appendChild(badge);
+      }
+      badge.textContent = count > 0 ? count : '';
+      badge.style.display = count > 0 ? '' : 'none';
+    }
+
+    // Edit tab -- show clip count
+    var editBtn = document.getElementById('wsEditBtn');
+    if (editBtn) {
+      var clips = scenes.filter(function(s) { return s.clip_url || s.clipUrl; }).length;
+      var badge = editBtn.querySelector('.tab-badge');
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'tab-badge';
+        badge.style.cssText = 'display:inline-block;background:var(--green);color:#000;font-size:8px;font-weight:700;padding:1px 5px;border-radius:8px;margin-left:4px;min-width:14px;text-align:center;';
+        editBtn.appendChild(badge);
+      }
+      badge.textContent = clips > 0 ? clips : '';
+      badge.style.display = clips > 0 ? '' : 'none';
+    }
+  };
+
+  // ---- Global Stats (header status bar) ----
+  window._updateGlobalStats = function() {
+    fetch('/api/pos/dashboard').then(function(r) { return r.json(); }).then(function(d) {
+      var counts = d.counts || {};
+      var el;
+      var statColor = function(n) { return n > 0 ? 'var(--cyan)' : 'var(--text-dim)'; };
+      el = document.getElementById('gStatChars'); if (el) el.innerHTML = '<span style="color:'+statColor(counts.characters || 0)+'">Characters: ' + (counts.characters || 0) + '</span>';
+      el = document.getElementById('gStatCostumes'); if (el) el.innerHTML = '<span style="color:'+statColor(counts.costumes || 0)+'">Costumes: ' + (counts.costumes || 0) + '</span>';
+      el = document.getElementById('gStatEnvs'); if (el) el.innerHTML = '<span style="color:'+statColor(counts.environments || 0)+'">Environments: ' + (counts.environments || 0) + '</span>';
+
+      var scenes = window._autoScenes || window._scenes || [];
+      el = document.getElementById('gStatScenes'); if (el) el.innerHTML = '<span style="color:'+statColor(scenes.length)+'">Scenes: ' + scenes.length + '</span>';
+      var clips = scenes.filter(function(s) { return s.clip_url || s.clipUrl; }).length;
+      el = document.getElementById('gStatShots'); if (el) el.innerHTML = '<span style="color:'+statColor(clips)+'">Clips: ' + clips + '</span>';
+
+      // Runtime
+      var totalDur = 0;
+      scenes.forEach(function(s) { totalDur += parseFloat(s.duration) || 4; });
+      var mins = Math.floor(totalDur / 60);
+      var secs = Math.floor(totalDur % 60);
+      el = document.getElementById('gStatRuntime'); if (el) el.textContent = 'Runtime: ' + mins + ':' + (secs < 10 ? '0' : '') + secs;
+    }).catch(function() {});
   };
 
   window._renderAutoSceneCards = function(container, stats, scenes) {
@@ -19937,6 +20024,14 @@ document.addEventListener('DOMContentLoaded', function() {
           document.getElementById('autoScenePlanStats'),
           window._autoScenes
         );
+        // Auto-scroll to show the generated preview
+        var ffCards = document.querySelectorAll('.scene-card-structured');
+        var ffTargetCard = ffCards[sceneIndex];
+        if (ffTargetCard) {
+          setTimeout(function() {
+            ffTargetCard.scrollIntoView({behavior: 'smooth', block: 'center'});
+          }, 500);
+        }
       }
     }).catch(function(e) {
       _ffCleanup();
@@ -20219,6 +20314,14 @@ document.addEventListener('DOMContentLoaded', function() {
           document.getElementById('autoScenePlanStats'),
           window._autoScenes
         );
+        // Auto-scroll to show the generated clip
+        var clipCards = document.querySelectorAll('.scene-card-structured');
+        var clipTargetCard = clipCards[sceneIndex];
+        if (clipTargetCard) {
+          setTimeout(function() {
+            clipTargetCard.scrollIntoView({behavior: 'smooth', block: 'center'});
+          }, 500);
+        }
       }
     }).catch(function(e) {
       _clipCleanup();
