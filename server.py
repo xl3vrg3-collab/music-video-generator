@@ -13407,16 +13407,87 @@ Do not include any explanation, just the JSON object."""
             print(f"[MOVIE PLANNER] Sync to pipeline failed: {e}")
 
 
+def _kill_stale_servers(port):
+    """Kill any existing processes listening on our port before starting."""
+    import subprocess as _sp
+    try:
+        # Find PIDs on our port
+        result = _sp.run(
+            ["netstat", "-ano"],
+            capture_output=True, text=True, timeout=5
+        )
+        pids = set()
+        my_pid = os.getpid()
+        for line in result.stdout.split("\n"):
+            if f":{port}" in line and "LISTENING" in line:
+                parts = line.strip().split()
+                if parts:
+                    try:
+                        pid = int(parts[-1])
+                        if pid != my_pid and pid != 0:
+                            pids.add(pid)
+                    except ValueError:
+                        pass
+
+        if pids:
+            print(f"  Cleaning up {len(pids)} stale server process(es) on port {port}...")
+            for pid in pids:
+                try:
+                    _sp.run(["taskkill", "/F", "/PID", str(pid)],
+                            capture_output=True, timeout=5)
+                except Exception:
+                    pass
+            # Wait for port to free
+            import time as _t
+            _t.sleep(2)
+            print(f"  Cleanup done.")
+    except Exception as e:
+        print(f"  Port cleanup skipped: {e}")
+
+
+def _write_pid_file():
+    """Write PID file so we can find ourselves later."""
+    pid_path = os.path.join(OUTPUT_DIR, "server.pid")
+    with open(pid_path, "w") as f:
+        f.write(str(os.getpid()))
+
+
+def _remove_pid_file():
+    """Remove PID file on shutdown."""
+    pid_path = os.path.join(OUTPUT_DIR, "server.pid")
+    try:
+        os.remove(pid_path)
+    except OSError:
+        pass
+
+
 def main():
+    # Kill any stale servers before starting
+    _kill_stale_servers(PORT)
+
+    # Allow port reuse
+    import socketserver
+    socketserver.TCPServer.allow_reuse_address = True
+    HTTPServer.allow_reuse_address = True
+
     server = HTTPServer(("0.0.0.0", PORT), Handler)
+    server.allow_reuse_address = True
+
+    _write_pid_file()
+
     print(f"\n  LUMN Studio")
     print(f"  UI running at http://localhost:{PORT}")
+    print(f"  PID: {os.getpid()}")
     print(f"  Press Ctrl+C to stop\n")
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nShutting down.")
+    finally:
         server.server_close()
+        _remove_pid_file()
+        print("Server stopped.")
 
 
 if __name__ == "__main__":

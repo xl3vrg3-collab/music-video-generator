@@ -15397,6 +15397,16 @@ document.addEventListener('DOMContentLoaded', function() {
     return bar;
   }
 
+  // Global refresh: re-render scene cards from current data
+  window._refreshScenes = function() {
+    var container = document.getElementById('autoSceneCards') || document.getElementById('adSceneList');
+    var stats = document.getElementById('autoSceneCount') || document.getElementById('adSceneCount');
+    var scenes = window._autoScenes || window._scenes || [];
+    if (container) {
+      window._renderAutoSceneCards(container, stats, scenes);
+    }
+  };
+
   window._renderAutoSceneCards = function(container, stats, scenes) {
     if (!scenes || !Array.isArray(scenes)) scenes = [];
     // Store globally
