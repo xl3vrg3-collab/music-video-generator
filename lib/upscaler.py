@@ -22,9 +22,10 @@ def _find_realesrgan_cli():
     # Check common locations
     candidates = [
         "realesrgan-ncnn-vulkan",  # On PATH
+        os.path.expanduser("~/tools/realesrgan-ncnn-vulkan/realesrgan-ncnn-vulkan.exe"),
         os.path.expanduser("~/realesrgan-ncnn-vulkan/realesrgan-ncnn-vulkan.exe"),
         os.path.expanduser("~/tools/realesrgan-ncnn-vulkan.exe"),
-        r"C:\tools\realesrgan-ncnn-vulkan.exe",
+        r"C:\tools\realesrgan-ncnn-vulkan\realesrgan-ncnn-vulkan.exe",
     ]
     for c in candidates:
         if shutil.which(c):
