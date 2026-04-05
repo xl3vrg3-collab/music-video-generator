@@ -2758,6 +2758,77 @@
 <script src="/public/timeline.js"></script>
 </head>
 <body>
+
+<!-- Welcome Screen (first visit only) -->
+<div id="welcomeScreen" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:100000;background:linear-gradient(135deg,#060606 0%,#0a0a1a 50%,#060606 100%);display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.5s ease;">
+
+  <!-- Ambient glow -->
+  <div style="position:absolute;top:20%;left:30%;width:300px;height:300px;background:radial-gradient(circle,rgba(0,229,255,0.06) 0%,transparent 70%);pointer-events:none;"></div>
+  <div style="position:absolute;bottom:20%;right:25%;width:400px;height:400px;background:radial-gradient(circle,rgba(106,92,255,0.04) 0%,transparent 70%);pointer-events:none;"></div>
+
+  <!-- Logo -->
+  <div style="text-align:center;margin-bottom:32px;">
+    <h1 style="font-family:'Inter Tight',sans-serif;font-weight:900;font-size:42px;letter-spacing:12px;margin:0;background:linear-gradient(135deg,#fff,rgba(255,255,255,0.7));-webkit-background-clip:text;-webkit-text-fill-color:transparent;">LUMN <span style="background:linear-gradient(135deg,#FFD600,#FF8C00);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">STUDIO</span></h1>
+    <div style="font-family:'JetBrains Mono',monospace;font-size:13px;color:rgba(255,255,255,0.4);letter-spacing:4px;margin-top:8px;">AI Film Studio — Script to Screen</div>
+  </div>
+
+  <!-- Feature highlights -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:24px;max-width:800px;margin-bottom:40px;padding:0 20px;">
+    <div style="text-align:center;">
+      <div style="font-size:28px;margin-bottom:8px;">🎬</div>
+      <div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:4px;">Generate</div>
+      <div style="font-size:9px;color:rgba(255,255,255,0.4);">AI creates scenes from your vision</div>
+    </div>
+    <div style="text-align:center;">
+      <div style="font-size:28px;margin-bottom:8px;">🎭</div>
+      <div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:4px;">Characters</div>
+      <div style="font-size:9px;color:rgba(255,255,255,0.4);">Consistent characters across every shot</div>
+    </div>
+    <div style="text-align:center;">
+      <div style="font-size:28px;margin-bottom:8px;">✂️</div>
+      <div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:4px;">Edit</div>
+      <div style="font-size:9px;color:rgba(255,255,255,0.4);">Timeline, transitions, audio mixing</div>
+    </div>
+    <div style="text-align:center;">
+      <div style="font-size:28px;margin-bottom:8px;">🎵</div>
+      <div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:4px;">Music First</div>
+      <div style="font-size:9px;color:rgba(255,255,255,0.4);">Paste Suno link, AI syncs to beats</div>
+    </div>
+  </div>
+
+  <!-- CTA -->
+  <button onclick="window._dismissWelcome()" style="background:linear-gradient(135deg,#7c5cff,#00e5ff);color:#fff;border:none;padding:14px 48px;border-radius:12px;font-family:'Inter Tight',sans-serif;font-size:14px;font-weight:700;letter-spacing:2px;cursor:pointer;transition:all 0.3s ease;box-shadow:0 4px 24px rgba(0,229,255,0.2);" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 32px rgba(0,229,255,0.3)'" onmouseout="this.style.transform='';this.style.boxShadow='0 4px 24px rgba(0,229,255,0.2)'">
+    GET STARTED →
+  </button>
+
+  <div style="font-size:9px;color:rgba(255,255,255,0.2);margin-top:16px;">Powered by Runway Gen 4.5 · Veo 3.1 · Real-ESRGAN</div>
+</div>
+
+<script>
+window._dismissWelcome = function() {
+  var screen = document.getElementById('welcomeScreen');
+  if (screen) {
+    screen.style.opacity = '0';
+    setTimeout(function() { screen.remove(); }, 500);
+  }
+  localStorage.setItem('lumn_welcomed', '1');
+};
+
+// Also allow re-showing welcome from help menu
+window._showWelcome = function() {
+  localStorage.removeItem('lumn_welcomed');
+  location.reload();
+};
+
+// Auto-dismiss if returning user
+(function() {
+  if (localStorage.getItem('lumn_welcomed')) {
+    var screen = document.getElementById('welcomeScreen');
+    if (screen) screen.remove();
+  }
+})();
+</script>
+
 <div class="toast-container" id="toastContainer"></div>
 <div class="fs-preview-overlay" id="fsPreviewOverlay" onclick="window._closeFsPreview()">
   <button class="fs-preview-close">&times;</button>
@@ -3183,6 +3254,7 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 1
     <div class="toolbar-group">
       <button class="btn-toolbar" onclick="window._showShortcuts()" data-tooltip="Keyboard shortcuts">?</button>
       <button class="btn-toolbar" id="showGuideBtn" onclick="document.getElementById('gettingStarted').style.display='';localStorage.removeItem('lumn_checklist_dismissed');" style="display:none;" data-tooltip="Show getting started guide">Guide</button>
+      <button class="btn-toolbar" onclick="window._showWelcome()" data-tooltip="Show welcome screen">Welcome</button>
     </div>
     <div class="toolbar-group" style="margin-left:auto;">
       <span id="creditsDisplay" style="font-size:10px;color:var(--text-dim);cursor:pointer;" onclick="window._refreshCredits()" title="Click to refresh credits">Credits: —</span>
