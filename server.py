@@ -5158,6 +5158,29 @@ class Handler(BaseHTTPRequestHandler):
             analysis = brain.analyze_success_factors(scene_data)
             self._send_json(analysis)
 
+        # ──── Suno Integration ────
+        elif path == "/api/suno/import":
+            body = json.loads(self._read_body())
+            self._handle_suno_import(body)
+
+        elif path == "/api/suno/generate":
+            body = json.loads(self._read_body())
+            self._handle_suno_generate(body)
+
+        # ──── Auto-Captions / Transcription ────
+        elif path == "/api/transcribe":
+            body = json.loads(self._read_body())
+            self._handle_transcribe(body)
+
+        # ──── Album Art Generator ────
+        elif path == "/api/generate-album-art":
+            body = json.loads(self._read_body())
+            self._handle_generate_album_art(body)
+
+        # ──── Reference Demo Image Generation (Lookbook) ────
+        elif path == "/api/generate-reference-images":
+            self._handle_generate_reference_images()
+
         else:
             self.send_error(404)
 
@@ -5562,29 +5585,6 @@ Do not include any explanation, just the JSON object."""
                 self._send_json({"ok": True})
             else:
                 self._send_json({"error": "Index out of range"}, 404)
-
-        # ──── Suno Integration ────
-        elif path == "/api/suno/import":
-            body = json.loads(self._read_body())
-            self._handle_suno_import(body)
-
-        elif path == "/api/suno/generate":
-            body = json.loads(self._read_body())
-            self._handle_suno_generate(body)
-
-        # ──── Auto-Captions / Transcription ────
-        elif path == "/api/transcribe":
-            body = json.loads(self._read_body())
-            self._handle_transcribe(body)
-
-        # ──── Album Art Generator ────
-        elif path == "/api/generate-album-art":
-            body = json.loads(self._read_body())
-            self._handle_generate_album_art(body)
-
-        # ──── Reference Demo Image Generation (Lookbook) ────
-        elif path == "/api/generate-reference-images":
-            self._handle_generate_reference_images()
 
         else:
             self.send_error(404)

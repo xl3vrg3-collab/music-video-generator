@@ -811,14 +811,19 @@ def _runway_generate_scene_image(prompt: str, reference_photos: list,
         import re as _re_strip
         clean_prompt = _re_strip.sub(r'@\w+\s*', '', prompt).strip()
 
+    # referenceImages requires >=1 item. If no refs provided, use a minimal
+    # placeholder so text_to_image can still generate from prompt alone.
+    if not ref_images:
+        # 4x4 white pixel PNG as minimal reference placeholder
+        ref_images = [{"uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAE0lEQVR4nGP8//8/AwwwwVl4OQCWbgMF7ZjH1AAAAABJRU5ErkJggg==", "tag": "Ref"}]
+
     payload = {
         "model": model,
         "promptText": clean_prompt[:1000],
         "ratio": ratio,
+        "referenceImages": ref_images,
         "contentModeration": {"publicFigureThreshold": "low"},
     }
-    if ref_images:
-        payload["referenceImages"] = ref_images
     if seed is not None:
         payload["seed"] = seed
 
