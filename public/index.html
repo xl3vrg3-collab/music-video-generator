@@ -5032,6 +5032,8 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 1
       <div>
         <label style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Quality</label>
         <select id="outputQuality" class="styled-select" style="width:100%;">
+          <option value="4k" title="4K Ultra HD (3840x2160) — upscaled from source clips. Largest file size.">Ultra HD (4K)</option>
+          <option value="2k" title="2K QHD (2560x1440) — upscaled from source. Great quality.">QHD (2K)</option>
           <option value="high" title="Full HD resolution — best for YouTube, presentations. Larger file.">High (1080p)</option>
           <option value="medium" title="HD resolution — good balance of quality and file size.">Medium (720p)</option>
           <option value="draft" title="Quick preview quality — small file, fast export. Not for final delivery.">Draft (480p)</option>
@@ -18315,6 +18317,17 @@ document.addEventListener('DOMContentLoaded', function() {
     renderPayload.format = fmt ? fmt.value : 'MP4 (H.264)';
     renderPayload.quality = qual ? qual.value : 'High (1080p)';
 
+    // Map quality to output resolution for ffmpeg upscaling
+    var qualVal = (document.getElementById('outputQuality') || {}).value || 'high';
+    var resolutionMap = {
+      '4k': '3840:2160',
+      '2k': '2560:1440',
+      'high': '1920:1080',
+      'medium': '1280:720',
+      'draft': '854:480',
+    };
+    renderPayload.outputResolution = resolutionMap[qualVal] || null;
+
     fetch('/api/auto-director/stitch', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -19255,6 +19268,17 @@ document.addEventListener('DOMContentLoaded', function() {
     var qual = document.getElementById('outputQuality');
     renderPayload.format = fmt ? fmt.value : 'MP4 (H.264)';
     renderPayload.quality = qual ? qual.value : 'High (1080p)';
+
+    // Map quality to output resolution for ffmpeg upscaling
+    var qualVal2 = (document.getElementById('outputQuality') || {}).value || 'high';
+    var resolutionMap2 = {
+      '4k': '3840:2160',
+      '2k': '2560:1440',
+      'high': '1920:1080',
+      'medium': '1280:720',
+      'draft': '854:480',
+    };
+    renderPayload.outputResolution = resolutionMap2[qualVal2] || null;
 
     fetch('/api/auto-director/stitch', {
       method: 'POST',
@@ -21093,7 +21117,7 @@ window._setExportPreset = function(preset) {
     'instagram_reel': {format: 'MP4 (H.264)', quality: 'High (1080p)', ratio: '9:16 Portrait', desc: 'Instagram Reel — 9:16 vertical, 1080p. Max 90 seconds.'},
     'instagram_post': {format: 'MP4 (H.264)', quality: 'High (1080p)', ratio: '1:1 Square', desc: 'Instagram Post — 1:1 square, 1080p. Max 60 seconds.'},
     'twitter': {format: 'MP4 (H.264)', quality: 'Medium (720p)', ratio: '16:9 Landscape', desc: 'Twitter/X — 16:9, 720p for faster upload. Max 2:20.'},
-    'cinema': {format: 'MP4 (H.264)', quality: 'High (1080p)', ratio: '16:9 Landscape', desc: 'Cinema quality — highest settings for final delivery.'},
+    'cinema': {format: 'MP4 (H.264)', quality: 'Ultra HD (4K)', ratio: '16:9 Landscape', desc: 'Cinema quality — 4K upscaled, highest settings for final delivery.'},
     'gif': {format: 'Animated GIF', quality: 'Draft (480p)', ratio: '1:1 Square', desc: 'Animated GIF — no audio, 480p. Good for social previews.'},
   };
 

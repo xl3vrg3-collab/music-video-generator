@@ -1370,7 +1370,7 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
 
             img_path = _runway_generate_scene_image(
                 tag_prompt, refs,
-                ratio="1280:720",
+                ratio="1920:1080",
                 model="gen4_image",
             )
 
@@ -3089,7 +3089,7 @@ def _autoagent_eval_fn():
         try:
             result_path = _runway_generate_scene_image(
                 test_prompt, refs,
-                ratio="1280:720",
+                ratio="1920:1080",
                 model="gen4_image_turbo",  # Use turbo for speed in evals
             )
             gen_time = time.time() - start_time
@@ -5865,7 +5865,7 @@ Do not include any explanation, just the JSON object."""
         try:
             from lib.video_generator import _runway_generate_scene_image
 
-            ratio_map = {"1:1": "1024:1024", "9:16": "720:1280", "16:9": "1280:720"}
+            ratio_map = {"1:1": "1536:1536", "9:16": "1080:1920", "16:9": "1920:1080"}
             gen_ratio = ratio_map.get(size, "1024:1024")
 
             # Add @tags to prompt
@@ -11828,6 +11828,8 @@ Do not include any explanation, just the JSON object."""
             if new_transitions:
                 transitions = new_transitions
 
+        output_resolution = body.get("outputResolution")
+
         def run_stitch():
             try:
                 _auto_director._update_progress(phase="stitching", progress_detail="preparing...")
@@ -11838,6 +11840,7 @@ Do not include any explanation, just the JSON object."""
                 stitch(clip_paths, mixed_audio, output_path,
                        transitions=transitions,
                        text_overlays=text_overlays,
+                       output_resolution=output_resolution,
                        progress_cb=_stitch_progress)
                 _auto_director._update_progress(phase="done", output_file=output_path, progress_detail="")
             except Exception as e:
@@ -12851,11 +12854,11 @@ Do not include any explanation, just the JSON object."""
             ds = settings.get("director_state", {})
             aspect = ds.get("aspect_ratio", "16:9")
             ratio_map = {
-                "16:9": "1920:1080",
-                "9:16": "1080:1920",
-                "1:1": "1024:1024",
-                "4:3": "1536:1152",
-                "3:4": "1152:1536",
+                "16:9": "2560:1440",   # 2K for better detail
+                "9:16": "1440:2560",
+                "1:1": "1536:1536",
+                "4:3": "1920:1440",
+                "3:4": "1440:1920",
             }
             gen_ratio = ratio_map.get(aspect, "1920:1080")
 
@@ -12896,6 +12899,15 @@ Do not include any explanation, just the JSON object."""
 
             print(f"[FIRST FRAME][{scene_index}] Saved: {first_frame_path}")
 
+            # Check actual output resolution
+            try:
+                from PIL import Image as _PILImg
+                with _PILImg.open(img_path) as _out_img:
+                    out_w, out_h = _out_img.size
+                    print(f"[FIRST FRAME][{scene_index}] Output: {out_w}x{out_h}")
+            except Exception:
+                out_w, out_h = 0, 0
+
             # Check ref quality for UI warning
             ref_warnings = []
             for photo_entry in char_photos + costume_photos + env_photos:
@@ -12913,7 +12925,8 @@ Do not include any explanation, just the JSON object."""
             self._send_json({"ok": True, "first_frame_path": first_frame_path,
                              "preview_url": f"/api/scene-thumbnails/scene_{scene_index}.jpg",
                              "scene": scene,
-                             "ref_warnings": ref_warnings})
+                             "ref_warnings": ref_warnings,
+                             "resolution": f"{out_w}x{out_h}" if out_w else "unknown"})
 
             # Log analytics
             try:
@@ -13037,7 +13050,7 @@ Do not include any explanation, just the JSON object."""
             start_prompt = start_prompt[:1000]
 
             print(f"[MULTI-ANGLE][{scene_index}] Generating start frame ({start_type})...")
-            first_path = _runway_generate_scene_image(start_prompt, all_refs, ratio="1280:720", model="gen4_image")
+            first_path = _runway_generate_scene_image(start_prompt, all_refs, ratio="1920:1080", model="gen4_image")
 
             if not first_path or not os.path.isfile(first_path):
                 self._send_json({"error": f"Failed to generate {start_type} frame"}, 500)
@@ -13051,7 +13064,7 @@ Do not include any explanation, just the JSON object."""
             end_prompt = end_prompt[:1000]
 
             print(f"[MULTI-ANGLE][{scene_index}] Generating end frame ({end_type})...")
-            last_path = _runway_generate_scene_image(end_prompt, all_refs, ratio="1280:720", model="gen4_image")
+            last_path = _runway_generate_scene_image(end_prompt, all_refs, ratio="1920:1080", model="gen4_image")
 
             if not last_path or not os.path.isfile(last_path):
                 # Fall back to single-frame if last frame fails

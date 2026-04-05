@@ -1088,6 +1088,7 @@ def stitch(clip_paths: list, audio_path: str | None, output_path: str,
            speed_ramps: list | None = None,
            reversed_clips: list | None = None,
            audio_crossfade: float = 0.0,
+           output_resolution: str = None,
            progress_cb=None) -> str:
     """
     Stitch video clips together with optional audio.
@@ -1250,7 +1251,47 @@ def stitch(clip_paths: list, audio_path: str | None, output_path: str,
         result = _apply_audio_visualization(result, audio_path, output_path,
                                              audio_viz, progress_cb)
 
+    # Upscale to target resolution if requested (lanczos for quality)
+    if output_resolution:
+        result = _apply_output_upscale(result, output_path, output_resolution, progress_cb)
+
     return result
+
+
+def _apply_output_upscale(input_path: str, output_path: str,
+                          resolution: str, progress_cb=None) -> str:
+    """Upscale/downscale the final video to a target resolution using lanczos."""
+    try:
+        w, h = resolution.split(":")
+        w, h = int(w), int(h)
+    except (ValueError, AttributeError):
+        return input_path
+
+    if progress_cb:
+        progress_cb(f"upscaling to {w}x{h} (lanczos)...")
+
+    # Use a temp file so we don't overwrite the input mid-read
+    tmp_out = input_path + ".upscaled.mp4"
+    scale_filter = f"scale={w}:{h}:flags=lanczos"
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-vf", scale_filter,
+        "-c:v", "libx264",
+        "-c:a", "copy",
+        "-pix_fmt", "yuv420p",
+        tmp_out,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+
+    # Replace the output with the upscaled version
+    import shutil
+    shutil.move(tmp_out, output_path)
+
+    if progress_cb:
+        progress_cb(f"upscaled to {w}x{h}")
+
+    return output_path
 
 
 def _copy_clip(clip: str, output: str, progress_cb=None) -> str:
