@@ -31,12 +31,22 @@ import threading
 import time
 from datetime import datetime
 
-# Ensure ffmpeg is on PATH (winget installs to a long path)
-_FFMPEG_DIR = os.path.expanduser(
-    r"~\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin"
-)
-if os.path.isdir(_FFMPEG_DIR) and _FFMPEG_DIR not in os.environ.get("PATH", ""):
-    os.environ["PATH"] = _FFMPEG_DIR + os.pathsep + os.environ.get("PATH", "")
+# Ensure ffmpeg is on PATH
+# Check common locations: system PATH, winget install, chocolatey, manual
+import shutil as _shutil
+if not _shutil.which("ffmpeg"):
+    _ffmpeg_search_dirs = [
+        os.path.expanduser(r"~\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin"),
+        r"C:\ffmpeg\bin",
+        r"C:\tools\ffmpeg\bin",
+        os.path.expanduser("~/tools/ffmpeg/bin"),
+        "/usr/bin",
+        "/usr/local/bin",
+    ]
+    for _fd in _ffmpeg_search_dirs:
+        if os.path.isdir(_fd):
+            os.environ["PATH"] = _fd + os.pathsep + os.environ.get("PATH", "")
+            break
 import uuid as _uuid
 import urllib.parse
 import zipfile
