@@ -3568,8 +3568,7 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 1
         if (el) {
           el.style.display = (k === mode) ? '' : 'none';
           el.classList.remove('hidden');
-          // Optimization 6: content-visibility for hidden workspaces
-          el.style.contentVisibility = (k === mode) ? 'visible' : 'hidden';
+          // content-visibility removed — was causing Project tab to not re-render
         }
         if (btn) { btn.classList.toggle('active', k === mode); }
       }
