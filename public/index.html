@@ -2856,19 +2856,30 @@
     0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.15); }
     50% { box-shadow: 0 0 0 12px rgba(255,255,255,0); }
   }
+  /* Tablet: use square images */
   @media (max-width: 768px) {
+    #welcomeBgLight { background-image: url('/public/lumn_bg_light_square.png') !important; }
+    #welcomeBgDark { background-image: url('/public/lumn_bg_dark_square.png') !important; }
     #welcomeTagline { font-size: 22px !important; }
     #welcomePillsTop { gap: 8px !important; }
     #welcomePillsTop .welcome-pill { font-size: 9px !important; padding: 5px 12px !important; }
     #welcomeCta { padding: 12px 36px !important; font-size: 12px !important; }
     #welcomeSubheading { font-size: 11px !important; }
   }
+  /* Phone portrait: use mobile vertical images */
   @media (max-width: 480px) {
+    #welcomeBgLight { background-image: url('/public/lumn_bg_light_mobile.png') !important; }
+    #welcomeBgDark { background-image: url('/public/lumn_bg_dark_mobile.png') !important; }
     #welcomeTagline { font-size: 18px !important; letter-spacing: 4px !important; }
     #welcomePillsTop .welcome-pill { font-size: 8px !important; padding: 4px 10px !important; }
     #welcomeCta { padding: 10px 28px !important; font-size: 11px !important; letter-spacing: 3px !important; }
     #welcomeTopContent { padding: 28px 16px 0 !important; }
     #welcomeContent { padding: 0 16px 28px !important; }
+  }
+  /* Phone landscape: use desktop 16:9 images (already correct) */
+  @media (max-width: 768px) and (orientation: landscape) {
+    #welcomeBgLight { background-image: url('/public/lumn_bg_light.png') !important; }
+    #welcomeBgDark { background-image: url('/public/lumn_bg_dark.png') !important; }
   }
 </style>
 <div id="welcomeScreen" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:100000;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;cursor:default;transition:filter 0.9s ease, opacity 0.9s ease;">
@@ -2992,10 +3003,12 @@ window._showWelcome = function() {
   location.reload();
 };
 
-// Preload both images
+// Preload all responsive images
 (function() {
-  new Image().src = '/public/lumn_bg_dark.png';
-  new Image().src = '/public/lumn_bg_light.png';
+  ['/public/lumn_bg_dark.png', '/public/lumn_bg_light.png',
+   '/public/lumn_bg_dark_mobile.png', '/public/lumn_bg_light_mobile.png',
+   '/public/lumn_bg_dark_square.png', '/public/lumn_bg_light_square.png'
+  ].forEach(function(src) { new Image().src = src; });
 })();
 
 // Auto-dismiss if returning user
