@@ -2882,21 +2882,28 @@
     #welcomeBgDark { background-image: url('/public/lumn_bg_dark.png') !important; }
   }
 </style>
-<div id="welcomeScreen" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:100000;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;cursor:default;transition:filter 0.9s ease, opacity 0.9s ease;">
+<div id="welcomeScreen" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:100000;overflow:hidden;cursor:default;transition:filter 0.9s ease, opacity 0.9s ease;">
 
-  <!-- Background fill color -->
+  <!-- Background fill -->
   <div id="welcomeBgFill" style="position:absolute;top:0;left:0;right:0;bottom:0;background:#f5f3f0;transition:background 0.15s;"></div>
 
-  <!-- Light bear IMAGE (visible on load) — full image, never cropped -->
-  <img id="welcomeBgLight" src="/public/lumn_bg_light.png" alt="" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;opacity:1;transition:opacity 0.15s;">
+  <!-- Mouse-reactive spotlight (follows cursor) -->
+  <div id="welcomeSpotlight" style="position:absolute;width:600px;height:600px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,0.08) 0%,transparent 70%);pointer-events:none;transform:translate(-50%,-50%);transition:left 0.3s ease, top 0.3s ease;left:50%;top:50%;z-index:1;"></div>
 
-  <!-- Dark bear IMAGE (hidden on load) -->
-  <img id="welcomeBgDark" src="/public/lumn_bg_dark.png" alt="" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;opacity:0;transition:opacity 0.15s;">
+  <!-- Parallax Layer 1: Bear image (moves slightly with mouse) -->
+  <img id="welcomeBgLight" src="/public/lumn_bg_light.png" alt="" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);max-width:105%;max-height:105%;width:auto;height:auto;object-fit:contain;opacity:1;transition:opacity 0.15s;will-change:transform;z-index:1;">
+  <img id="welcomeBgDark" src="/public/lumn_bg_dark.png" alt="" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);max-width:105%;max-height:105%;width:auto;height:auto;object-fit:contain;opacity:0;transition:opacity 0.15s;will-change:transform;z-index:1;">
+
+  <!-- Particle canvas (floating particles around bear) -->
+  <canvas id="welcomeParticles" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:2;"></canvas>
+
+  <!-- Moon glow overlay (brightens near cursor) -->
+  <div id="welcomeMoonGlow" style="position:absolute;top:42%;left:50%;width:80px;height:80px;transform:translate(-50%,-50%);border-radius:50%;background:radial-gradient(circle,rgba(255,240,200,0.3) 0%,transparent 70%);pointer-events:none;opacity:0;transition:opacity 0.5s;z-index:3;"></div>
 
   <!-- Bottom CTA area -->
-  <div id="welcomeContent" style="position:absolute;bottom:0;left:0;right:0;z-index:2;text-align:center;padding:0 24px 32px;transition:opacity 0.3s ease;">
+  <div id="welcomeContent" style="position:absolute;bottom:0;left:0;right:0;z-index:10;text-align:center;padding:0 24px 32px;transition:opacity 0.3s ease;">
 
-    <!-- CTA button with pulse -->
+    <!-- CTA button -->
     <div>
       <button id="welcomeCta" onclick="window._enterStudio()" style="background:rgba(0,0,0,0.06);backdrop-filter:blur(16px);color:rgba(0,0,0,0.55);border:1px solid rgba(0,0,0,0.1);padding:12px 44px;border-radius:30px;font-family:'Inter Tight',sans-serif;font-size:12px;font-weight:600;letter-spacing:5px;cursor:pointer;text-transform:uppercase;animation:welcomePulse 3s ease infinite;" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 32px rgba(0,0,0,0.12)';this.style.animationPlayState='paused'" onmouseout="this.style.transform='';this.style.boxShadow='';this.style.animationPlayState='running'">
         Enter
@@ -2926,6 +2933,7 @@ window._enterStudio = function() {
   bgLight.style.opacity = '0';
   bgDark.style.opacity = '1';
   if (bgFill) bgFill.style.background = '#060606';
+  if (window._welcomeGoDark) window._welcomeGoDark();
 
   // Instant text color switch to light
   if (footer) { footer.style.color = 'rgba(255,255,255,0.15)'; }
@@ -2956,12 +2964,156 @@ window._showWelcome = function() {
   location.reload();
 };
 
-// Preload all responsive images
+// Preload images
 (function() {
-  ['/public/lumn_bg_dark.png', '/public/lumn_bg_light.png',
-   '/public/lumn_bg_dark_mobile.png', '/public/lumn_bg_light_mobile.png',
-   '/public/lumn_bg_dark_square.png', '/public/lumn_bg_light_square.png'
-  ].forEach(function(src) { new Image().src = src; });
+  ['/public/lumn_bg_dark.png', '/public/lumn_bg_light.png'].forEach(function(src) { new Image().src = src; });
+})();
+
+// ──── INTERACTIVE WELCOME EXPERIENCE ────
+
+(function() {
+  var screen = document.getElementById('welcomeScreen');
+  if (!screen || localStorage.getItem('lumn_welcomed')) return;
+
+  var bgLight = document.getElementById('welcomeBgLight');
+  var bgDark = document.getElementById('welcomeBgDark');
+  var spotlight = document.getElementById('welcomeSpotlight');
+  var moonGlow = document.getElementById('welcomeMoonGlow');
+  var canvas = document.getElementById('welcomeParticles');
+  if (!canvas) return;
+
+  var ctx = canvas.getContext('2d');
+  var mouseX = window.innerWidth / 2;
+  var mouseY = window.innerHeight / 2;
+  var isDark = false;
+  var particles = [];
+
+  // Resize canvas
+  function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+
+  // ── Parallax: bear follows mouse subtly ──
+  screen.addEventListener('mousemove', function(e) {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+
+    var cx = window.innerWidth / 2;
+    var cy = window.innerHeight / 2;
+    var dx = (mouseX - cx) / cx; // -1 to 1
+    var dy = (mouseY - cy) / cy;
+
+    // Parallax on bear image (subtle 8px movement)
+    var moveX = dx * -8;
+    var moveY = dy * -5;
+    var activeImg = isDark ? bgDark : bgLight;
+    if (activeImg) {
+      activeImg.style.transform = 'translate(calc(-50% + ' + moveX + 'px), calc(-50% + ' + moveY + 'px))';
+    }
+
+    // Spotlight follows cursor
+    if (spotlight) {
+      spotlight.style.left = mouseX + 'px';
+      spotlight.style.top = mouseY + 'px';
+    }
+
+    // Moon glow intensifies when cursor is near center-top (where bear's moon is)
+    if (moonGlow) {
+      var bearCenterX = cx;
+      var bearCenterY = cy * 0.75; // moon is in upper portion
+      var dist = Math.sqrt(Math.pow(mouseX - bearCenterX, 2) + Math.pow(mouseY - bearCenterY, 2));
+      var maxDist = 300;
+      var intensity = Math.max(0, 1 - dist / maxDist);
+      moonGlow.style.opacity = intensity * 0.8;
+      moonGlow.style.width = (80 + intensity * 60) + 'px';
+      moonGlow.style.height = (80 + intensity * 60) + 'px';
+    }
+  });
+
+  // ── Particle system: floating dust/sparkles ──
+  function Particle() {
+    this.reset();
+  }
+
+  Particle.prototype.reset = function() {
+    this.x = Math.random() * canvas.width;
+    this.y = Math.random() * canvas.height;
+    this.size = Math.random() * 2 + 0.5;
+    this.speedX = (Math.random() - 0.5) * 0.3;
+    this.speedY = (Math.random() - 0.5) * 0.2 - 0.1; // slight upward drift
+    this.opacity = Math.random() * 0.3 + 0.05;
+    this.life = Math.random() * 300 + 100;
+    this.maxLife = this.life;
+  };
+
+  Particle.prototype.update = function() {
+    this.x += this.speedX;
+    this.y += this.speedY;
+    this.life--;
+
+    // Gentle cursor repulsion
+    var dx = this.x - mouseX;
+    var dy = this.y - mouseY;
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 100) {
+      this.x += dx / dist * 0.5;
+      this.y += dy / dist * 0.5;
+    }
+
+    // Fade based on life
+    var lifePct = this.life / this.maxLife;
+    this.currentOpacity = this.opacity * (lifePct < 0.2 ? lifePct / 0.2 : lifePct > 0.8 ? (1 - lifePct) / 0.2 : 1);
+
+    if (this.life <= 0 || this.x < -10 || this.x > canvas.width + 10 || this.y < -10 || this.y > canvas.height + 10) {
+      this.reset();
+    }
+  };
+
+  Particle.prototype.draw = function(ctx) {
+    var color = isDark ? '255,255,255' : '0,0,0';
+    ctx.fillStyle = 'rgba(' + color + ',' + this.currentOpacity + ')';
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+    ctx.fill();
+  };
+
+  // Create particles
+  for (var i = 0; i < 60; i++) {
+    particles.push(new Particle());
+  }
+
+  // Animation loop
+  var animId;
+  function animate() {
+    if (!document.getElementById('welcomeScreen')) {
+      cancelAnimationFrame(animId);
+      return;
+    }
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    for (var i = 0; i < particles.length; i++) {
+      particles[i].update();
+      particles[i].draw(ctx);
+    }
+
+    animId = requestAnimationFrame(animate);
+  }
+  animate();
+
+  // When entering dark mode, update particle colors and spotlight
+  window._welcomeGoDark = function() {
+    isDark = true;
+    if (spotlight) {
+      spotlight.style.background = 'radial-gradient(circle,rgba(255,240,200,0.1) 0%,transparent 70%)';
+    }
+    if (moonGlow) {
+      moonGlow.style.background = 'radial-gradient(circle,rgba(255,240,200,0.5) 0%,transparent 70%)';
+    }
+  };
 })();
 
 // Auto-dismiss if returning user
