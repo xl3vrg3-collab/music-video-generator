@@ -2953,6 +2953,12 @@
    ═══════════════════════════════════════════════════════ */
 
 (function() {
+  // Always define _showWelcome so toolbar button works
+  window._showWelcome = function() {
+    localStorage.removeItem('lumn_welcomed');
+    location.reload();
+  };
+
   var screen = document.getElementById('welcomeScreen');
   if (!screen) return;
   if (localStorage.getItem('lumn_welcomed')) { screen.remove(); return; }
@@ -3178,11 +3184,7 @@
     localStorage.setItem('lumn_welcomed', '1');
   };
 
-  // Re-show from toolbar
-  window._showWelcome = function() {
-    localStorage.removeItem('lumn_welcomed');
-    location.reload();
-  };
+  // _showWelcome already defined above (before early return)
 
   // Preload
   new Image().src = '/public/bear_dark.png';
