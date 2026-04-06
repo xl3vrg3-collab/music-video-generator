@@ -2905,15 +2905,11 @@
 </style>
 <div id="welcomeScreen" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:100000;overflow:hidden;cursor:pointer;transition:filter 0.9s ease, opacity 0.9s ease;display:flex;align-items:center;justify-content:center;">
 
-  <!-- Background color (matches image edges seamlessly) -->
-  <div id="wBg" style="position:absolute;top:0;left:0;right:0;bottom:0;background:#f0eeeb;transition:background 0.2s;"></div>
+  <!-- Light background (16:9, fills screen perfectly) -->
+  <div id="wBearLight" style="position:absolute;top:0;left:0;right:0;bottom:0;background-image:url('/public/bear_light.png');background-size:cover;background-position:center center;opacity:0;animation:welcomeFadeUp 0.6s ease 0.1s forwards;transition:opacity 0.2s;"></div>
 
-  <!-- The hero image — your original bear+LUMN composition, centered, never cropped -->
-  <img id="wBearLight" src="/public/bear_light.png" alt="LUMN" style="position:relative;z-index:2;max-width:85%;max-height:75vh;width:auto;height:auto;object-fit:contain;opacity:0;animation:welcomeFadeUp 0.8s ease 0.2s forwards;transition:opacity 0.2s;will-change:transform;">
-  <img id="wBearDark" src="/public/bear_dark.png" alt="LUMN" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2;max-width:85%;max-height:75vh;width:auto;height:auto;object-fit:contain;opacity:0;transition:opacity 0.2s;will-change:transform;">
-
-  <!-- Subtle ambient glow behind bear -->
-  <div id="wGlow" style="position:absolute;top:50%;left:50%;width:40vw;height:40vw;max-width:500px;max-height:500px;transform:translate(-50%,-50%);border-radius:50%;background:radial-gradient(circle,rgba(255,220,150,0.12) 0%,transparent 70%);z-index:1;pointer-events:none;animation:welcomeGlow 5s ease-in-out infinite;"></div>
+  <!-- Dark background (hidden until Enter clicked) -->
+  <div id="wBearDark" style="position:absolute;top:0;left:0;right:0;bottom:0;background-image:url('/public/bear_dark.png');background-size:cover;background-position:center center;opacity:0;transition:opacity 0.2s;"></div>
 
   <!-- Bottom UI — clean, minimal, readable -->
   <div id="wBottomUI" style="position:absolute;bottom:0;left:0;right:0;z-index:10;text-align:center;padding:0 24px 40px;">
