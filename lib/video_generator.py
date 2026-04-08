@@ -260,10 +260,9 @@ def get_smart_duration(engine: str, section_type: str) -> int:
 
 def _build_continuity_prompt(scene: dict, index: int) -> str:
     """
-    Build a continuity suffix for a scene prompt based on previous scene context.
-    Only applies when continuity_mode is enabled and index > 0.
-
-    Reads the continuity_context from the scene dict (set by scene planner or UI).
+    Build a strong continuity suffix so the AI engine maintains visual consistency
+    with the previous scene.  The more specific and explicit these instructions are,
+    the better the cross-scene coherence.
 
     Returns:
         continuity suffix string to append to the prompt, or empty string.
@@ -276,23 +275,39 @@ def _build_continuity_prompt(scene: dict, index: int) -> str:
         return ""
 
     parts = []
-    parts.append("Continuing from the previous scene. Maintain visual continuity: same color palette, same lighting, same time of day.")
 
+    # Core visual anchor
+    parts.append("IMPORTANT: This is a CONTINUATION of the previous scene in the same story.")
+    parts.append("Maintain exact visual continuity: same color temperature, same lighting direction, same time of day, same film stock look.")
+
+    # Character anchoring (most important for viewer recognition)
     if ctx.get("has_character"):
-        parts.append("The same character from the previous scene continues to appear.")
+        char_desc = ctx.get("character_description", "")
+        if char_desc:
+            parts.append(f"The SAME character appears: {char_desc}. Keep their exact appearance, proportions, and features identical to the previous shot.")
+        else:
+            parts.append("The SAME character from the previous scene continues. Preserve their exact appearance and proportions.")
 
+    # Environment anchoring
+    if ctx.get("same_environment"):
+        env_desc = ctx.get("environment_description", "")
+        if env_desc:
+            parts.append(f"Same location: {env_desc}. Preserve the environment details, architecture, and spatial layout from the previous shot.")
+        else:
+            parts.append("Same location as previous scene. Preserve all environmental details.")
+    elif ctx.get("environment_description"):
+        parts.append(f"New location: {ctx['environment_description']}.")
+
+    # Lighting / color
+    if ctx.get("lighting"):
+        parts.append(f"Maintain lighting: {ctx['lighting']}.")
+    if ctx.get("color_palette"):
+        parts.append(f"Match color grade: {ctx['color_palette']}.")
+
+    # Visual element carryover from previous prompt
     if ctx.get("key_elements"):
         elements = ctx["key_elements"][:5]
-        parts.append(f"Maintain these visual elements: {', '.join(elements)}.")
-
-    if ctx.get("lighting"):
-        parts.append(f"Lighting: {ctx['lighting']}.")
-
-    if ctx.get("color_palette"):
-        parts.append(f"Color palette: {ctx['color_palette']}.")
-
-    if ctx.get("character_state"):
-        parts.append(f"Character: {ctx['character_state']}.")
+        parts.append(f"Preserve these visual elements: {', '.join(elements)}.")
 
     return " ".join(parts)
 
@@ -592,7 +607,20 @@ def _photo_to_data_uri(photo_path: str) -> str:
     except Exception:
         print(f"[REF ASSET] {os.path.basename(photo_path)}: {file_kb:.0f}KB file, {uri_chars:,} chars data URI")
     if uri_chars > 5242880:
-        print(f"[REF ASSET] WARNING: data URI exceeds 5.2M char limit! {uri_chars:,} chars")
+        print(f"[REF ASSET] Data URI too large ({uri_chars:,} chars), downscaling...")
+        # Downscale image
+        from PIL import Image
+        import io
+        img = Image.open(file_path)
+        while uri_chars > 5000000:
+            w, h = img.size
+            img = img.resize((w // 2, h // 2), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG', quality=80)
+            data = base64.b64encode(buf.getvalue()).decode()
+            data_uri = f"data:image/jpeg;base64,{data}"
+            uri_chars = len(data_uri)
+        return data_uri
     return data_uri
 
 
@@ -825,7 +853,12 @@ def _runway_generate_scene_image(prompt: str, reference_photos: list,
         "contentModeration": {"publicFigureThreshold": "low"},
     }
     if seed is not None:
-        payload["seed"] = seed
+        try:
+            seed = int(seed)
+            if 0 <= seed <= 2147483647:
+                payload["seed"] = seed
+        except (ValueError, TypeError):
+            pass
 
     print(f"[RUNWAY/text_to_image] Generating scene image with {len(ref_images)} references, "
           f"seed={seed}, tags={[r.get('tag','') for r in ref_images]}, prompt={prompt[:80]}...")
@@ -1037,7 +1070,12 @@ def _runway_submit_text_to_video(prompt: str, duration: int = 5,
             # Single frame
             payload["promptImage"] = _runway_upload_file(first_frame_path)
     if seed is not None:
-        payload["seed"] = seed
+        try:
+            seed = int(seed)
+            if 0 <= seed <= 2147483647:
+                payload["seed"] = seed
+        except (ValueError, TypeError):
+            pass
 
     print(f"[RUNWAY] Submitting {_endpoint}: model={model}, "
           f"duration={duration}s, ratio={payload['ratio']}, "
@@ -1116,6 +1154,10 @@ def _runway_poll(task_id: str, progress_cb=None) -> dict:
                 headers=_runway_headers(),
                 timeout=30,
             )
+            if resp.status_code == 400:
+                err = resp.text[:300]
+                print(f"[RUNWAY/poll] Bad request 400: {err}")
+                raise RuntimeError(f"Runway API rejected request: {err}")
             if resp.status_code in (429, 500, 502, 503):
                 print(f"[RUNWAY/poll] Transient {resp.status_code}, will retry...")
                 time.sleep(RUNWAY_POLL_INTERVAL)
@@ -1266,22 +1308,23 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
         if env_photo_path and os.path.isfile(env_photo_path):
             reference_photos.append({"path": env_photo_path, "tag": "Setting"})
 
-        # PIPELINE: When photos exist, generate a scene image first using text_to_image
-        # with @tag references (preserves likeness), then animate that scene image.
-        # This way the video starts IN the scene, not from the raw uploaded photo.
-        reference_photos = []
-        if has_photo and photo_path:
-            reference_photos.append({"path": photo_path, "tag": "Character"})
-        costume_photo = scene.get("costume_photo_path", "")
-        if costume_photo and os.path.isfile(costume_photo):
-            reference_photos.append({"path": costume_photo, "tag": "Costume"})
-        env_photo_path = scene.get("environment_photo_path", "")
-        if env_photo_path and os.path.isfile(env_photo_path):
-            reference_photos.append({"path": env_photo_path, "tag": "Setting"})
+        # Check for chained frame from previous scene (for character continuity)
+        chained_frame = scene.get("first_frame_path", "")
+        has_chained_frame = chained_frame and os.path.isfile(chained_frame)
 
+        # PIPELINE: Two modes for first frame selection:
+        # A) FIRST SCENE (no chained frame): Use @tag reference photos to generate
+        #    a scene image that establishes the character's look.
+        # B) CONTINUATION SCENES (has chained frame): Use the last frame from the
+        #    previous clip as the starting point. This preserves the SAME character
+        #    appearance across scenes instead of re-rolling a new interpretation.
         first_frame = None
-        if reference_photos:
-            # Build prompt with @tag mentions
+        if has_chained_frame:
+            # Mode B: Use chained frame for continuity
+            first_frame = chained_frame
+            _report(f"using chained frame from previous scene for character continuity")
+        elif reference_photos:
+            # Mode A: First scene — generate scene image with @tag refs
             tag_prompt = gen_prompt
             if any(r["tag"] == "Character" for r in reference_photos):
                 if "@Character" not in tag_prompt:
@@ -1304,10 +1347,6 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
                 _report(f"scene image ready — animating into video ({model}, {duration}s)...")
             else:
                 _report(f"scene image failed — falling back to text-only video...")
-
-        # Fallback to explicit keyframe if no scene image generated
-        if not first_frame and scene.get("first_frame_path") and os.path.isfile(scene.get("first_frame_path", "")):
-            first_frame = scene["first_frame_path"]
 
         # Also inject text descriptions to reinforce
         char_desc = scene.get("character_description", "")
@@ -1797,6 +1836,66 @@ def extract_last_frame(clip_path: str, output_path: str) -> str:
         return output_path
     except subprocess.TimeoutExpired:
         raise RuntimeError("ffmpeg last-frame extraction timed out")
+
+
+def trim_to_target(clip_path, output_path, trim_in=0.0, target_duration=None):
+    """
+    Trim a Runway clip (integer seconds) to exact editorial duration using FFmpeg.
+
+    Args:
+        clip_path: source clip (generated at runway_duration integer seconds)
+        output_path: destination for trimmed clip
+        trim_in: start offset in seconds (default 0)
+        target_duration: desired output duration in seconds (e.g., 2.4)
+
+    Returns:
+        output_path on success, clip_path unchanged if target_duration is None
+    """
+    if target_duration is None:
+        return clip_path
+    if not os.path.isfile(clip_path):
+        raise RuntimeError(f"Clip not found for trimming: {clip_path}")
+
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+
+    # Try fast copy first, fall back to re-encode if needed
+    for attempt, codec_args in enumerate([
+        ["-c", "copy"],                                    # fast: stream copy
+        ["-c:v", "libx264", "-preset", "fast", "-crf", "18"],  # fallback: re-encode
+    ]):
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", clip_path,
+            "-ss", f"{trim_in:.3f}",
+            "-t", f"{target_duration:.3f}",
+            *codec_args,
+            "-an",  # no audio (added in final stitch)
+            output_path,
+        ]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, timeout=60,
+                **_subprocess_kwargs(),
+            )
+            if result.returncode == 0 and os.path.isfile(output_path):
+                sz = os.path.getsize(output_path)
+                if sz > 1000:  # sanity check: not an empty/corrupt file
+                    print(f"[TRIM] {clip_path} -> {output_path} "
+                          f"(in={trim_in:.2f}s dur={target_duration:.2f}s {'copy' if attempt == 0 else 're-encode'})")
+                    return output_path
+        except subprocess.TimeoutExpired:
+            pass
+        # If copy failed, try re-encode
+        if attempt == 0:
+            continue
+        stderr = ""
+        try:
+            stderr = result.stderr.decode(errors="replace")[:500]
+        except Exception:
+            pass
+        raise RuntimeError(f"FFmpeg trim failed after re-encode attempt: {stderr}")
+
+    return clip_path
 
 
 def extract_first_frame(clip_path: str, output_path: str) -> str:

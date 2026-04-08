@@ -22,31 +22,39 @@ Endpoints:
 """
 
 import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import threading
 import time
 from datetime import datetime
 
-# Ensure ffmpeg is on PATH
-# Check common locations: system PATH, winget install, chocolatey, manual
-import shutil as _shutil
-if not _shutil.which("ffmpeg"):
-    _ffmpeg_search_dirs = [
-        os.path.expanduser(r"~\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin"),
-        r"C:\ffmpeg\bin",
-        r"C:\tools\ffmpeg\bin",
-        os.path.expanduser("~/tools/ffmpeg/bin"),
-        "/usr/bin",
-        "/usr/local/bin",
+import time as _time_mod
+_server_start_time = _time_mod.time()
+
+# Ensure ffmpeg is on PATH (cross-platform detection)
+import shutil
+_FFMPEG_PATH = shutil.which("ffmpeg")
+if not _FFMPEG_PATH:
+    # Try common Windows paths
+    _win_paths = [
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Links", "ffmpeg.exe"),
+        os.path.join(os.environ.get("PROGRAMFILES", ""), "ffmpeg", "bin", "ffmpeg.exe"),
     ]
-    for _fd in _ffmpeg_search_dirs:
-        if os.path.isdir(_fd):
-            os.environ["PATH"] = _fd + os.pathsep + os.environ.get("PATH", "")
+    for p in _win_paths:
+        if os.path.isfile(p):
+            _FFMPEG_PATH = p
             break
+if _FFMPEG_PATH:
+    _ffmpeg_dir = os.path.dirname(_FFMPEG_PATH)
+    if _ffmpeg_dir not in os.environ["PATH"]:
+        os.environ["PATH"] = _ffmpeg_dir + os.pathsep + os.environ["PATH"]
+else:
+    print("[WARN] ffmpeg not found. Video stitching will not work.")
 import uuid as _uuid
 import urllib.parse
 import zipfile
@@ -59,6 +67,14 @@ try:
 except ImportError:
     pass
 
+# ---- Auth & CSRF tokens ----
+_API_TOKEN = os.environ.get("LUMN_API_TOKEN", "")
+if not _API_TOKEN:
+    _API_TOKEN = secrets.token_hex(16)
+    print(f"[AUTH] No LUMN_API_TOKEN set. Generated session token: {_API_TOKEN[:8]}...")
+    print(f"[AUTH] Full token in memory only. Set LUMN_API_TOKEN env var for persistence.")
+_CSRF_TOKEN = secrets.token_hex(16)
+
 from lib.audio_analyzer import analyze
 from lib.scene_planner import plan_scenes, TRANSITION_TYPES, coherence_pass
 from lib.video_generator import (
@@ -69,15 +85,13 @@ from lib.video_generator import (
     _get_character_references, _resolve_character_references,
     MODEL_DURATION_OPTIONS, get_valid_duration, get_smart_duration,
     extract_last_frame, extract_first_frame,
-    SHOT_TYPE_REF_PRIORITY, select_refs_for_shot_type, build_shot_prompt,
-    _runway_headers, _runway_poll, _download, RUNWAY_API_BASE,
 )
 from lib.video_stitcher import (
     stitch, apply_lyrics_overlay, apply_aspect_ratio, split_clip,
     ASPECT_PRESETS, _get_clip_duration,
     SPEED_OPTIONS, COLOR_GRADE_PRESETS, AUDIO_VIZ_STYLES,
     generate_credits, apply_watermark, extract_thumbnail,
-    mix_audio_tracks, mix_multi_audio_tracks, export_for_platform, apply_beat_sync_cuts,
+    mix_audio_tracks, export_for_platform, apply_beat_sync_cuts,
     align_scenes_to_beats, overlay_scene_vocals, add_beat_cuts_to_stitch,
     _apply_speed_ramp, _apply_reverse, apply_audio_crossfade, SPEED_RAMP_TYPES,
     apply_loop_boomerang, apply_audio_ducking, export_gif,
@@ -90,53 +104,20 @@ from lib.prompt_assistant import (
 )
 from lib.storyboard_generator import generate_storyboard
 from lib.project_manager import ProjectManager
-from lib.upscaler import upscale_image, upscale_video, get_upscale_status
-def _scene_gen_hash(scene: dict) -> str:
-    """Hash the generation-relevant fields of a scene.
-    If the hash matches the stored gen_hash, the clip can be reused."""
-    parts = [
-        scene.get("prompt", ""),
-        str(scene.get("duration", 8)),
-        scene.get("camera_movement", ""),
-        scene.get("engine", ""),
-        scene.get("characterId", ""),
-        scene.get("costumeId", ""),
-        scene.get("environmentId", ""),
-        scene.get("first_frame_path", ""),
-        scene.get("last_frame_path", ""),
-        scene.get("photo_path", ""),
-        "|".join(scene.get("photo_paths", [])),
-        scene.get("video_path", ""),
-        scene.get("character_photo_path", ""),
-    ]
-    raw = "||".join(str(p) for p in parts)
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
-
-
-PORT = int(os.environ.get("PORT", 3849))
-_server_start_time = time.time()
+PORT = 3849
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOADS_DIR = os.path.join(PROJECT_DIR, "uploads")
 OUTPUT_DIR = os.path.join(PROJECT_DIR, "output")
 
+# Lock for all scene/movie plan file writes to prevent concurrent corruption
+_plan_file_lock = threading.Lock()
+
 from lib.prompt_os import PromptOS
 _prompt_os = PromptOS()
-
-from lib.prompt_templates import (
-    build_character_sheet_prompt, build_face_closeup_prompt,
-    build_costume_sheet_prompt, build_environment_sheet_prompt,
-    build_prop_sheet_prompt, build_reference_package, select_best_refs_for_shot,
-    build_enhanced_shot_prompt, build_video_prompt,
-)
 PROMPT_OS_DATA_DIR = os.path.join(OUTPUT_DIR, "prompt_os")
 os.makedirs(PROMPT_OS_DATA_DIR, exist_ok=True)
 
-from lib.auto_agent import (
-    get_or_create_run, get_current_run,
-    OptimizationRun, EvalResult, EvalBatch, HarnessManager,
-)
 from lib.auto_director import AutoDirector, get_workflow_presets, save_custom_preset
-from lib.director_brain import get_brain
 from lib.movie_planner import (
     create_movie_plan, load_movie_plan, save_movie_plan, rebuild_bible_from_plan,
     MovieBible, BeatPlanner, SceneBuilder, AssetCoverage, PlanValidator,
@@ -176,8 +157,6 @@ PREVIEWS_DIR = os.path.join(OUTPUT_DIR, "previews")
 WATERMARK_PATH = os.path.join(OUTPUT_DIR, "watermark.png")
 THUMBNAIL_PATH = os.path.join(OUTPUT_DIR, "thumbnail.jpg")
 AUDIO_TRACKS_DIR = os.path.join(UPLOADS_DIR, "audio_tracks")
-AUDIO_GEN_DIR = os.path.join(OUTPUT_DIR, "audio")
-os.makedirs(AUDIO_GEN_DIR, exist_ok=True)
 SOCIAL_EXPORTS_DIR = os.path.join(OUTPUT_DIR, "social_exports")
 KEYFRAMES_DIR = os.path.join(OUTPUT_DIR, "keyframes")
 SCENE_VIDEOS_DIR = os.path.join(UPLOADS_DIR, "scene_videos")
@@ -192,7 +171,6 @@ POS_PHOTOS_DIR = os.path.join(PROMPT_OS_DATA_DIR, "photos")
 POS_PHOTOS_CHARS_DIR = os.path.join(POS_PHOTOS_DIR, "characters")
 POS_PHOTOS_COSTUMES_DIR = os.path.join(POS_PHOTOS_DIR, "costumes")
 POS_PHOTOS_ENVS_DIR = os.path.join(POS_PHOTOS_DIR, "environments")
-POS_PHOTOS_PROPS_DIR = os.path.join(POS_PHOTOS_DIR, "props")
 POS_PREVIEWS_DIR = os.path.join(PROMPT_OS_DATA_DIR, "previews")
 POS_PREVIEWS_CHARS_DIR = os.path.join(POS_PREVIEWS_DIR, "characters")
 POS_PREVIEWS_COSTUMES_DIR = os.path.join(POS_PREVIEWS_DIR, "costumes")
@@ -247,7 +225,6 @@ os.makedirs(TAKES_DIR, exist_ok=True)
 os.makedirs(POS_PHOTOS_CHARS_DIR, exist_ok=True)
 os.makedirs(POS_PHOTOS_COSTUMES_DIR, exist_ok=True)
 os.makedirs(POS_PHOTOS_ENVS_DIR, exist_ok=True)
-os.makedirs(POS_PHOTOS_PROPS_DIR, exist_ok=True)
 os.makedirs(POS_PREVIEWS_CHARS_DIR, exist_ok=True)
 os.makedirs(POS_PREVIEWS_COSTUMES_DIR, exist_ok=True)
 os.makedirs(POS_PREVIEWS_ENVS_DIR, exist_ok=True)
@@ -372,9 +349,10 @@ def _queue_process():
 
 def _queue_generate_item(item: dict):
     """Generate a single queue item in a background thread."""
-    item["status"] = "generating"
-    item["started_at"] = time.time()
-    item["progress"] = "starting..."
+    with gen_queue_lock:
+        item["status"] = "generating"
+        item["started_at"] = time.time()
+        item["progress"] = "starting..."
 
     try:
         shot = item["shot_data"]
@@ -521,19 +499,21 @@ def _queue_generate_item(item: dict):
             pass
 
         mtime = int(os.path.getmtime(clip_path))
-        item["status"] = "completed"
-        item["result_url"] = f"/api/clips/{os.path.basename(clip_path)}?v={mtime}"
-        item["completed_at"] = time.time()
-        item["progress"] = "done"
+        with gen_queue_lock:
+            item["status"] = "completed"
+            item["result_url"] = f"/api/clips/{os.path.basename(clip_path)}?v={mtime}"
+            item["completed_at"] = time.time()
+            item["progress"] = "done"
 
         # Update shot data in settings
         _queue_save_shot_clip(scene_id, item["shot_id"], clip_path)
 
     except Exception as e:
-        item["status"] = "failed"
-        item["error"] = str(e)
-        item["completed_at"] = time.time()
-        item["progress"] = f"failed: {str(e)[:60]}"
+        with gen_queue_lock:
+            item["status"] = "failed"
+            item["error"] = str(e)
+            item["completed_at"] = time.time()
+            item["progress"] = f"failed: {str(e)[:60]}"
         print(f"[QUEUE] Shot {item['shot_id']} failed: {e}")
 
     # Process next pending items
@@ -554,6 +534,7 @@ def _queue_save_shot_clip(scene_id: str, shot_id: str, clip_path: str):
 
 
 def _reset_state():
+    """Reset gen_state to idle. Caller MUST hold gen_lock (or use _reset_state_locked)."""
     gen_state.update({
         "running": False,
         "progress": [],
@@ -565,6 +546,12 @@ def _reset_state():
         "scenes": None,
         "song_path": None,
     })
+
+
+def _reset_state_locked():
+    """Reset gen_state, acquiring gen_lock internally."""
+    with gen_lock:
+        _reset_state()
 
 
 def _get_references() -> dict:
@@ -624,59 +611,31 @@ def _save_scene_plan(scenes, clip_paths, song_path, output_path):
         if "matched_references" not in entry:
             entry["matched_references"] = []
         plan["scenes"].append(entry)
-    with open(SCENE_PLAN_PATH, "w") as f:
-        json.dump(plan, f, indent=2)
+    with _plan_file_lock:
+        with open(SCENE_PLAN_PATH, "w") as f:
+            json.dump(plan, f, indent=2)
     return plan
 
 
 def _load_scene_plan():
     """Load scene plan from JSON. Falls back to auto_director_plan if scene_plan missing."""
     if os.path.isfile(SCENE_PLAN_PATH):
-        with open(SCENE_PLAN_PATH, "r") as f:
-            return json.load(f)
+        try:
+            with open(SCENE_PLAN_PATH, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            return {"scenes": []}
     # Fallback: try auto director plan and convert
     if os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
-        with open(AUTO_DIRECTOR_PLAN_PATH, "r") as f:
-            ad_plan = json.load(f)
+        try:
+            with open(AUTO_DIRECTOR_PLAN_PATH, "r", encoding="utf-8") as f:
+                ad_plan = json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            ad_plan = {"scenes": []}
         if ad_plan and ad_plan.get("scenes"):
             _sync_auto_plan_to_scene_plan(ad_plan)
             return _load_scene_plan()
     return None
-
-
-def _assign_shot_types(scenes):
-    """Assign varied shot types to scenes for cinematic variety."""
-    if not scenes:
-        return
-
-    n = len(scenes)
-
-    # Cinematic pattern: establish -> build variety -> climax close-ups -> resolve wide
-    patterns = {
-        1: ["medium"],
-        2: ["establishing", "close-up"],
-        3: ["establishing", "medium", "close-up"],
-        4: ["establishing", "medium", "close-up", "wide"],
-        5: ["establishing", "medium", "close-up", "medium", "wide"],
-    }
-
-    if n <= 5:
-        type_sequence = patterns.get(n, patterns[5])
-    else:
-        # Build a repeating pattern for longer sequences
-        type_sequence = ["establishing"]  # Always start wide
-
-        cycle = ["medium", "close-up", "medium", "full", "wide", "close-up", "medium"]
-        for i in range(1, n - 1):
-            type_sequence.append(cycle[(i - 1) % len(cycle)])
-
-        type_sequence.append("wide")  # End wide for resolution
-
-    for i, scene in enumerate(scenes):
-        if i < len(type_sequence):
-            # Only set if not already specified by user
-            if not scene.get("shot_type") or scene.get("shot_type") == "medium":
-                scene["shot_type"] = type_sequence[i]
 
 
 def _sync_auto_plan_to_scene_plan(ad_plan=None):
@@ -685,8 +644,11 @@ def _sync_auto_plan_to_scene_plan(ad_plan=None):
         if ad_plan is None:
             if not os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
                 return
-            with open(AUTO_DIRECTOR_PLAN_PATH, "r") as f:
-                ad_plan = json.load(f)
+            try:
+                with open(AUTO_DIRECTOR_PLAN_PATH, "r", encoding="utf-8") as f:
+                    ad_plan = json.load(f)
+            except (json.JSONDecodeError, ValueError):
+                ad_plan = {"scenes": []}
         scenes = ad_plan.get("scenes", [])
         plan = {
             "song_path": ad_plan.get("song_path", ""),
@@ -699,37 +661,11 @@ def _sync_auto_plan_to_scene_plan(ad_plan=None):
             if "clip_path" not in entry:
                 entry["clip_path"] = None
             plan["scenes"].append(entry)
-        with open(SCENE_PLAN_PATH, "w") as f:
-            json.dump(plan, f, indent=2)
+        with _plan_file_lock:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
     except Exception as e:
         print(f"[SYNC] Error syncing auto plan to scene plan: {e}")
-
-
-def _enrich_scene_prompt(scene: dict, project_style: dict = None) -> str:
-    """Enrich a scene's prompt with cinematic detail if it's too short/generic."""
-    prompt = scene.get("shot_prompt", scene.get("prompt", ""))
-    if not prompt or len(prompt) < 20:
-        # Build from available fields
-        parts = []
-        if scene.get("summary"):
-            parts.append(scene["summary"])
-        if scene.get("action"):
-            parts.append(scene["action"])
-        if scene.get("visual_description"):
-            parts.append(scene["visual_description"])
-        prompt = ". ".join(parts) if parts else "Cinematic scene"
-
-    # Add shot type framing if not present
-    shot_type = scene.get("shot_type", "medium")
-    if shot_type and shot_type not in prompt.lower():
-        prompt = f"{shot_type} shot. {prompt}"
-
-    # Add camera if specified
-    camera = scene.get("camera", "") or scene.get("camera_movement", "")
-    if camera and camera not in prompt.lower():
-        prompt += f" Camera: {camera}."
-
-    return prompt
 
 
 def _enrich_scene_with_assets(scene):
@@ -749,23 +685,9 @@ def _enrich_scene_with_assets(scene):
     if chars and isinstance(chars, list):
         for char_ref in chars:
             char_id = char_ref.get("id", "") if isinstance(char_ref, dict) else ""
-            char_name = char_ref.get("name", "") if isinstance(char_ref, dict) else ""
-            pos_char = None
             if char_id:
                 pos_char = _prompt_os.get_character(char_id)
-            # Fallback: if ID not found (deleted/recreated), match by name
-            if not pos_char and char_name:
-                all_chars = _prompt_os.get_characters()
-                for c in all_chars:
-                    if c.get("name", "").lower().strip() == char_name.lower().strip():
-                        pos_char = c
-                        # Auto-update the stale ID in the scene
-                        char_ref["id"] = c["id"]
-                        import sys as _sys_fb
-                        _sys_fb.stderr.write(f"[ENRICH] Character '{char_name}' ID was stale ({char_id}), auto-updated to {c['id']}\n")
-                        _sys_fb.stderr.flush()
-                        break
-            if pos_char:
+                if pos_char:
                     if not char_description:
                         parts = []
                         if pos_char.get("physicalDescription"): parts.append(pos_char["physicalDescription"])
@@ -837,17 +759,9 @@ def _enrich_scene_with_assets(scene):
     if costumes and isinstance(costumes, list):
         for cos_ref in costumes:
             cos_id = cos_ref.get("id", "") if isinstance(cos_ref, dict) else ""
-            cos_name = cos_ref.get("name", "") if isinstance(cos_ref, dict) else ""
-            pos_costume = None
             if cos_id:
                 pos_costume = _prompt_os.get_costume(cos_id)
-            if not pos_costume and cos_name:
-                for c in _prompt_os.get_costumes():
-                    if c.get("name", "").lower().strip() == cos_name.lower().strip():
-                        pos_costume = c
-                        cos_ref["id"] = c["id"]
-                        break
-            if pos_costume:
+                if pos_costume:
                     if not costume_description:
                         if pos_costume.get("description"):
                             costume_description = pos_costume["description"]
@@ -896,17 +810,9 @@ def _enrich_scene_with_assets(scene):
     if envs and isinstance(envs, list):
         for env_ref in envs:
             env_id = env_ref.get("id", "") if isinstance(env_ref, dict) else ""
-            env_name = env_ref.get("name", "") if isinstance(env_ref, dict) else ""
-            pos_env = None
             if env_id:
                 pos_env = _prompt_os.get_environment(env_id)
-            if not pos_env and env_name:
-                for e in _prompt_os.get_environments():
-                    if e.get("name", "").lower().strip() == env_name.lower().strip():
-                        pos_env = e
-                        env_ref["id"] = e["id"]
-                        break
-            if pos_env:
+                if pos_env:
                     if not env_description:
                         e_parts = [pos_env.get(k, "") for k in ("name", "description", "locationType", "timeOfDay") if pos_env.get(k)]
                         env_description = ", ".join(e_parts)
@@ -1143,8 +1049,9 @@ def _run_regen(scene_index: int, new_prompt: str):
         scene["clip_path"] = clip_path
         plan["scenes"][scene_index] = scene
 
-        with open(SCENE_PLAN_PATH, "w") as f:
-            json.dump(plan, f, indent=2)
+        with _plan_file_lock:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
 
         with gen_lock:
             gen_state["phase"] = "done"
@@ -1173,8 +1080,8 @@ def _run_restitch():
 
         clip_paths = [s.get("clip_path") for s in plan["scenes"]]
         scene_transitions = [s.get("transition", "crossfade") for s in plan["scenes"]]
-        song_path = plan["song_path"]
-        output_path = plan["output_path"]
+        song_path = plan.get("song_path")
+        output_path = plan.get("output_path") or os.path.join(OUTPUT_DIR, "final_video.mp4")
 
         stitch(clip_paths, song_path, output_path, transitions=scene_transitions)
 
@@ -1269,8 +1176,9 @@ def _run_generation_approved():
         for i, cp in enumerate(clip_paths):
             plan["scenes"][i]["clip_path"] = cp
 
-        with open(SCENE_PLAN_PATH, "w") as f:
-            json.dump(plan, f, indent=2)
+        with _plan_file_lock:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
 
         valid = [c for c in clip_paths if c and os.path.isfile(c)]
         if not valid:
@@ -1347,78 +1255,112 @@ def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
     else:
         print(f"[PREVIEW][{index}] No scene_data provided")
 
-    # --- Strategy A: Generate scene image using text_to_image with @tag references ---
-    # This creates a first frame with character likeness from reference photos.
-    # Fast + cheap: gen4_image_turbo = 2 credits per image.
+    # --- Strategy A: Runway clip + frame extraction ---
+    # Use Runway if ANY photos are available (character, costume, or environment)
     has_any_photos = (char_photo and os.path.isfile(char_photo)) or \
-        (scene_data and scene_data.get("costume_photo_path") and os.path.isfile(scene_data.get("costume_photo_path", ""))) or \
+        (scene_data and any(scene_data.get("costume_photo_paths", []))) or \
         (scene_data and scene_data.get("environment_photo_path") and os.path.isfile(scene_data.get("environment_photo_path", "")))
     if has_any_photos:
         try:
-            from lib.video_generator import _runway_generate_scene_image, _download
+            from lib.video_generator import (
+                _runway_submit_text_to_video, _runway_poll, _get_api_key,
+                _photo_to_data_uri, _describe_entity_photo, describe_photo,
+                _download
+            )
+            import requests as _req
 
-            # Build @tag reference list (max 3 per API)
-            refs = []
-            if char_photo and os.path.isfile(char_photo):
-                refs.append({"path": char_photo, "tag": "Character"})
-            cos_p = enriched.get("costume_photo_path", "")
-            if cos_p and os.path.isfile(cos_p):
-                refs.append({"path": cos_p, "tag": "Costume"})
+            print(f"[PREVIEW][{index}] Using Runway preview with character photo: {char_photo}")
+
+            # Tell Runway to animate the character into the scene, not just show the photo
+            preview_prompt = f"Animate this person into a cinematic scene. Keep their exact appearance but place them naturally into the following scene: {full_prompt}"
+
+            # Inject environment and costume descriptions into prompt
+            env_desc = enriched.get("environment_description", "")
+            if env_desc and env_desc.lower() not in preview_prompt.lower():
+                preview_prompt = f"{preview_prompt}. Setting: {env_desc}"
             env_p = enriched.get("environment_photo_path", "")
             if env_p and os.path.isfile(env_p):
-                refs.append({"path": env_p, "tag": "Setting"})
+                try:
+                    ed = _describe_entity_photo(env_p, "environment")
+                    if ed and ed.lower() not in preview_prompt.lower():
+                        preview_prompt = f"{preview_prompt}. Environment (from photo): {ed}"
+                except Exception:
+                    pass
 
-            # Build prompt with @tag mentions
-            tag_prompt = full_prompt
-            if any(r["tag"] == "Character" for r in refs):
-                tag_prompt = f"@Character in a cinematic scene. {tag_prompt}"
-            if any(r["tag"] == "Costume" for r in refs):
-                tag_prompt = f"{tag_prompt} Wearing the outfit from @Costume."
-            if any(r["tag"] == "Setting" for r in refs):
-                tag_prompt = f"{tag_prompt} Set in the location from @Setting."
+            cos_desc = enriched.get("costume_description", "")
+            if cos_desc and cos_desc.lower() not in preview_prompt.lower():
+                preview_prompt = f"{preview_prompt}. Wearing: {cos_desc}"
+            cos_p = enriched.get("costume_photo_path", "")
+            if cos_p and os.path.isfile(cos_p):
+                try:
+                    cd = _describe_entity_photo(cos_p, "costume")
+                    if cd and cd.lower() not in preview_prompt.lower():
+                        preview_prompt = f"{preview_prompt}. Costume (from photo): {cd}"
+                except Exception:
+                    pass
 
-            print(f"[PREVIEW][{index}] Generating scene image with {len(refs)} @tag refs: {[r['tag'] for r in refs]}")
+            if len(preview_prompt) > 800:
+                preview_prompt = preview_prompt[:797] + "..."
 
-            img_path = _runway_generate_scene_image(
-                tag_prompt, refs,
-                ratio="1920:1080",
-                model="gen4_image",
+            # Get engine — check scene, then director state, then default
+            preview_engine = (scene_data or {}).get("engine", "")
+            if not preview_engine:
+                settings = _load_settings()
+                ds = settings.get("director_state", {})
+                preview_engine = ds.get("engine", "") or settings.get("default_engine", "gen4.5")
+            engine_map = {"runway": "gen4.5", "grok": "gen4.5"}
+            preview_engine = engine_map.get(preview_engine, preview_engine)
+
+            # Collect ALL photos from enrichment
+            all_char_photos = enriched.get("character_photo_paths", [])
+            all_costume_photos = enriched.get("costume_photo_paths", [])
+            env_photo = enriched.get("environment_photo_path", "")
+
+            import sys as _prev_sys
+            _prev_sys.stderr.write(f"[PREVIEW][{index}] Sending {len(all_char_photos)} char photos, {len(all_costume_photos)} costume photos, env={'YES' if env_photo else 'NO'}\n")
+            _prev_sys.stderr.flush()
+
+            scene_duration = int(scene_data.get("duration", 5)) if scene_data else 5
+            task_id = _runway_submit_text_to_video(
+                preview_prompt,
+                duration=scene_duration,
+                model=preview_engine,
+                character_photo_paths=all_char_photos,
+                costume_photo_paths=all_costume_photos,
+                environment_photo_path=env_photo if env_photo and os.path.isfile(env_photo) else None,
             )
 
-            if img_path and os.path.isfile(img_path):
-                # Copy to thumbnails dir
-                import shutil
-                shutil.copy2(img_path, out_path)
-                _record_cost(f"thumb_{index}", "image_preview")
-                print(f"[PREVIEW][{index}] Scene image saved: {out_path}")
+            print(f"[PREVIEW][{index}] Runway task submitted: {task_id[:16]}...")
+            video_info = _runway_poll(task_id)
 
-                # Also save as the scene's first_frame for video generation
-                first_frame_dir = os.path.join(OUTPUT_DIR, "first_frames")
-                os.makedirs(first_frame_dir, exist_ok=True)
-                first_frame_path = os.path.join(first_frame_dir, f"scene_{index}_first.jpg")
-                shutil.copy2(img_path, first_frame_path)
+            # Download the preview clip (keep it — it's the playable preview)
+            clip_path = os.path.join(SCENE_THUMBNAILS_DIR, f"scene_{index}_preview.mp4")
+            _download(video_info["url"], clip_path)
 
-                # Update the scene plan with the first frame path
-                plan = _load_scene_plan()
-                if plan and index < len(plan.get("scenes", [])):
-                    plan["scenes"][index]["first_frame_path"] = first_frame_path
-                    plan["scenes"][index]["_lastGeneratedPrompt"] = full_prompt
-                    with open(SCENE_PLAN_PATH, "w") as f:
-                        json.dump(plan, f, indent=2)
+            # Also extract first frame as thumbnail for collapsed card view
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", clip_path, "-vframes", "1", "-q:v", "2", out_path],
+                capture_output=True, timeout=30,
+                creationflags=0x08000000 if os.name == "nt" else 0,  # windowsHide
+            )
 
+            if os.path.isfile(clip_path):
+                _record_cost(f"thumb_{index}", "video_preview")
+                print(f"[PREVIEW][{index}] Runway preview clip saved: {clip_path}")
                 return {
                     "preview_url": f"/api/scene-thumbnails/scene_{index}.jpg",
-                    "first_frame_path": first_frame_path,
+                    "video_url": f"/api/scene-thumbnails/scene_{index}_preview.mp4",
                 }
             else:
-                print(f"[PREVIEW][{index}] Scene image generation failed, falling back to Grok")
+                print(f"[PREVIEW][{index}] Runway download failed, falling back to Grok")
 
         except Exception as e:
             import sys as _sys2, traceback as _tb
-            _sys2.stderr.write(f"[PREVIEW][{index}] Scene image FAILED: {e}\n")
+            _sys2.stderr.write(f"[PREVIEW][{index}] Runway preview FAILED: {e}\n")
             _tb.print_exc(file=_sys2.stderr)
             _sys2.stderr.flush()
-            return {"error": f"Scene image failed: {str(e)[:200]}"}
+            # Return the error instead of silently falling back
+            return {"error": f"Runway preview failed: {str(e)[:200]}"}
 
     # --- Strategy B: Runway text-to-video (no character photo) ---
     try:
@@ -1565,8 +1507,9 @@ def _update_scene_plan_thumbnail(index: int, preview_url: str):
     plan = _load_scene_plan()
     if plan and 0 <= index < len(plan["scenes"]):
         plan["scenes"][index]["preview_thumbnail"] = preview_url
-        with open(SCENE_PLAN_PATH, "w") as f:
-            json.dump(plan, f, indent=2)
+        with _plan_file_lock:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
 
 
 def _update_scene_plan_approval(index: int, approved: bool, notes: str = ""):
@@ -1576,8 +1519,9 @@ def _update_scene_plan_approval(index: int, approved: bool, notes: str = ""):
         plan["scenes"][index]["preview_approved"] = approved
         if notes:
             plan["scenes"][index]["preview_notes"] = notes
-        with open(SCENE_PLAN_PATH, "w") as f:
-            json.dump(plan, f, indent=2)
+        with _plan_file_lock:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
 
 
 # ---- Cost tracker helpers ----
@@ -1669,7 +1613,7 @@ def _upscale_clip(clip_path: str) -> str:
         "-c:a", "copy",
         temp_path,
     ]
-    subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+    subprocess.run(cmd, check=True, capture_output=True, timeout=300, **_subprocess_kwargs())
     # Replace original with upscaled
     os.replace(temp_path, clip_path)
     return clip_path
@@ -1722,14 +1666,18 @@ def _maybe_face_swap(clip_path: str, char_photo: str) -> str:
 def _load_manual_plan() -> dict:
     """Load or create the manual scene plan."""
     if os.path.isfile(MANUAL_PLAN_PATH):
-        with open(MANUAL_PLAN_PATH, "r") as f:
-            return json.load(f)
+        try:
+            with open(MANUAL_PLAN_PATH, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            pass
     return {"scenes": [], "song_path": None}
 
 
 def _save_manual_plan(plan: dict):
-    with open(MANUAL_PLAN_PATH, "w") as f:
-        json.dump(plan, f, indent=2)
+    with _plan_file_lock:
+        with open(MANUAL_PLAN_PATH, "w") as f:
+            json.dump(plan, f, indent=2)
 
 
 def _run_manual_generate_scene(scene_id: str):
@@ -1994,7 +1942,7 @@ def _run_manual_generate_scene(scene_id: str):
 
         gen_scene = {
             "prompt": gen_prompt,
-            "duration": scene.get("duration", 8),
+            "duration": scene.get("duration", 5),
             "camera_movement": scene.get("camera_movement", "zoom_in"),
             "engine": scene.get("engine", ""),
             "id": scene.get("id", ""),
@@ -2011,6 +1959,58 @@ def _run_manual_generate_scene(scene_id: str):
             gen_scene["first_frame_path"] = scene["first_frame_path"]
         if scene.get("last_frame_path"):
             gen_scene["last_frame_path"] = scene["last_frame_path"]
+
+        # ── Frame chaining: use previous scene's last frame as this scene's first frame ──
+        # This is the #1 continuity mechanism - gives the AI engine a visual starting point
+        if scene_idx > 0 and not gen_scene.get("first_frame_path"):
+            prev_scene = plan["scenes"][scene_idx - 1]
+            # Check for extracted reference frame from previous generation
+            prev_ref = prev_scene.get("reference_frame", "")
+            if prev_ref and os.path.isfile(prev_ref):
+                gen_scene["first_frame_path"] = prev_ref
+                print(f"[CONTINUITY] Scene {scene_idx}: chained first_frame from scene {scene_idx - 1} last frame")
+            else:
+                # Try extracting from previous clip on-the-fly
+                prev_clip = prev_scene.get("clip_path", "")
+                if prev_clip and os.path.isfile(prev_clip):
+                    try:
+                        kf_path = os.path.join(KEYFRAMES_DIR, f"scene_{scene_idx}_chain.png")
+                        extract_last_frame(prev_clip, kf_path)
+                        gen_scene["first_frame_path"] = kf_path
+                        print(f"[CONTINUITY] Scene {scene_idx}: extracted last frame from scene {scene_idx - 1} clip")
+                    except Exception as ce:
+                        print(f"[CONTINUITY] Scene {scene_idx}: frame extraction failed: {ce}")
+
+        # ── Build continuity context from previous scene's actual data ──
+        if scene_idx > 0:
+            prev_scene = plan["scenes"][scene_idx - 1]
+            ctx = {}
+            # Character continuity
+            prev_char_ids = prev_scene.get("characterIds", [])
+            if prev_scene.get("characterId"):
+                prev_char_ids = list(set(prev_char_ids + [prev_scene["characterId"]]))
+            shared_chars = set(char_ids) & set(prev_char_ids)
+            if shared_chars:
+                ctx["has_character"] = True
+                ctx["character_state"] = f"same character continues from previous scene"
+            if char_description:
+                ctx["character_description"] = char_description
+            # Environment continuity
+            if prev_scene.get("environmentId") and prev_scene["environmentId"] == scene.get("environmentId"):
+                ctx["same_environment"] = True
+            if env_description:
+                ctx["environment_description"] = env_description
+            # Style continuity from previous scene
+            prev_grade = prev_scene.get("color_grade", "")
+            if prev_grade:
+                ctx["color_palette"] = prev_grade
+            prev_lighting = prev_scene.get("lighting", "")
+            if prev_lighting:
+                ctx["lighting"] = prev_lighting
+            # Pass the previous scene's prompt for keyword extraction
+            ctx["previous_prompt"] = prev_scene.get("prompt", "")
+            ctx["key_elements"] = []
+            gen_scene["continuity_context"] = ctx
 
         print(f"[_run_manual_generate_scene] Calling generate_scene with photo_path={scene_photo_path}, engine={gen_scene['engine']}")
         try:
@@ -2110,7 +2110,7 @@ def _run_manual_generate_from_photo(scene_id: str):
 
         clip_path = os.path.join(MANUAL_CLIPS_DIR, f"photo_clip_{scene_id}.mp4")
         prompt = scene.get("prompt", "cinematic scene")
-        duration = scene.get("duration", 8)
+        duration = scene.get("duration", 5)
         camera = scene.get("camera_movement", "zoom_in")
 
         edit_strength = scene.get("edit_strength", 0.3)
@@ -2140,18 +2140,9 @@ def _run_manual_generate_all():
     """Background thread to generate all manual scenes without clips."""
     try:
         plan = _load_manual_plan()
-        scenes_to_gen = []
-        cached_count = 0
-        for i, s in enumerate(plan["scenes"]):
-            has_valid_clip = (s.get("has_clip") and s.get("clip_path")
-                              and os.path.isfile(s.get("clip_path", "")))
-            if has_valid_clip and s.get("gen_hash") == _scene_gen_hash(s):
-                cached_count += 1
-                continue  # clip exists and settings unchanged — skip
-            scenes_to_gen.append((i, s))
-
-        if cached_count:
-            print(f"[generate_all] Skipping {cached_count} cached scene(s)")
+        scenes_to_gen = [(i, s) for i, s in enumerate(plan["scenes"])
+                         if not s.get("has_clip") or not s.get("clip_path")
+                         or not os.path.isfile(s.get("clip_path", ""))]
 
         if not scenes_to_gen:
             with gen_lock:
@@ -2283,7 +2274,7 @@ def _run_manual_generate_all():
 
             gen_scene = {
                 "prompt": gen_prompt,
-                "duration": scene.get("duration", 8),
+                "duration": scene.get("duration", 5),
                 "camera_movement": scene.get("camera_movement", "zoom_in"),
                 "engine": scene.get("engine", ""),
                 "id": scene.get("id", ""),
@@ -2300,17 +2291,60 @@ def _run_manual_generate_all():
             if scene.get("last_frame_path"):
                 gen_scene["last_frame_path"] = scene["last_frame_path"]
 
+            # ── Frame chaining from previous scene ──
+            if scene_idx > 0 and not gen_scene.get("first_frame_path"):
+                prev_s = plan["scenes"][scene_idx - 1]
+                prev_ref = prev_s.get("reference_frame", "")
+                if prev_ref and os.path.isfile(prev_ref):
+                    gen_scene["first_frame_path"] = prev_ref
+                    print(f"[GEN-ALL CHAIN] Scene {scene_idx}: using scene {scene_idx - 1} last frame")
+                else:
+                    prev_clip = prev_s.get("clip_path", "")
+                    if prev_clip and os.path.isfile(prev_clip):
+                        try:
+                            kf = os.path.join(KEYFRAMES_DIR, f"scene_{scene_idx}_chain.png")
+                            extract_last_frame(prev_clip, kf)
+                            gen_scene["first_frame_path"] = kf
+                            print(f"[GEN-ALL CHAIN] Scene {scene_idx}: extracted from scene {scene_idx - 1} clip")
+                        except Exception:
+                            pass
+
+            # ── Continuity context from previous scene ──
+            if scene_idx > 0:
+                prev_s = plan["scenes"][scene_idx - 1]
+                ctx = {}
+                prev_cid = prev_s.get("characterId", "")
+                cur_cid = scene.get("characterId", "")
+                if prev_cid and prev_cid == cur_cid:
+                    ctx["has_character"] = True
+                if _all_char_desc:
+                    ctx["character_description"] = _all_char_desc
+                if prev_s.get("environmentId") and prev_s["environmentId"] == scene.get("environmentId"):
+                    ctx["same_environment"] = True
+                if _all_env_desc:
+                    ctx["environment_description"] = _all_env_desc
+                prev_grade = prev_s.get("color_grade", "")
+                if prev_grade:
+                    ctx["color_palette"] = prev_grade
+                ctx["previous_prompt"] = prev_s.get("prompt", "")
+                gen_scene["continuity_context"] = ctx
+
             try:
                 clip_path = generate_scene(gen_scene, scene_idx, MANUAL_CLIPS_DIR,
                                            progress_cb=on_progress, cost_cb=_record_cost,
                                            photo_path=scene_photo_path)
                 scene["clip_path"] = clip_path
                 scene["has_clip"] = True
-                scene["gen_hash"] = _scene_gen_hash(scene)
+                # Extract last frame for next scene's chain
+                try:
+                    ref_path = os.path.join(KEYFRAMES_DIR, f"scene_{scene_idx}_last.png")
+                    extract_last_frame(clip_path, ref_path)
+                    scene["reference_frame"] = ref_path
+                except Exception:
+                    pass
             except Exception as e:
                 on_progress(scene_idx, f"FAILED: {e}")
                 scene["has_clip"] = False
-                scene.pop("gen_hash", None)
 
             plan["scenes"][scene_idx] = scene
             _save_manual_plan(plan)
@@ -2332,17 +2366,10 @@ def _run_batch_generate_queue():
     try:
         plan = _load_manual_plan()
         scenes_to_gen = []
-        cached_count = 0
         for i, s in enumerate(plan["scenes"]):
-            has_valid_clip = (s.get("has_clip") and s.get("clip_path")
-                              and os.path.isfile(s.get("clip_path", "")))
-            if has_valid_clip and s.get("gen_hash") == _scene_gen_hash(s):
-                cached_count += 1
-                continue  # clip exists and settings unchanged — skip
-            scenes_to_gen.append((i, s))
-
-        if cached_count:
-            print(f"[batch_generate] Skipping {cached_count} cached scene(s)")
+            if not s.get("has_clip") or not s.get("clip_path") \
+               or not os.path.isfile(s.get("clip_path", "")):
+                scenes_to_gen.append((i, s))
 
         if not scenes_to_gen:
             with batch_lock:
@@ -2466,7 +2493,7 @@ def _run_batch_generate_queue():
             plan_continuity = plan.get("continuity_mode", True)
             gen_scene = {
                 "prompt": gen_prompt,
-                "duration": scene.get("duration", 8),
+                "duration": scene.get("duration", 5),
                 "camera_movement": scene.get("camera_movement", "zoom_in"),
                 "engine": scene.get("engine", ""),
                 "id": scene.get("id", ""),
@@ -2497,7 +2524,6 @@ def _run_batch_generate_queue():
                                            photo_path=scene_photo_path)
                 scene["clip_path"] = clip_path
                 scene["has_clip"] = True
-                scene["gen_hash"] = _scene_gen_hash(scene)
                 return scene_id, True, None
             except Exception as e:
                 # Auto-retry once (Feature 9)
@@ -2509,10 +2535,8 @@ def _run_batch_generate_queue():
                                                photo_path=scene_photo_path)
                     scene["clip_path"] = clip_path
                     scene["has_clip"] = True
-                    scene["gen_hash"] = _scene_gen_hash(scene)
                     return scene_id, True, None
                 except Exception as e2:
-                    scene.pop("gen_hash", None)
                     return scene_id, False, str(e2)
 
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -2671,7 +2695,7 @@ def _generate_waveform(audio_path: str) -> list:
         return []
 
 
-def _auto_resize_photo(photo_path: str, max_w: int = 4096, max_h: int = 4096) -> str:
+def _auto_resize_photo(photo_path: str, max_w: int = 1280, max_h: int = 720) -> str:
     """Auto-resize a photo to max dimensions (Feature 6). Returns the path."""
     try:
         from PIL import Image
@@ -2685,7 +2709,7 @@ def _auto_resize_photo(photo_path: str, max_w: int = 4096, max_h: int = 4096) ->
             else:
                 target = (max_h, max_w)
             img.thumbnail(target, Image.LANCZOS)
-            img.save(photo_path, quality=95)
+            img.save(photo_path, quality=90)
             new_w, new_h = img.size
             print(f"[RESIZE] Resized {orig_w}x{orig_h} -> {new_w}x{new_h}")
     except ImportError:
@@ -2729,30 +2753,8 @@ def _run_manual_stitch():
         reversed_clips = [s.get("reversed", False) for s in plan["scenes"]]
         audio_crossfade_dur = plan.get("audio_crossfade", 0.0)
 
-        # Apply per-scene trim (in/out points) before stitching
-        processed_clip_paths = list(clip_paths)
-        for idx, s in enumerate(plan["scenes"]):
-            trim_in = s.get("trim_in", 0)
-            trim_out = s.get("trim_out", 0)
-            if (trim_in > 0 or trim_out > 0) and idx < len(processed_clip_paths):
-                cp = processed_clip_paths[idx]
-                if cp and os.path.isfile(cp):
-                    trimmed = os.path.join(MANUAL_CLIPS_DIR, f"_trim_{s.get('id', idx)}.mp4")
-                    cmd = ["ffmpeg", "-y", "-i", cp]
-                    if trim_in > 0:
-                        cmd += ["-ss", str(trim_in)]
-                    if trim_out > 0:
-                        cmd += ["-to", str(trim_out)]
-                    cmd += ["-c", "copy", "-avoid_negative_ts", "make_zero", trimmed]
-                    try:
-                        subprocess.run(cmd, capture_output=True, check=True,
-                                       **({'creationflags': 0x08000000} if sys.platform == 'win32' else {}))
-                        processed_clip_paths[idx] = trimmed
-                        print(f"[STITCH] Trimmed scene {idx}: in={trim_in}s out={trim_out}s")
-                    except Exception as e:
-                        print(f"[STITCH] Trim failed for scene {idx}: {e}")
-
         # Apply per-scene effects before stitching
+        processed_clip_paths = list(clip_paths)
         for idx, s in enumerate(plan["scenes"]):
             effect_name = s.get("effect", "none")
             if effect_name and effect_name != "none" and idx < len(processed_clip_paths):
@@ -2781,7 +2783,7 @@ def _run_manual_stitch():
         vocal_entries = []
         running_time = 0.0
         for s in plan["scenes"]:
-            dur = s.get("duration", 8)
+            dur = s.get("duration", 5)
             vp = s.get("vocal_path", "")
             if vp and os.path.isfile(vp):
                 vocal_entries.append({
@@ -2874,7 +2876,7 @@ def _run_preview_all():
                 "-an",
                 scaled_path,
             ]
-            subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+            subprocess.run(cmd, check=True, capture_output=True, timeout=300, **_subprocess_kwargs())
             scaled_clips.append(scaled_path)
 
         speeds = [s.get("speed", 1.0) for s in plan["scenes"]]
@@ -3001,260 +3003,67 @@ def _run_batch_export():
             gen_state["running"] = False
 
 
-def _resolve_sheet_or_photo(url_or_path):
-    """Resolve a sheet URL or file path to a local file path."""
-    if not url_or_path:
-        return None
-    if os.path.isfile(url_or_path):
-        return url_or_path
-    # Check if it's an API URL for sheets
-    if url_or_path.startswith("/api/pos/sheets/"):
-        filename = url_or_path.split("/api/pos/sheets/")[-1]
-        sheets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "prompt_os", "sheets")
-        candidate = os.path.join(sheets_dir, filename)
-        if os.path.isfile(candidate):
-            return candidate
-    elif url_or_path.startswith("/api/pos/"):
-        # Character/costume/env photo API URL
-        import re as _re_resolve
-        for entity_type, photo_dir in [("characters", POS_PHOTOS_CHARS_DIR), ("costumes", POS_PHOTOS_COSTUMES_DIR), ("environments", POS_PHOTOS_ENVS_DIR), ("props", POS_PHOTOS_PROPS_DIR)]:
-            m = _re_resolve.search(rf"/api/pos/{entity_type}/([^/]+)/photo", url_or_path)
-            if m:
-                eid = m.group(1)
-                for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                    candidate = os.path.join(photo_dir, f"{eid}{ext}")
-                    if os.path.isfile(candidate):
-                        return candidate
-    return None
-
-
-# ---- AutoAgent eval function ----
-
-def _autoagent_eval_fn():
-    """Eval function for AutoAgent — generates test frames and measures success.
-
-    Uses the current project's scenes as test cases.
-    Returns an EvalBatch with results.
-    """
-    from lib.auto_agent import EvalBatch, EvalResult, HarnessManager
-    from lib.video_generator import _runway_generate_scene_image
-
-    harness = HarnessManager()
-    batch = EvalBatch(harness.current.get("version", 0), harness.hash())
-
-    # Load scenes from current plan
-    plan = load_movie_plan(OUTPUT_DIR)
-    if not plan or not plan.get("scenes"):
-        # No plan — create a synthetic test batch
-        batch.results.append(EvalResult(0, "medium", True, generation_time=0, prompt_used="synthetic"))
-        batch.finished_at = time.strftime("%Y-%m-%dT%H:%M:%S")
-        return batch
-
-    scenes = plan["scenes"]
-    # Test up to 5 scenes per eval (balance speed vs coverage)
-    import random
-    test_scenes = random.sample(range(len(scenes)), min(5, len(scenes)))
-
-    for scene_idx in test_scenes:
-        scene = scenes[scene_idx]
-        shot_type = scene.get("shot_type", "medium")
-        prompt = scene.get("shot_prompt", scene.get("prompt", "Cinematic scene"))
-
-        # Build prompt using current harness
-        h = harness.current
-        framing = h.get("framing_prefix", {}).get(shot_type, "Cinematic shot.")
-        quality = h.get("quality_suffix", "Photorealistic, 8K.")
-
-        # Check for refs
-        enriched = dict(scene)
-        _enrich_scene_with_assets(enriched)
-
-        char_photos = []
-        char_photo = enriched.get("character_photo_path", "")
-        if char_photo and os.path.isfile(char_photo):
-            char_photos.append({"path": char_photo, "tag": "Character"})
-
-        env_photos = []
-        env_photo = enriched.get("environment_photo_path", "")
-        if env_photo and os.path.isfile(env_photo):
-            env_photos.append({"path": env_photo, "tag": "Setting"})
-
-        # Collect refs
-        refs = char_photos[:1] + env_photos[:1]  # Max 2 for speed
-
-        has_char = len(char_photos) > 0
-        has_env = len(env_photos) > 0
-
-        # Build test prompt from harness
-        identity = ""
-        if has_char:
-            identity = h.get("identity_strength", {}).get(shot_type, "")
-
-        test_prompt = f"{framing} {identity} {prompt} {quality}"
-        if h.get("negative_keywords"):
-            test_prompt += f" AVOID: {h['negative_keywords']}"
-        test_prompt = test_prompt[:h.get("max_prompt_length", 1000)]
-
-        # Generate
-        start_time = time.time()
-        try:
-            result_path = _runway_generate_scene_image(
-                test_prompt, refs,
-                ratio="1920:1080",
-                model="gen4_image_turbo",  # Use turbo for speed in evals
-            )
-            gen_time = time.time() - start_time
-
-            if result_path and os.path.isfile(result_path):
-                batch.results.append(EvalResult(
-                    scene_idx, shot_type, True,
-                    generation_time=gen_time,
-                    prompt_used=test_prompt,
-                ))
-            else:
-                batch.results.append(EvalResult(
-                    scene_idx, shot_type, False,
-                    error="No image returned",
-                    generation_time=gen_time,
-                    prompt_used=test_prompt,
-                ))
-        except Exception as e:
-            gen_time = time.time() - start_time
-            error_str = str(e)[:300]
-            is_mod = any(kw in error_str.lower() for kw in ["moderation", "safety", "policy", "flagged"])
-            batch.results.append(EvalResult(
-                scene_idx, shot_type, False,
-                error=error_str,
-                moderation_blocked=is_mod,
-                generation_time=gen_time,
-                prompt_used=test_prompt,
-            ))
-
-    batch.finished_at = time.strftime("%Y-%m-%dT%H:%M:%S")
-    return batch
-
-
-# ---- Smart Engine Router ----
-
-def _recommend_engine(scene: dict, project_default: str = "gen4_5") -> dict:
-    """Recommend the best generation engine for a scene.
-
-    Returns {engine, reason, confidence} where confidence is 0-1.
-
-    Logic:
-    - Default to project's chosen engine for consistency
-    - Only recommend switching when a specific capability is needed
-    - Close-up face shots -> Runway (best identity preservation)
-    - Action/fast motion -> Veo 3.1 (best motion quality)
-    - Wide cinematic -> Veo 3.1 (best environmental quality)
-    - Dialogue scenes -> Gen 4.5 (best identity preservation during speech)
-    """
-    shot_type = scene.get("shot_type", "medium")
-    has_dialogue = bool(scene.get("dialogue") or scene.get("has_dialogue"))
-    has_action = any(w in (scene.get("action", "") or "").lower() for w in
-                     ["fight", "run", "chase", "explod", "dance", "jump", "crash", "fast"])
-    has_face = shot_type in ("close-up",)
-    has_environment = shot_type in ("wide", "establishing")
-
-    result = {
-        "engine": project_default,
-        "reason": "Project default for visual consistency",
-        "confidence": 0.8,
-        "switchRecommended": False,
-    }
-
-    # Only recommend switching for strong reasons
-    if has_dialogue:
-        result = {
-            "engine": "gen4_5",
-            "reason": "Dialogue scene — Gen 4.5 preserves identity during speech",
-            "confidence": 0.7,
-            "switchRecommended": True,
-        }
-    elif has_face and project_default not in ("gen4_5", "gen4_turbo"):
-        result = {
-            "engine": "gen4_5",
-            "reason": "Close-up shot — Runway Gen 4.5 has best face/identity preservation",
-            "confidence": 0.6,
-            "switchRecommended": True,
-        }
-    elif has_action and project_default not in ("gen4_5", "veo3_1"):
-        result = {
-            "engine": "veo3_1",
-            "reason": "Action scene — Veo 3.1 handles fast motion well",
-            "confidence": 0.5,
-            "switchRecommended": False,
-        }
-    elif has_environment and project_default not in ("veo3_1", "veo3"):
-        result = {
-            "engine": "veo3_1",
-            "reason": "Wide/establishing shot — Veo 3.1 has best environmental detail",
-            "confidence": 0.5,
-            "switchRecommended": False,
-        }
-
-    return result
-
-
-# ---- Rate limiter ----
-
-import time as _time
-_rate_limits = {}  # {ip: [timestamps]}
-_RATE_LIMIT_WINDOW = 60  # seconds
-_RATE_LIMIT_MAX = {
-    "generate": 10,      # 10 generations per minute
-    "default": 60,       # 60 requests per minute
-    "upload": 20,        # 20 uploads per minute
-}
-
-def _check_rate_limit(ip: str, category: str = "default") -> bool:
-    """Returns True if request is allowed, False if rate limited."""
-    now = _time.time()
-    key = f"{ip}:{category}"
-
-    if key not in _rate_limits:
-        _rate_limits[key] = []
-
-    # Clean old entries
-    _rate_limits[key] = [t for t in _rate_limits[key] if now - t < _RATE_LIMIT_WINDOW]
-
-    max_req = _RATE_LIMIT_MAX.get(category, _RATE_LIMIT_MAX["default"])
-
-    if len(_rate_limits[key]) >= max_req:
-        return False
-
-    _rate_limits[key].append(now)
-    return True
-
-
 # ---- HTTP handler ----
 
 class Handler(BaseHTTPRequestHandler):
+
+    def _get_cors_origin(self):
+        origin = self.headers.get("Origin", "")
+        # Allow same-origin (localhost) requests
+        allowed = ["http://localhost:3849", "http://127.0.0.1:3849", f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"]
+        if origin in allowed:
+            return origin
+        return f"http://localhost:{PORT}"
 
     def log_message(self, fmt, *args):
         # Quieter logging
         sys.stderr.write(f"[server] {fmt % args}\n")
 
+    def _check_auth(self):
+        """Check auth. Browser UI uses CSRF token; external API uses bearer token."""
+        path = self.path.split("?")[0]
+        # Skip auth for static files, health, and the main page
+        if path in ("/", "/health", "/landing", "/manifesto") or path.startswith("/public/") or path.startswith("/output/") or path.endswith(".png"):
+            return True
+        # If request has valid CSRF token, it's from our UI — allow it
+        csrf = self.headers.get("X-CSRF-Token", "")
+        if csrf == _CSRF_TOKEN:
+            return True
+        # Otherwise check bearer token (for external API access)
+        token = self.headers.get("Authorization", "").replace("Bearer ", "")
+        if not hmac.compare_digest(token, _API_TOKEN):
+            self.send_error(401, "Unauthorized")
+            return False
+        return True
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", self._get_cors_origin())
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.end_headers()
+
     def _send_json(self, data, status=200):
-        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-
-        # Compress large responses if client accepts gzip
-        use_gzip = False
-        accept_encoding = self.headers.get("Accept-Encoding", "")
-        if "gzip" in accept_encoding and len(body) > 1024:
-            import gzip as _gzip
-            body = _gzip.compress(body)
-            use_gzip = True
-
+        body = json.dumps(data).encode()
         self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        if use_gzip:
-            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", self._get_cors_origin())
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'")
         self.end_headers()
         self.wfile.write(body)
 
     def _send_file(self, path, content_type=None):
+        # Path traversal protection: only serve files under PROJECT_DIR
+        resolved = os.path.realpath(path)
+        if not resolved.startswith(os.path.realpath(PROJECT_DIR)):
+            self.send_error(403)
+            return
+        if os.path.islink(path):
+            self.send_error(403, "Symlinks not allowed")
+            return
         if not os.path.isfile(path):
             self.send_error(404)
             return
@@ -3279,16 +3088,25 @@ class Handler(BaseHTTPRequestHandler):
                 ".zip": "application/zip",
             }.get(ext, "application/octet-stream")
         size = os.path.getsize(path)
+        # ETag caching for static files
+        mtime = os.path.getmtime(path)
+        etag = f'"{int(mtime)}-{size}"'
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.end_headers()
+            return
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(size))
-        # Cache control: HTML always fresh, static assets cached 1 hour
-        if content_type.startswith("text/html"):
-            self.send_header("Cache-Control", "no-cache")
-        elif content_type.startswith(("image/", "text/css", "application/javascript")):
-            self.send_header("Cache-Control", "public, max-age=3600")
-        elif content_type.startswith("video/"):
+        self.send_header("ETag", etag)
+        self.send_header("Access-Control-Allow-Origin", self._get_cors_origin())
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'")
+        # Prevent browser from caching video/image clips; allow 30s TTL for static assets
+        if content_type.startswith("video/") or content_type.startswith("image/"):
             self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        else:
+            self.send_header("Cache-Control", "public, max-age=30")
         self.end_headers()
         with open(path, "rb") as f:
             while True:
@@ -3334,13 +3152,25 @@ class Handler(BaseHTTPRequestHandler):
     # ---- Routing ----
 
     def do_GET(self):
+        if not self._check_auth():
+            return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
-        if path == "/health":
-            self._send_json({"status": "ok", "uptime": time.time() - _server_start_time})
-        elif path == "/":
-            self._send_file(os.path.join(PROJECT_DIR, "public", "index.html"))
+        if path == "/":
+            # Inject CSRF token meta tag into index.html
+            index_path = os.path.join(PROJECT_DIR, "public", "index.html")
+            with open(index_path, "r", encoding="utf-8") as f:
+                html = f.read()
+            html = html.replace("</head>", f'<meta name="csrf-token" content="{_CSRF_TOKEN}"></head>', 1)
+            body = html.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", self._get_cors_origin())
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
+            self.end_headers()
+            self.wfile.write(body)
         elif path == "/landing":
             self._send_file(os.path.join(PROJECT_DIR, "public", "landing.html"))
         elif path == "/tb-bear.png":
@@ -3353,13 +3183,15 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/public/"):
             rel = path[len("/public/"):]
             safe = os.path.normpath(rel)
-            fpath = os.path.join(PROJECT_DIR, "public", safe)
-            resolved = os.path.abspath(fpath)
-            allowed_dir = os.path.abspath(os.path.join(PROJECT_DIR, "public"))
-            if not resolved.startswith(allowed_dir + os.sep) and resolved != allowed_dir:
-                self.send_error(403, "Access denied")
+            full = os.path.realpath(os.path.join(PROJECT_DIR, "public", safe))
+            if not full.startswith(os.path.realpath(os.path.join(PROJECT_DIR, "public"))):
+                self.send_error(403)
                 return
-            self._send_file(fpath)
+            self._send_file(full)
+
+        elif path == "/health":
+            import time as _time_mod
+            self._send_json({"status": "ok", "uptime": _time_mod.time() - _server_start_time})
 
         elif path == "/api/progress":
             with gen_lock:
@@ -3396,8 +3228,6 @@ class Handler(BaseHTTPRequestHandler):
             if not os.path.isfile(clip_file):
                 clip_file = os.path.join(OUTPUT_DIR, "auto_director", safe)
             if not os.path.isfile(clip_file):
-                clip_file = os.path.join(OUTPUT_DIR, "auto_director", "clips", safe)
-            if not os.path.isfile(clip_file):
                 # Search in takes directories
                 for scene_dir in os.listdir(TAKES_DIR) if os.path.isdir(TAKES_DIR) else []:
                     candidate = os.path.join(TAKES_DIR, scene_dir, safe)
@@ -3405,32 +3235,6 @@ class Handler(BaseHTTPRequestHandler):
                         clip_file = candidate
                         break
             self._send_file(clip_file)
-
-        elif path.startswith("/api/performance-ref/"):
-            filename = os.path.basename(path.split("/api/performance-ref/")[-1])
-            perf_dir = os.path.join(OUTPUT_DIR, "performance_refs")
-            fpath = os.path.join(perf_dir, filename)
-            if os.path.isfile(fpath):
-                self._send_file(fpath)
-            else:
-                self._send_json({"error": "Not found"}, 404)
-
-        elif path.startswith("/api/audio/generated/"):
-            filename = path[len("/api/audio/generated/"):]
-            safe = os.path.basename(urllib.parse.unquote(filename))
-            self._send_file(os.path.join(AUDIO_GEN_DIR, safe))
-
-        elif path.startswith("/api/audio/stems/"):
-            filename = os.path.basename(path.split("/api/audio/stems/")[-1])
-            stems_dir = os.path.join(OUTPUT_DIR, "stems")
-            found = False
-            for root, dirs, files in os.walk(stems_dir):
-                if filename in files:
-                    self._send_file(os.path.join(root, filename))
-                    found = True
-                    break
-            if not found:
-                self._send_json({"error": "Stem file not found"}, 404)
 
         elif path == "/api/references":
             self._handle_get_references()
@@ -3463,22 +3267,17 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/output/"):
             rel = path[len("/output/"):]
             safe = os.path.normpath(rel)
-            fpath = os.path.join(OUTPUT_DIR, safe)
-            resolved = os.path.abspath(fpath)
-            allowed_dir = os.path.abspath(OUTPUT_DIR)
-            if not resolved.startswith(allowed_dir + os.sep) and resolved != allowed_dir:
-                self.send_error(403, "Access denied")
+            full = os.path.realpath(os.path.join(OUTPUT_DIR, safe))
+            if not full.startswith(os.path.realpath(OUTPUT_DIR)):
+                self.send_error(403)
                 return
-            self._send_file(fpath)
+            self._send_file(full)
 
         elif path == "/api/project/save":
             self._handle_project_save()
 
         elif path == "/api/cost":
             self._handle_get_cost()
-
-        elif path == "/api/runway/credits":
-            self._handle_runway_credits()
 
         elif path.startswith("/api/storyboard/"):
             fname = os.path.basename(path[len("/api/storyboard/"):])
@@ -3702,37 +3501,6 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r'^/api/pos/environments/([^/]+)/preview$', path)
             self._send_file(os.path.join(POS_PREVIEWS_ENVS_DIR, m.group(1) + ".jpg"))
 
-        elif path == "/api/pos/props":
-            self._send_json({"props": _prompt_os.get_props()})
-
-        elif re.match(r'^/api/pos/props/([^/]+)$', path):
-            m = re.match(r'^/api/pos/props/([^/]+)$', path)
-            rec = _prompt_os.get_prop(m.group(1))
-            if rec:
-                self._send_json(rec)
-            else:
-                self._send_json({"error": "Not found"}, 404)
-
-        elif re.match(r'^/api/pos/props/([^/]+)/photo$', path):
-            m = re.match(r'^/api/pos/props/([^/]+)/photo$', path)
-            self._send_file(os.path.join(POS_PHOTOS_PROPS_DIR, m.group(1) + ".jpg"))
-
-        elif path == "/api/pos/voices":
-            self._send_json({"voices": _prompt_os.get_voices()})
-
-        elif re.match(r'^/api/pos/voices/([^/]+)$', path):
-            m = re.match(r'^/api/pos/voices/([^/]+)$', path)
-            rec = _prompt_os.get_voice(m.group(1))
-            if rec:
-                self._send_json(rec)
-            else:
-                self._send_json({"error": "Not found"}, 404)
-
-        elif re.match(r'^/api/pos/voices/([^/]+)/sample$', path):
-            m = re.match(r'^/api/pos/voices/([^/]+)/sample$', path)
-            audio_dir = os.path.join(PROMPT_OS_DATA_DIR, "audio", "voices")
-            self._send_file(os.path.join(audio_dir, m.group(1) + ".mp3"))
-
         elif path == "/api/pos/scenes":
             self._send_json({"scenes": _prompt_os.get_scenes()})
 
@@ -3760,79 +3528,77 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/pos/world-rules":
             self._send_json({"worldRules": _prompt_os.get_world_rules()})
 
-        elif path == "/api/pos/continuity-rules":
-            self._send_json(_prompt_os.get_continuity_rules())
-
-        elif path == "/api/pos/project-style":
-            self._send_json(_prompt_os.get_project_style())
-
-        elif re.match(r'^/api/pos/assets/([^/]+)/([^/]+)/readiness$', path):
-            m = re.match(r'^/api/pos/assets/([^/]+)/([^/]+)/readiness$', path)
-            self._send_json(_prompt_os.get_asset_readiness(m.group(1), m.group(2)))
-
-        elif re.match(r'^/api/pos/missing-assets/(\d+)$', path):
-            m = re.match(r'^/api/pos/missing-assets/(\d+)$', path)
-            shot_index = int(m.group(1))
-            missing = {"shotIndex": shot_index, "missing": []}
-            if os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
-                with open(AUTO_DIRECTOR_PLAN_PATH, "r") as f:
-                    plan = json.load(f)
-                shots = plan.get("shots", plan.get("scenes", []))
-                if 0 <= shot_index < len(shots):
-                    shot = shots[shot_index]
-                    # Check character readiness
-                    for cid in shot.get("characterIds", []):
-                        r = _prompt_os.get_asset_readiness("character", cid)
-                        if not r.get("ready"):
-                            missing["missing"].append({"type": "character", "id": cid, "readiness": r})
-                    # Check costume readiness
-                    for cid in shot.get("costumeIds", []):
-                        r = _prompt_os.get_asset_readiness("costume", cid)
-                        if not r.get("ready"):
-                            missing["missing"].append({"type": "costume", "id": cid, "readiness": r})
-                    # Check environment readiness
-                    eid = shot.get("environmentId", "")
-                    if eid:
-                        r = _prompt_os.get_asset_readiness("environment", eid)
-                        if not r.get("ready"):
-                            missing["missing"].append({"type": "environment", "id": eid, "readiness": r})
-                    # Check prop readiness
-                    for pid in shot.get("propIds", []):
-                        r = _prompt_os.get_asset_readiness("prop", pid)
-                        if not r.get("ready"):
-                            missing["missing"].append({"type": "prop", "id": pid, "readiness": r})
-                else:
-                    missing["error"] = f"Shot index {shot_index} out of range (total: {len(shots)})"
-            else:
-                missing["error"] = "No auto-director plan found"
-            self._send_json(missing)
-
-        elif path.startswith("/api/pos/sheets/"):
-            filename = os.path.basename(path.split("/api/pos/sheets/")[-1])
-            if not filename or '..' in filename or '/' in filename or '\\' in filename:
-                self._send_json({"error": "Invalid filename"}, 400)
-                return
-            sheets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "prompt_os", "sheets")
-            fpath = os.path.join(sheets_dir, filename)
-            # Verify resolved path is inside sheets_dir
-            if not os.path.abspath(fpath).startswith(os.path.abspath(sheets_dir)):
-                self._send_json({"error": "Access denied"}, 403)
-                return
-            if os.path.isfile(fpath):
-                self._send_file(fpath)
-            else:
-                self._send_json({"error": "Sheet not found"}, 404)
-
         # ──── Auto Director GET routes ────
         elif path == "/api/auto-director/status":
             self._send_json(_auto_director.progress)
 
+        elif path == "/api/story-models":
+            from lib.story_planner import AVAILABLE_MODELS, DEFAULT_MODEL, _PROVIDER_KEYS
+            models = []
+            for model_id, info in AVAILABLE_MODELS.items():
+                key_env = _PROVIDER_KEYS.get(info["provider"], "")
+                available = bool(os.environ.get(key_env, "")) if key_env else False
+                models.append({
+                    "id": model_id,
+                    "label": info["label"],
+                    "provider": info["provider"],
+                    "tier": info["tier"],
+                    "available": available,
+                })
+            self._send_json({"models": models, "default": DEFAULT_MODEL})
+
         elif path == "/api/auto-director/plan":
             if os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
-                with open(AUTO_DIRECTOR_PLAN_PATH, "r") as f:
-                    self._send_json(json.load(f))
+                try:
+                    with open(AUTO_DIRECTOR_PLAN_PATH, "r", encoding="utf-8") as f:
+                        self._send_json(json.load(f))
+                except (json.JSONDecodeError, ValueError):
+                    self._send_json({"scenes": []})
             else:
                 self._send_json({"scenes": []})
+
+        elif path == "/api/auto-director/plan/score":
+            if os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
+                try:
+                    with open(AUTO_DIRECTOR_PLAN_PATH, "r", encoding="utf-8") as f:
+                        plan = json.load(f)
+                    from lib.quality_metrics import score_plan_quality
+                    score = score_plan_quality(plan)
+                    self._send_json(score)
+                except ImportError:
+                    self._send_json({"error": "quality_metrics not available"}, 500)
+                except Exception as e:
+                    self._send_json({"error": str(e)}, 500)
+            else:
+                self._send_json({"error": "No plan found"}, 404)
+
+        # ──── Preproduction GET routes ────
+        elif path == "/api/preproduction/packages":
+            self._handle_preproduction_get_packages()
+
+        elif re.match(r'^/api/preproduction/package/([^/]+)$', path):
+            m = re.match(r'^/api/preproduction/package/([^/]+)$', path)
+            self._handle_preproduction_get_package(m.group(1))
+
+        elif path == "/api/preproduction/report":
+            self._handle_preproduction_report()
+
+        elif path == "/api/preproduction/validate":
+            self._handle_preproduction_validate_get()
+
+        # ──── Taste Profile GET routes ────
+        elif path == "/api/taste/quiz":
+            self._handle_taste_get_quiz()
+
+        elif path == "/api/taste/overall":
+            self._handle_taste_get_overall()
+
+        elif re.match(r'^/api/taste/project/([^/]+)$', path):
+            m = re.match(r'^/api/taste/project/([^/]+)$', path)
+            self._handle_taste_get_project(m.group(1))
+
+        elif path == "/api/taste/blended":
+            self._handle_taste_get_blended()
 
         # ──── Movie Planner GET routes ────
         elif path == "/api/auto-director/movie-plan":
@@ -3908,8 +3674,8 @@ class Handler(BaseHTTPRequestHandler):
 
         # ──── Cinematic Engine ────
         elif path == "/api/cinematic/camera-presets":
-            from lib.cinematic_engine import CAMERA_PRESETS
-            self._send_json({"presets": CAMERA_PRESETS})
+            from lib.cinematic_engine import CAMERA_PRESETS as CINEMATIC_CAMERA_PRESETS
+            self._send_json({"presets": CINEMATIC_CAMERA_PRESETS})
 
         elif path == "/api/cinematic/performance-options":
             from lib.cinematic_engine import PERFORMANCE_DESCRIPTORS
@@ -3928,8 +3694,11 @@ class Handler(BaseHTTPRequestHandler):
             # Load saved director plan
             plan_path = os.path.join(OUTPUT_DIR, "director_plan.json")
             if os.path.isfile(plan_path):
-                with open(plan_path, "r") as f:
-                    self._send_json(json.load(f))
+                try:
+                    with open(plan_path, "r") as f:
+                        self._send_json(json.load(f))
+                except (json.JSONDecodeError, ValueError):
+                    self._send_json({"scenes": [], "shots": {}})
             else:
                 self._send_json({"scenes": [], "shots": {}})
 
@@ -4019,31 +3788,100 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/api/takes/"):
             rel = path[len("/api/takes/"):]
             safe = os.path.normpath(rel)
-            self._send_file(os.path.join(TAKES_DIR, safe))
+            full = os.path.realpath(os.path.join(TAKES_DIR, safe))
+            if not full.startswith(os.path.realpath(TAKES_DIR)):
+                self.send_error(403)
+                return
+            self._send_file(full)
 
         # Keyboard shortcuts reference
         elif path == "/api/keyboard-shortcuts":
             from lib.roadmap_features import KEYBOARD_SHORTCUTS
             self._send_json({"shortcuts": KEYBOARD_SHORTCUTS})
 
-        # Analytics (legacy prompt/cost analytics)
+        # Analytics
         elif path == "/api/analytics":
             from lib.roadmap_features import get_analytics
             self._send_json(get_analytics(OUTPUT_DIR))
-
-        # Generation performance analytics
-        elif path == "/api/generation-analytics":
-            analytics_path = os.path.join(OUTPUT_DIR, "analytics.json")
-            if os.path.isfile(analytics_path):
-                with open(analytics_path, "r") as f:
-                    self._send_json(json.load(f))
-            else:
-                self._send_json([])
 
         # Version history
         elif path == "/api/versions":
             from lib.roadmap_features import list_versions
             self._send_json({"versions": list_versions(OUTPUT_DIR)})
+
+        # ---- Director Brain ----
+        elif path == "/api/director-brain/status":
+            from lib.director_brain import get_brain
+            brain = get_brain()
+            summary = brain.get_style_summary()
+            ratings = brain._load("ratings.json", [])
+            total = len(ratings)
+            avg = round(sum(r.get("rating", 0) for r in ratings) / total, 1) if total else 0
+            self._send_json({"total_ratings": total, "avg_rating": avg, "summary": summary})
+
+        elif path == "/api/director-brain/presets":
+            from lib.director_brain import get_brain
+            brain = get_brain()
+            presets = brain.get_influence_presets()
+            patterns = brain.get_best_prompt_patterns()
+            self._send_json({"presets": presets, "patterns": patterns})
+
+        # ---- AutoAgent ----
+        elif path == "/api/autoagent/status":
+            from lib.auto_agent import get_current_run
+            run = get_current_run()
+            if run:
+                self._send_json(run.get_status())
+            else:
+                self._send_json({"running": False, "iteration": 0, "total": 0, "best_score": 0, "edits": []})
+
+        elif path == "/api/autoagent/harness":
+            from lib.auto_agent import HarnessManager
+            hm = HarnessManager()
+            self._send_json(hm._load_or_default())
+
+        # ---- Generation Analytics ----
+        elif path == "/api/generation-analytics":
+            cost_path = os.path.join(OUTPUT_DIR, "cost_log.json")
+            if os.path.isfile(cost_path):
+                with open(cost_path, "r") as f:
+                    self._send_json(json.load(f) if f else [])
+            else:
+                self._send_json([])
+
+        # ---- POS: Props ----
+        elif path == "/api/pos/props":
+            props = _prompt_os.get_props()
+            self._send_json({"props": props or []})
+
+        # ---- POS: Continuity Rules ----
+        elif path == "/api/pos/continuity-rules":
+            rules_path = os.path.join(PROMPT_OS_DATA_DIR, "continuity_rules.json")
+            if os.path.isfile(rules_path):
+                with open(rules_path, "r") as f:
+                    self._send_json(json.load(f))
+            else:
+                self._send_json([])
+
+        # ---- POS: Project Style ----
+        elif path == "/api/pos/project-style":
+            style_path = os.path.join(PROMPT_OS_DATA_DIR, "project_style.json")
+            if os.path.isfile(style_path):
+                with open(style_path, "r") as f:
+                    self._send_json(json.load(f))
+            else:
+                self._send_json({})
+
+        # ---- Reference Demos ----
+        elif path == "/api/reference-demos":
+            demos_dir = os.path.join(OUTPUT_DIR, "reference_demos")
+            result = {}
+            if os.path.isdir(demos_dir):
+                for cat in os.listdir(demos_dir):
+                    cat_dir = os.path.join(demos_dir, cat)
+                    if os.path.isdir(cat_dir):
+                        result[cat] = [f"/output/reference_demos/{cat}/{f}" for f in os.listdir(cat_dir) if f.endswith(('.png', '.jpg', '.jpeg', '.webp'))]
+            self._send_json(result)
 
         # ---- Keyframe endpoints (GET) ----
         elif re.match(r'^/api/scenes/(\d+)/keyframes$', path):
@@ -4057,73 +3895,26 @@ class Handler(BaseHTTPRequestHandler):
             if os.path.isfile(kf_file):
                 self._send_file(kf_file)
             else:
-                self.send_error(404)
-
-        # ---- AutoAgent GET endpoints ----
-        elif path == "/api/autoagent/status":
-            run = get_current_run()
-            if run:
-                self._send_json(run.get_status())
-            else:
-                self._send_json({"status": "no_run", "message": "No optimization run started"})
-
-        elif path == "/api/autoagent/harness":
-            from lib.auto_agent import HarnessManager
-            hm = HarnessManager()
-            self._send_json({"harness": hm.current, "hash": hm.hash(), "best_score": hm.best_score})
-
-        elif path == "/api/autoagent/history":
-            from lib.auto_agent import AUTOAGENT_DIR
-            history_path = os.path.join(AUTOAGENT_DIR, "harness_history.json")
-            if os.path.isfile(history_path):
-                with open(history_path, "r") as f:
-                    self._send_json(json.load(f))
-            else:
-                self._send_json([])
-
-        # ---- Director Brain GET ----
-        elif path == "/api/director-brain/status":
-            brain = get_brain()
-            self._send_json({
-                "style_vector": brain.style_vector,
-                "total_ratings": len(brain.ratings),
-                "style_summary": brain.get_style_summary(),
-            })
-
-        elif path == "/api/director-brain/presets":
-            brain = get_brain()
-            self._send_json({
-                "presets": brain.get_influence_presets(),
-                "patterns": brain.get_best_prompt_patterns(),
-            })
-
-        # ---- Reference Demo Images (Lookbook) ----
-        elif path == "/api/reference-demos":
-            refs_dir = os.path.join(OUTPUT_DIR, "reference_demos")
-            images = {}
-            if os.path.isdir(refs_dir):
-                for f in os.listdir(refs_dir):
-                    if f.endswith(('.jpg', '.png')):
-                        cat = f.split('_')[0]  # light, angle, shot, grade
-                        if cat not in images:
-                            images[cat] = []
-                        name = f.replace(cat + '_', '').replace('.jpg', '').replace('.png', '').replace('_', ' ')
-                        images[cat].append({
-                            "name": name,
-                            "url": f"/output/reference_demos/{f}",
-                            "filename": f,
-                        })
-            self._send_json(images)
-
-        elif path == "/api/upscale/status":
-            self._send_json(get_upscale_status())
+                # Fallback: check first_frames directory
+                ff_file = os.path.join(OUTPUT_DIR, "first_frames", safe)
+                if os.path.isfile(ff_file):
+                    self._send_file(ff_file)
+                else:
+                    self.send_error(404)
 
         else:
             self.send_error(404)
 
     def do_POST(self):
+        if not self._check_auth():
+            return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/")
+        # CSRF check for API routes
+        csrf = self.headers.get("X-CSRF-Token", "")
+        if csrf != _CSRF_TOKEN and path.startswith("/api/"):
+            self._send_json({"error": "Invalid CSRF token"}, 403)
+            return
         if path == "/api/upload":
             self._handle_upload()
 
@@ -4152,14 +3943,6 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/manual/scene/([^/]+)/photo$', path):
             m = re.match(r'^/api/manual/scene/([^/]+)/photo$', path)
             self._handle_manual_upload_photo(m.group(1))
-
-        elif re.match(r'^/api/manual/scene/([^/]+)/duplicate$', path):
-            m = re.match(r'^/api/manual/scene/([^/]+)/duplicate$', path)
-            self._handle_manual_duplicate_scene(m.group(1))
-
-        elif re.match(r'^/api/manual/scene/([^/]+)/trim$', path):
-            m = re.match(r'^/api/manual/scene/([^/]+)/trim$', path)
-            self._handle_manual_trim_scene(m.group(1))
 
         elif re.match(r'^/api/manual/scene/([^/]+)/generate$', path):
             m = re.match(r'^/api/manual/scene/([^/]+)/generate$', path)
@@ -4410,10 +4193,6 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/auto-director/restitch":
             self._handle_auto_director_restitch()
 
-        elif path == "/api/auto-director/stitch":
-            # Alias for restitch — frontend uses both
-            self._handle_auto_director_restitch()
-
         elif path == "/api/auto-director/to-manual":
             self._handle_auto_director_to_manual()
 
@@ -4433,14 +4212,6 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r'^/api/auto-director/scene/(\d+)/validate-assets$', path)
             self._handle_scene_validate_assets(int(m.group(1)))
 
-        elif re.match(r'^/api/auto-director/scene/(\d+)/first-frame$', path):
-            m = re.match(r'^/api/auto-director/scene/(\d+)/first-frame$', path)
-            self._handle_generate_first_frame(int(m.group(1)))
-
-        elif re.match(r'^/api/auto-director/scene/(\d+)/generate-clip$', path):
-            m = re.match(r'^/api/auto-director/scene/(\d+)/generate-clip$', path)
-            self._handle_generate_scene_clip(int(m.group(1)))
-
         elif re.match(r'^/api/auto-director/scene/(\d+)/preview$', path):
             m = re.match(r'^/api/auto-director/scene/(\d+)/preview$', path)
             self._handle_scene_preview(int(m.group(1)))
@@ -4448,51 +4219,23 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/auto-director/scenes/preview-batch":
             self._handle_scenes_preview_batch()
 
-        elif re.match(r'^/api/auto-director/scene/(\d+)/restyle$', path):
-            m = re.match(r'^/api/auto-director/scene/(\d+)/restyle$', path)
-            self._handle_scene_restyle(int(m.group(1)), body)
-
-        elif re.match(r'^/api/auto-director/scene/(\d+)/multi-angle$', path):
-            m = re.match(r'^/api/auto-director/scene/(\d+)/multi-angle$', path)
-            self._handle_multi_angle_clip(int(m.group(1)), body)
-
-        elif re.match(r'^/api/auto-director/scene/(\d+)/character-performance$', path):
-            m = re.match(r'^/api/auto-director/scene/(\d+)/character-performance$', path)
-            body = json.loads(self._read_body())
-            self._handle_character_performance(int(m.group(1)), body)
-
-        elif path == "/api/performance-ref/upload":
-            # Handle multipart upload of performance reference video
+        elif path == "/api/auto-director/scenes/reorder":
             try:
-                ct = self.headers.get("Content-Type", "")
-                boundary = ct.split("boundary=")[-1].encode()
-                body_bytes = self._read_body()
-                parts = self._parse_multipart(body_bytes, boundary)
-                file_part = None
-                for p in parts:
-                    if p.get("filename"):
-                        file_part = p
-                        break
-                if not file_part:
-                    self._send_json({"error": "No file uploaded"}, 400)
-                    return
-                perf_dir = os.path.join(OUTPUT_DIR, "performance_refs")
-                os.makedirs(perf_dir, exist_ok=True)
-                filename = f"perf_ref_{int(time.time())}.mp4"
-                filepath = os.path.join(perf_dir, filename)
-                with open(filepath, "wb") as f:
-                    f.write(file_part["data"])
-                self._send_json({"ok": True, "path": filepath, "url": f"/api/performance-ref/{filename}"})
-            except Exception as e:
-                self._send_json({"error": str(e)}, 500)
-
-        elif re.match(r'^/api/auto-director/scene/(\d+)/upload-clip$', path):
-            m = re.match(r'^/api/auto-director/scene/(\d+)/upload-clip$', path)
-            self._handle_scene_upload_clip(int(m.group(1)))
-
-        elif re.match(r'^/api/auto-director/scene/(\d+)/upload-frame$', path):
-            m = re.match(r'^/api/auto-director/scene/(\d+)/upload-frame$', path)
-            self._handle_scene_upload_frame(int(m.group(1)))
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
+            order = body.get("order", [])
+            plan = load_movie_plan(OUTPUT_DIR)
+            if plan and plan.get("scenes") and order:
+                id_to_scene = {s.get("id", str(i)): s for i, s in enumerate(plan["scenes"])}
+                reordered = [id_to_scene[sid] for sid in order if sid in id_to_scene]
+                for i, s in enumerate(reordered):
+                    s["order"] = i
+                plan["scenes"] = reordered
+                with _plan_file_lock:
+                    save_movie_plan(plan, OUTPUT_DIR)
+            self._send_json({"ok": True})
 
         elif re.match(r'^/api/auto-director/scene/(\d+)/regenerate$', path):
             m = re.match(r'^/api/auto-director/scene/(\d+)/regenerate$', path)
@@ -4510,23 +4253,6 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r'^/api/auto-director/scene/(\d+)/unlock$', path)
             self._handle_movie_scene_unlock(int(m.group(1)))
 
-        elif path == "/api/auto-director/reorder":
-            body = json.loads(self._read_body())
-            order = body.get("order", [])
-            plan = load_movie_plan(OUTPUT_DIR)
-            if plan and plan.get("scenes") and order:
-                id_to_scene = {s["id"]: s for s in plan["scenes"]}
-                reordered = [id_to_scene[sid] for sid in order if sid in id_to_scene]
-                for i, s in enumerate(reordered):
-                    s["order"] = i
-                plan["scenes"] = reordered
-                save_movie_plan(plan, OUTPUT_DIR)
-                # Also save to auto_director_plan
-                ad_path = os.path.join(OUTPUT_DIR, "auto_director_plan.json")
-                with open(ad_path, "w", encoding="utf-8") as f:
-                    json.dump(plan, f, indent=2, ensure_ascii=False)
-            self._send_json({"ok": True})
-
         elif path == "/api/auto-director/draft-assets/promote":
             self._handle_draft_promote()
 
@@ -4536,8 +4262,86 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/auto-director/draft-assets/remove":
             self._handle_draft_remove()
 
+        # ──── V4 Per-Shot Operations ────
+        elif re.match(r'^/api/auto-director/shot/(\d+)/(\d+)/regenerate$', path):
+            m = re.match(r'^/api/auto-director/shot/(\d+)/(\d+)/regenerate$', path)
+            self._handle_v4_shot_regenerate(int(m.group(1)), int(m.group(2)))
+
+        elif re.match(r'^/api/auto-director/shot/(\d+)/(\d+)/edit$', path):
+            m = re.match(r'^/api/auto-director/shot/(\d+)/(\d+)/edit$', path)
+            self._handle_v4_shot_edit(int(m.group(1)), int(m.group(2)))
+
+        # ──── Preproduction POST routes ────
+        elif path == "/api/preproduction/package/create":
+            self._handle_preproduction_create_package()
+
+        elif re.match(r'^/api/preproduction/package/([^/]+)/update$', path):
+            m = re.match(r'^/api/preproduction/package/([^/]+)/update$', path)
+            self._handle_preproduction_update_package(m.group(1))
+
+        elif re.match(r'^/api/preproduction/package/([^/]+)/generate$', path):
+            m = re.match(r'^/api/preproduction/package/([^/]+)/generate$', path)
+            self._handle_preproduction_generate_package(m.group(1))
+
+        elif re.match(r'^/api/preproduction/package/([^/]+)/generate-view$', path):
+            m = re.match(r'^/api/preproduction/package/([^/]+)/generate-view$', path)
+            self._handle_preproduction_generate_view(m.group(1))
+
+        elif re.match(r'^/api/preproduction/package/([^/]+)/hero-ref$', path):
+            m = re.match(r'^/api/preproduction/package/([^/]+)/hero-ref$', path)
+            self._handle_preproduction_hero_ref(m.group(1))
+
+        elif re.match(r'^/api/preproduction/package/([^/]+)/approve$', path):
+            m = re.match(r'^/api/preproduction/package/([^/]+)/approve$', path)
+            self._handle_preproduction_approve(m.group(1))
+
+        elif re.match(r'^/api/preproduction/package/([^/]+)/reject$', path):
+            m = re.match(r'^/api/preproduction/package/([^/]+)/reject$', path)
+            self._handle_preproduction_reject(m.group(1))
+
+        elif re.match(r'^/api/preproduction/package/([^/]+)/delete$', path):
+            m = re.match(r'^/api/preproduction/package/([^/]+)/delete$', path)
+            self._handle_preproduction_delete(m.group(1))
+
+        elif re.match(r'^/api/preproduction/package/([^/]+)/upload-ref$', path):
+            m = re.match(r'^/api/preproduction/package/([^/]+)/upload-ref$', path)
+            self._handle_preproduction_upload_ref(m.group(1))
+
+        elif path == "/api/preproduction/plan-packages":
+            self._handle_preproduction_plan_packages()
+
+        elif path == "/api/preproduction/bind-shots":
+            self._handle_preproduction_bind_shots()
+
+        elif path == "/api/preproduction/set-mode":
+            self._handle_preproduction_set_mode()
+
+        # ──── Taste Profile POST routes ────
+        elif path == "/api/taste/overall":
+            self._handle_taste_save_overall()
+
+        elif path == "/api/taste/quiz/submit":
+            self._handle_taste_submit_quiz()
+
+        elif path == "/api/taste/sliders":
+            self._handle_taste_update_sliders()
+
+        elif re.match(r'^/api/taste/project/([^/]+)$', path):
+            m = re.match(r'^/api/taste/project/([^/]+)$', path)
+            self._handle_taste_save_project(m.group(1))
+
+        elif path == "/api/taste/behavior":
+            self._handle_taste_record_behavior()
+
+        elif path == "/api/taste/reset-overall":
+            self._handle_taste_reset_overall()
+
         elif path == "/api/workflow-presets":
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             preset = save_custom_preset(body)
             self._send_json({"ok": True, "preset": preset})
 
@@ -4545,7 +4349,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/cinematic/beat-sync/analyze":
             from lib.beat_sync import generate_beat_sync_plan
             from lib.audio_analyzer import analyze
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             cut_mode = body.get("cut_mode", "balanced")
             sync_priority = body.get("sync_priority", "hybrid")
             # Find song
@@ -4567,7 +4375,11 @@ class Handler(BaseHTTPRequestHandler):
         # ──── Coherence Scorer ────
         elif path == "/api/cinematic/coherence/shot":
             from lib.coherence_scorer import score_shot
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             shot = body.get("shot", {})
             prev_shot = body.get("prev_shot")
             result = score_shot(shot, prev_shot)
@@ -4575,7 +4387,11 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/api/cinematic/coherence/scene":
             from lib.coherence_scorer import score_scene
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             scene_id = body.get("scene_id", "")
             settings = _load_settings()
             shots = settings.get("shots_data", {}).get(scene_id, [])
@@ -4586,7 +4402,11 @@ class Handler(BaseHTTPRequestHandler):
         # ──── Coverage System ────
         elif path == "/api/cinematic/coverage/generate":
             from lib.coverage_system import generate_coverage
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             beat = body.get("beat", body.get("scene_beat", ""))
             mode = body.get("mode", "standard")
             section_type = body.get("section_type", "verse")
@@ -4605,7 +4425,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/cinematic/narrative/generate":
             from lib.narrative_engine import generate_narrative_plan
             from lib.audio_analyzer import analyze
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             arc_type = body.get("arc_type", "rise")
             theme = body.get("theme", "")
             storyline = body.get("storyline", "")
@@ -4636,7 +4460,11 @@ class Handler(BaseHTTPRequestHandler):
         # ──── Shot Style Library ────
         elif path == "/api/cinematic/shot-styles/add":
             from lib.shot_style_library import add_custom_preset
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             cat = body.get("category", "")
             name = body.get("name", "")
             prompt_text = body.get("prompt_text", "")
@@ -4648,19 +4476,31 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/api/cinematic/shot-styles/remove":
             from lib.shot_style_library import remove_custom_preset
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             remove_custom_preset(body.get("category", ""), body.get("name", ""))
             self._send_json({"ok": True})
 
         elif path == "/api/cinematic/shot-styles/resolve":
             from lib.shot_style_library import resolve_presets
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             prompt = resolve_presets(body.get("selections", {}))
             self._send_json({"ok": True, "prompt": prompt})
 
         # ──── Generation Queue ────
         elif path == "/api/queue/add-shot":
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             scene_id = body.get("scene_id", "")
             shot_id = body.get("shot_id", "")
             # Find the shot data
@@ -4678,7 +4518,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"ok": True, "queue_id": item["id"]})
 
         elif path == "/api/queue/add-scene":
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             scene_id = body.get("scene_id", "")
             settings = _load_settings()
             shots = settings.get("shots_data", {}).get(scene_id, [])
@@ -4702,7 +4546,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "queued": count})
 
         elif path == "/api/queue/retry":
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             queue_id = body.get("queue_id", "")
             with gen_queue_lock:
                 for it in gen_queue["items"]:
@@ -4722,14 +4570,22 @@ class Handler(BaseHTTPRequestHandler):
         # ──── Style Memory ────
         elif path == "/api/cinematic/style-memory":
             from lib.cinematic_engine import StyleMemory
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             sm = StyleMemory()
             result = sm.update(body)
             self._send_json({"ok": True, "style_memory": result})
 
         elif path == "/api/cinematic/style-memory/from-vision":
             from lib.cinematic_engine import StyleMemory
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             sm = StyleMemory()
             result = sm.set_from_vision(
                 universal_prompt=body.get("universal_prompt", ""),
@@ -4771,37 +4627,47 @@ class Handler(BaseHTTPRequestHandler):
 
         # ──── Prompt OS POST routes ────
         elif path == "/api/pos/prompts":
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             rec = _prompt_os.create_prompt(body)
             self._send_json({"ok": True, "prompt": rec})
 
         elif path == "/api/pos/characters":
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             rec = _prompt_os.create_character(body)
             self._send_json({"ok": True, "character": rec})
 
         elif path == "/api/pos/costumes":
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             rec = _prompt_os.create_costume(body)
             self._send_json({"ok": True, "costume": rec})
 
         elif path == "/api/pos/environments":
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             rec = _prompt_os.create_environment(body)
             self._send_json({"ok": True, "environment": rec})
 
-        elif path == "/api/pos/props":
-            body = json.loads(self._read_body())
-            rec = _prompt_os.create_prop(body)
-            self._send_json({"ok": True, "prop": rec})
-
-        elif path == "/api/pos/voices":
-            body = json.loads(self._read_body())
-            rec = _prompt_os.create_voice(body)
-            self._send_json({"ok": True, "voice": rec})
-
         elif path == "/api/pos/scenes":
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             rec = _prompt_os.create_scene(body)
             self._send_json({"ok": True, "scene": rec})
 
@@ -4816,12 +4682,20 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "data": data})
 
         elif path == "/api/pos/style-locks":
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             locks = _prompt_os.set_style_locks(body.get("styleLocks", []))
             self._send_json({"ok": True, "styleLocks": locks})
 
         elif path == "/api/pos/world-rules":
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             rules = _prompt_os.set_world_rules(body.get("worldRules", []))
             self._send_json({"ok": True, "worldRules": rules})
 
@@ -4837,14 +4711,6 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/pos/environments/([^/]+)/photo$', path):
             m = re.match(r'^/api/pos/environments/([^/]+)/photo$', path)
             self._handle_pos_photo_upload(m.group(1), "environments")
-
-        elif re.match(r'^/api/pos/props/([^/]+)/photo$', path):
-            m = re.match(r'^/api/pos/props/([^/]+)/photo$', path)
-            self._handle_pos_photo_upload(m.group(1), "props")
-
-        elif re.match(r'^/api/pos/voices/([^/]+)/sample$', path):
-            m = re.match(r'^/api/pos/voices/([^/]+)/sample$', path)
-            self._handle_voice_sample_upload(m.group(1))
 
         # ──── Auto-describe from photo ────
         elif re.match(r'^/api/pos/characters/([^/]+)/describe$', path):
@@ -4877,58 +4743,13 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r'^/api/pos/characters/([^/]+)/generate-sheet$', path)
             self._handle_pos_generate_character_sheet(m.group(1))
 
-        # ──── Asset Sheet Generation System ────
-        elif path == "/api/pos/project-style":
-            body = json.loads(self._read_body())
-            self._send_json(_prompt_os.set_project_style(body))
-
-        elif path == "/api/pos/sheets/generate":
-            body = json.loads(self._read_body())
-            self._handle_pos_generate_sheet(body)
-
-        elif path == "/api/pos/sheets/approve":
-            body = json.loads(self._read_body())
-            asset_type = body.get("assetType", "")
-            asset_id = body.get("assetId", "")
-            sheet_url = body.get("sheetUrl", "")
-            slot = body.get("slot", "approvedSheet")
-            result = _prompt_os.approve_sheet(asset_type, asset_id, sheet_url, slot)
-            if isinstance(result, dict) and "error" in result:
-                self._send_json(result, 400)
-            else:
-                self._send_json(result)
-
-        elif path == "/api/pos/assets/lock":
-            body = json.loads(self._read_body())
-            asset_type = body.get("assetType", "")
-            asset_id = body.get("assetId", "")
-            result = _prompt_os.lock_asset(asset_type, asset_id)
-            if isinstance(result, dict) and "error" in result:
-                self._send_json(result, 400)
-            else:
-                self._send_json(result)
-
-        elif path == "/api/pos/reference-package":
-            body = json.loads(self._read_body())
-            shot_type = body.get("shotType", "medium")
-            character_id = body.get("characterId", "")
-            costume_id = body.get("costumeId", "")
-            environment_id = body.get("environmentId", "")
-            prop_ids = body.get("propIds", [])
-
-            character = _prompt_os.get_character(character_id) if character_id else None
-            costume = _prompt_os.get_costume(costume_id) if costume_id else None
-            environment = _prompt_os.get_environment(environment_id) if environment_id else None
-            props = [_prompt_os.get_prop(pid) for pid in prop_ids if _prompt_os.get_prop(pid)]
-
-            package = build_reference_package(shot_type, character, costume, environment, props)
-            best_refs = select_best_refs_for_shot(package, shot_type)
-            package["selectedRefs"] = best_refs
-            self._send_json(package)
-
         # ──── Feature 1: Project Browser ────
         elif path == "/api/projects":
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             name = body.get("name", "Untitled Project")
             meta = _project_mgr.create_project(name)
             self._send_json({"ok": True, "project": meta})
@@ -4982,7 +4803,11 @@ class Handler(BaseHTTPRequestHandler):
         # ──── Feature 4: Select Take ────
         elif re.match(r'^/api/manual/scene/([^/]+)/select-take$', path):
             m = re.match(r'^/api/manual/scene/([^/]+)/select-take$', path)
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             scene_id = m.group(1)
             take_num = body.get("take_num", 0)
             takes = _get_takes(scene_id)
@@ -5008,7 +4833,11 @@ class Handler(BaseHTTPRequestHandler):
 
         # ──── Feature 8: Budget update ────
         elif path == "/api/cost/budget":
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             budget = float(body.get("budget", DEFAULT_BUDGET))
             tracker = _load_cost_tracker()
             tracker["budget"] = budget
@@ -5017,7 +4846,11 @@ class Handler(BaseHTTPRequestHandler):
 
         # Style mixing
         elif path == "/api/mix-styles":
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             from lib.prompt_assistant import mix_styles, STYLE_PRESETS
             sa = body.get("style_a", "")
             sb = body.get("style_b", "")
@@ -5028,7 +4861,11 @@ class Handler(BaseHTTPRequestHandler):
 
         # Emotion detection
         elif path == "/api/detect-emotion":
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             from lib.prompt_assistant import detect_emotion, emotion_to_visual_prompt
             emotions = detect_emotion(body.get("lyrics", ""))
             self._send_json({"ok": True, "emotions": emotions, "visual_prompt": emotion_to_visual_prompt(emotions)})
@@ -5088,409 +4925,116 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/manual/scenes/auto-chain":
             self._handle_manual_auto_chain()
 
-        elif path == "/api/generate-sound":
-            self._handle_generate_sound()
+        # ---- Director Brain (POST) ----
+        elif path == "/api/director-brain/recommend":
+            from lib.director_brain import get_brain
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
+            brain = get_brain()
+            rec = brain.recommend_for_scene(body)
+            self._send_json(rec)
 
-        elif path == "/api/generate-tts":
-            self._handle_generate_tts()
+        elif path == "/api/director-brain/rate":
+            from lib.director_brain import get_brain
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
+            brain = get_brain()
+            brain.rate_scene(body.get("scene_index", 0), body.get("rating", 3), body)
+            self._send_json({"ok": True})
 
-        elif path == "/api/generate-speech-to-speech":
-            self._handle_generate_sts()
-
-        elif path == "/api/generate-voice-dubbing":
-            self._handle_generate_voice_dubbing()
-
-        elif path == "/api/generate-voice-isolation":
-            self._handle_generate_voice_isolation()
-
-        elif path == "/api/pos/continuity-rules":
-            body = json.loads(self._read_body())
-            rule_text = body.get("rule", "").strip()
-            if not rule_text:
-                self._send_json({"error": "rule is required"}, 400)
-            else:
-                rules = _prompt_os.get_continuity_rules()
-                rules.append({"rule": rule_text})
-                _prompt_os.set_continuity_rules(rules)
-                self._send_json({"ok": True})
-
-        elif path == "/api/ai-autofill":
-            self._handle_ai_autofill()
-
-        elif path == "/api/voice-clone/generate":
-            self._handle_voice_clone()
-
-        # ---- AutoAgent POST endpoints ----
+        # ---- AutoAgent (POST) ----
         elif path == "/api/autoagent/start":
-            body = json.loads(self._read_body())
-            max_iter = body.get("maxIterations", 20)
+            from lib.auto_agent import get_or_create_run
             run = get_or_create_run()
-            result = run.start(_autoagent_eval_fn, max_iterations=max_iter)
-            self._send_json(result)
+            def _dummy_eval(harness):
+                return []
+            run.start(_dummy_eval, max_iterations=body.get("iterations", 10) if 'body' in dir() else 10)
+            self._send_json({"ok": True, "message": "AutoAgent started"})
 
         elif path == "/api/autoagent/stop":
+            from lib.auto_agent import get_current_run
             run = get_current_run()
             if run:
-                self._send_json(run.stop())
-            else:
-                self._send_json({"error": "No run active"})
+                run.stop()
+            self._send_json({"ok": True})
 
-        elif path == "/api/autoagent/harness/edit":
-            body = json.loads(self._read_body())
+        elif path == "/api/autoagent/harness":
             from lib.auto_agent import HarnessManager
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             hm = HarnessManager()
-            key_path = body.get("keyPath", "")
-            new_value = body.get("newValue", "")
-            success = hm.apply_edit(key_path, new_value)
-            self._send_json({"ok": success, "harness": hm.current})
+            if body.get("key_path") and body.get("value") is not None:
+                hm.apply_edit(body["key_path"], body["value"])
+                hm.save()
+            self._send_json({"ok": True})
 
         elif path == "/api/autoagent/harness/revert":
             from lib.auto_agent import HarnessManager
             hm = HarnessManager()
-            score = hm.revert_to_best()
-            self._send_json({"ok": True, "reverted_to_score": score, "harness": hm.current})
+            hm.revert_to_best()
+            self._send_json({"ok": True})
 
-        elif path == "/api/recommend-engine":
-            body = json.loads(self._read_body())
-            scenes = body.get("scenes", [])
-            project_default = body.get("projectDefault", "gen4_5")
-            recommendations = []
-            for scene in scenes:
-                rec = _recommend_engine(scene, project_default)
-                recommendations.append(rec)
-            self._send_json({"recommendations": recommendations})
-
-        elif path == "/api/audio/stems":
-            body = json.loads(self._read_body())
-            self._handle_audio_stems(body)
-
-        # ---- Director Brain POST endpoints ----
-        elif path == "/api/director-brain/rate":
-            body = json.loads(self._read_body())
-            brain = get_brain()
-            scene_index = body.get("sceneIndex", 0)
-            rating = body.get("rating", 3)
-            scene_data = body.get("sceneData", {})
-            result = brain.rate_scene(scene_index, rating, scene_data)
-            self._send_json({"ok": True, "rating": result, "style_summary": brain.get_style_summary()})
-
-        elif path == "/api/director-brain/recommend":
-            body = json.loads(self._read_body())
-            brain = get_brain()
-            scene_data = body.get("sceneData", {})
-            recs = brain.recommend_for_scene(scene_data)
-            self._send_json(recs)
-
-        elif path == "/api/director-brain/analyze":
-            body = json.loads(self._read_body())
-            brain = get_brain()
-            scene_data = body.get("sceneData", {})
-            analysis = brain.analyze_success_factors(scene_data)
-            self._send_json(analysis)
-
-        # ──── Suno Integration ────
-        elif path == "/api/suno/import":
-            body = json.loads(self._read_body())
-            self._handle_suno_import(body)
-
-        elif path == "/api/suno/generate":
-            body = json.loads(self._read_body())
-            self._handle_suno_generate(body)
-
-        # ──── Auto-Captions / Transcription ────
-        elif path == "/api/transcribe":
-            body = json.loads(self._read_body())
-            self._handle_transcribe(body)
-
-        # ──── Album Art Generator ────
-        elif path == "/api/generate-album-art":
-            body = json.loads(self._read_body())
-            self._handle_generate_album_art(body)
-
-        # ──── Reference Demo Image Generation (Lookbook) ────
-        elif path == "/api/generate-reference-images":
-            self._handle_generate_reference_images()
-
-        elif path == "/api/upscale/image":
-            body = json.loads(self._read_body())
-            image_path = body.get("imagePath", "")
-            scale = body.get("scale", 4)
-
-            if not image_path or not os.path.isfile(image_path):
-                self._send_json({"error": "Image not found"}, 400)
+        # ---- POS: Continuity Rules (POST) ----
+        elif path == "/api/pos/continuity-rules":
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
                 return
+            rules_path = os.path.join(PROMPT_OS_DATA_DIR, "continuity_rules.json")
+            rules = []
+            if os.path.isfile(rules_path):
+                with open(rules_path, "r") as f:
+                    rules = json.load(f)
+            rules.append({"rule": body.get("rule", ""), "created": time.time()})
+            with open(rules_path, "w") as f:
+                json.dump(rules, f)
+            self._send_json({"ok": True})
 
-            output_path = image_path.replace(".jpg", "_4k.jpg").replace(".png", "_4k.png")
+        # ---- POS: Project Style (POST) ----
+        elif path == "/api/pos/project-style":
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
+            style_path = os.path.join(PROMPT_OS_DATA_DIR, "project_style.json")
+            with open(style_path, "w") as f:
+                json.dump(body, f)
+            self._send_json({"ok": True})
 
-            def _do_upscale():
-                result = upscale_image(image_path, output_path, scale=scale)
-                return result
-
-            # Run in thread to not block
-            result_holder = [None]
-            def _run():
-                result_holder[0] = _do_upscale()
-
-            t = threading.Thread(target=_run)
-            t.start()
-            t.join(timeout=120)
-
-            if result_holder[0] and os.path.isfile(result_holder[0]):
-                self._send_json({
-                    "ok": True,
-                    "upscaledPath": result_holder[0],
-                    "upscaledUrl": f"/output/{os.path.relpath(result_holder[0], OUTPUT_DIR)}",
-                })
-            else:
-                self._send_json({"error": "Upscaling failed — install realesrgan-ncnn-vulkan for AI upscaling, or FFmpeg will be used as fallback"}, 500)
+        # ---- Audio Stems (POST) ----
+        elif path == "/api/audio/stems":
+            stems_dir = os.path.join(OUTPUT_DIR, "audio")
+            stems = {}
+            if os.path.isdir(stems_dir):
+                for f in os.listdir(stems_dir):
+                    if f.endswith(('.mp3', '.wav', '.m4a', '.ogg')):
+                        stems[f] = f"/output/audio/{f}"
+            self._send_json({"stems": stems})
 
         else:
             self.send_error(404)
 
-    def _handle_audio_stems(self, body):
-        """Separate audio into stems (drums, bass, vocals, other).
-        Uses Demucs if available, falls back to FFT-based estimation."""
-        audio_path = body.get("audioPath", "")
-
-        if not audio_path:
-            plan = load_movie_plan(OUTPUT_DIR)
-            if plan:
-                audio_path = plan.get("song_path", "")
-
-        if not audio_path or not os.path.isfile(audio_path):
-            self._send_json({"error": "No audio file found"}, 400)
-            return
-
-        stems_dir = os.path.join(OUTPUT_DIR, "stems")
-        os.makedirs(stems_dir, exist_ok=True)
-
-        try:
-            # Try Demucs first
-            try:
-                result = subprocess.run(
-                    ["demucs", "--two-stems", "vocals", "-o", stems_dir, audio_path],
-                    capture_output=True, text=True, timeout=300
-                )
-                if result.returncode == 0:
-                    base = os.path.splitext(os.path.basename(audio_path))[0]
-                    vocals_path = os.path.join(stems_dir, "htdemucs", base, "vocals.wav")
-                    instrumental_path = os.path.join(stems_dir, "htdemucs", base, "no_vocals.wav")
-
-                    stems = {
-                        "vocals": vocals_path if os.path.isfile(vocals_path) else None,
-                        "instrumental": instrumental_path if os.path.isfile(instrumental_path) else None,
-                    }
-
-                    self._send_json({
-                        "ok": True,
-                        "method": "demucs",
-                        "stems": {k: f"/api/audio/stems/{os.path.basename(v)}" if v else None for k, v in stems.items()},
-                    })
-                    return
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                print("[STEMS] Demucs not available, using FFT estimation")
-
-            # Fallback: FFT-based stem energy estimation
-            analysis = analyze(audio_path)
-
-            beats = analysis.get("beats", [])
-            bpm = analysis.get("bpm", 120)
-
-            self._send_json({
-                "ok": True,
-                "method": "estimation",
-                "stems": None,
-                "beats": beats[:100],
-                "bpm": bpm,
-                "message": "Demucs not installed — using energy estimation. Install Demucs for full stem separation: pip install demucs",
-            })
-
-        except Exception as e:
-            self._send_json({"error": f"Stem separation failed: {str(e)[:200]}"}, 500)
-
-    def _handle_ai_autofill(self):
-        """POST /api/ai-autofill -- AI auto-fill form fields from a simple user prompt."""
-        try:
-            body = json.loads(self._read_body())
-        except Exception:
-            self._send_json({"error": "Invalid JSON body"}, 400)
-            return
-
-        user_idea = body.get("userIdea", "")
-        form_type = body.get("formType", "")
-        field_keys = body.get("fieldKeys", [])
-        system_prompt = body.get("prompt", "")
-
-        if not user_idea:
-            self._send_json({"error": "No user idea provided"}, 400)
-            return
-
-        # Build the LLM prompt
-        field_list = ", ".join(field_keys)
-        llm_prompt = f"""{system_prompt}
-
-User's concept: "{user_idea}"
-
-Generate detailed, cinematic, production-quality content for each field.
-Be specific about visual details — colors, textures, materials, lighting, dimensions.
-Optimize text for AI image generation prompts.
-
-Return ONLY valid JSON with these exact keys: {field_list}
-Each value should be a descriptive string (not nested objects).
-Do not include any explanation, just the JSON object."""
-
-        # Try OpenAI first, then Anthropic
-        openai_key = os.environ.get("OPENAI_API_KEY", "")
-        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-
-        result = None
-
-        if openai_key:
-            try:
-                import requests
-                resp = requests.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {openai_key}", "Content-Type": "application/json"},
-                    json={
-                        "model": "gpt-4o-mini",
-                        "messages": [
-                            {"role": "system", "content": "You are a cinematic production assistant. Output only valid JSON."},
-                            {"role": "user", "content": llm_prompt}
-                        ],
-                        "temperature": 0.8,
-                        "max_tokens": 1500,
-                    },
-                    timeout=30,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    content = data["choices"][0]["message"]["content"].strip()
-                    # Strip markdown code fences if present
-                    if content.startswith("```"):
-                        content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-                    result = json.loads(content)
-            except Exception as e:
-                print(f"[AI-AutoFill] OpenAI error: {e}")
-
-        if not result and anthropic_key:
-            try:
-                import requests
-                resp = requests.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "x-api-key": anthropic_key,
-                        "Content-Type": "application/json",
-                        "anthropic-version": "2023-06-01",
-                    },
-                    json={
-                        "model": "claude-haiku-4-5-20251001",
-                        "max_tokens": 1500,
-                        "messages": [{"role": "user", "content": llm_prompt}],
-                    },
-                    timeout=30,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    content = data["content"][0]["text"].strip()
-                    if content.startswith("```"):
-                        content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-                    result = json.loads(content)
-            except Exception as e:
-                print(f"[AI-AutoFill] Anthropic error: {e}")
-
-        if result:
-            self._send_json({"fields": result})
-        else:
-            self._send_json({"error": "No AI provider available. Set OPENAI_API_KEY or ANTHROPIC_API_KEY in .env"}, 500)
-
-    def _handle_voice_clone(self):
-        """POST /api/voice-clone/generate -- Generate voice clone via ElevenLabs API."""
-        elevenlabs_key = os.environ.get("ELEVENLABS_API_KEY", "")
-        if not elevenlabs_key:
-            self._send_json({"error": "ElevenLabs API key not set. Add ELEVENLABS_API_KEY to your .env file."}, 400)
-            return
-
-        # Frontend sends FormData, so parse multipart
-        content_type = self.headers.get("Content-Type", "")
-        text = ""
-        voice_name = "Custom Voice"
-
-        if "multipart/form-data" in content_type:
-            parts_ct = content_type.split("boundary=")
-            if len(parts_ct) < 2:
-                self._send_json({"error": "Missing multipart boundary"}, 400)
-                return
-            boundary = parts_ct[1].strip().encode()
-            raw_body = self._read_body()
-            parts = self._parse_multipart(raw_body, boundary)
-            for part in parts:
-                if part["name"] == "text":
-                    text = part["data"].decode("utf-8", errors="replace").strip()
-                elif part["name"] == "voiceName":
-                    voice_name = part["data"].decode("utf-8", errors="replace").strip()
-                # voiceSample file ignored for now -- will be used for actual cloning later
-        else:
-            # Fallback: try JSON body
-            try:
-                body = json.loads(self._read_body())
-                text = body.get("text", "")
-                voice_name = body.get("voiceName", "Custom Voice")
-            except Exception:
-                self._send_json({"error": "Invalid request body"}, 400)
-                return
-
-        if not text:
-            self._send_json({"error": "No text provided"}, 400)
-            return
-
-        try:
-            import requests
-            # Use ElevenLabs text-to-speech with a default voice
-            # (full voice cloning requires their voice-lab/add endpoint which needs multipart)
-            # For now, use their high-quality preset voices
-            voice_id = "21m00Tcm4TlvDq8ikWAM"  # Rachel - default ElevenLabs voice
-
-            resp = requests.post(
-                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
-                headers={
-                    "xi-api-key": elevenlabs_key,
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "text": text,
-                    "model_id": "eleven_multilingual_v2",
-                    "voice_settings": {
-                        "stability": 0.5,
-                        "similarity_boost": 0.75,
-                    }
-                },
-                timeout=60,
-            )
-
-            if resp.status_code == 200:
-                # Save audio file
-                audio_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "audio")
-                os.makedirs(audio_dir, exist_ok=True)
-                filename = f"voice_clone_{voice_name.replace(' ', '_')}_{int(time.time())}.mp3"
-                filepath = os.path.join(audio_dir, filename)
-                with open(filepath, "wb") as f:
-                    f.write(resp.content)
-
-                self._send_json({
-                    "audioUrl": f"/api/audio/generated/{filename}",
-                    "filename": filename,
-                    "voiceName": voice_name,
-                })
-            else:
-                error_msg = resp.text[:200]
-                self._send_json({"error": f"ElevenLabs error ({resp.status_code}): {error_msg}"}, resp.status_code)
-
-        except Exception as e:
-            self._send_json({"error": f"Voice clone error: {str(e)}"}, 500)
-
     def do_PUT(self):
+        if not self._check_auth():
+            return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/")
+        # CSRF check for API routes
+        csrf = self.headers.get("X-CSRF-Token", "")
+        if csrf != _CSRF_TOKEN and path.startswith("/api/"):
+            self._send_json({"error": "Invalid CSRF token"}, 403)
+            return
 
         if re.match(r'^/api/manual/scene/([^/]+)$', path):
             m = re.match(r'^/api/manual/scene/([^/]+)$', path)
@@ -5499,7 +5043,11 @@ Do not include any explanation, just the JSON object."""
         # ──── Prompt OS PUT routes ────
         elif re.match(r'^/api/pos/prompts/([^/]+)$', path):
             m = re.match(r'^/api/pos/prompts/([^/]+)$', path)
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             rec = _prompt_os.update_prompt(m.group(1), body)
             if rec and "error" in rec:
                 self._send_json(rec, 403)
@@ -5510,7 +5058,11 @@ Do not include any explanation, just the JSON object."""
 
         elif re.match(r'^/api/pos/characters/([^/]+)$', path):
             m = re.match(r'^/api/pos/characters/([^/]+)$', path)
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             rec = _prompt_os.update_character(m.group(1), body)
             if rec:
                 self._send_json({"ok": True, "character": rec})
@@ -5519,7 +5071,11 @@ Do not include any explanation, just the JSON object."""
 
         elif re.match(r'^/api/pos/costumes/([^/]+)$', path):
             m = re.match(r'^/api/pos/costumes/([^/]+)$', path)
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             rec = _prompt_os.update_costume(m.group(1), body)
             if rec:
                 self._send_json({"ok": True, "costume": rec})
@@ -5528,34 +5084,24 @@ Do not include any explanation, just the JSON object."""
 
         elif re.match(r'^/api/pos/environments/([^/]+)$', path):
             m = re.match(r'^/api/pos/environments/([^/]+)$', path)
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             rec = _prompt_os.update_environment(m.group(1), body)
             if rec:
                 self._send_json({"ok": True, "environment": rec})
             else:
                 self._send_json({"error": "Not found"}, 404)
 
-        elif re.match(r'^/api/pos/props/([^/]+)$', path):
-            m = re.match(r'^/api/pos/props/([^/]+)$', path)
-            body = json.loads(self._read_body())
-            rec = _prompt_os.update_prop(m.group(1), body)
-            if rec:
-                self._send_json({"ok": True, "prop": rec})
-            else:
-                self._send_json({"error": "Not found"}, 404)
-
-        elif re.match(r'^/api/pos/voices/([^/]+)$', path):
-            m = re.match(r'^/api/pos/voices/([^/]+)$', path)
-            body = json.loads(self._read_body())
-            rec = _prompt_os.update_voice(m.group(1), body)
-            if rec:
-                self._send_json({"ok": True, "voice": rec})
-            else:
-                self._send_json({"error": "Not found"}, 404)
-
         elif re.match(r'^/api/pos/scenes/([^/]+)$', path):
             m = re.match(r'^/api/pos/scenes/([^/]+)$', path)
-            body = json.loads(self._read_body())
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
             rec = _prompt_os.update_scene(m.group(1), body)
             if rec:
                 self._send_json({"ok": True, "scene": rec})
@@ -5566,8 +5112,15 @@ Do not include any explanation, just the JSON object."""
             self.send_error(404)
 
     def do_DELETE(self):
+        if not self._check_auth():
+            return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/")
+        # CSRF check for API routes
+        csrf = self.headers.get("X-CSRF-Token", "")
+        if csrf != _CSRF_TOKEN and path.startswith("/api/"):
+            self._send_json({"error": "Invalid CSRF token"}, 403)
+            return
 
         if re.match(r'^/api/manual/scene/([^/]+)$', path):
             m = re.match(r'^/api/manual/scene/([^/]+)$', path)
@@ -5605,30 +5158,12 @@ Do not include any explanation, just the JSON object."""
             else:
                 self._send_json({"error": "Not found"}, 404)
 
-        elif re.match(r'^/api/pos/props/([^/]+)$', path):
-            m = re.match(r'^/api/pos/props/([^/]+)$', path)
-            if _prompt_os.delete_prop(m.group(1)):
-                self._send_json({"ok": True})
-            else:
-                self._send_json({"error": "Not found"}, 404)
-
-        elif re.match(r'^/api/pos/voices/([^/]+)$', path):
-            m = re.match(r'^/api/pos/voices/([^/]+)$', path)
-            if _prompt_os.delete_voice(m.group(1)):
-                self._send_json({"ok": True})
-            else:
-                self._send_json({"error": "Not found"}, 404)
-
         elif re.match(r'^/api/pos/scenes/([^/]+)$', path):
             m = re.match(r'^/api/pos/scenes/([^/]+)$', path)
             if _prompt_os.delete_scene(m.group(1)):
                 self._send_json({"ok": True})
             else:
                 self._send_json({"error": "Not found"}, 404)
-
-        # ──── Delete project template ────
-        elif re.match(r'^/api/templates/([^/]+)$', path):
-            self._handle_delete_template()
 
         # ──── Feature 1: Delete Project ────
         elif re.match(r'^/api/projects/([^/]+)$', path):
@@ -5638,13 +5173,19 @@ Do not include any explanation, just the JSON object."""
             else:
                 self._send_json({"error": "Not found"}, 404)
 
+        # ──── Delete Continuity Rule ────
         elif re.match(r'^/api/pos/continuity-rules/(\d+)$', path):
             m = re.match(r'^/api/pos/continuity-rules/(\d+)$', path)
             idx = int(m.group(1))
-            rules = _prompt_os.get_continuity_rules()
+            rules_path = os.path.join(PROMPT_OS_DATA_DIR, "continuity_rules.json")
+            rules = []
+            if os.path.isfile(rules_path):
+                with open(rules_path, "r") as f:
+                    rules = json.load(f)
             if 0 <= idx < len(rules):
                 rules.pop(idx)
-                _prompt_os.set_continuity_rules(rules)
+                with open(rules_path, "w") as f:
+                    json.dump(rules, f)
                 self._send_json({"ok": True})
             else:
                 self._send_json({"error": "Index out of range"}, 404)
@@ -5652,448 +5193,10 @@ Do not include any explanation, just the JSON object."""
         else:
             self.send_error(404)
 
-    # ---- Suno handlers ----
-
-    def _handle_suno_import(self, body):
-        """Import audio from a Suno URL."""
-        url = body.get("url", "").strip()
-        if not url:
-            self._send_json({"error": "No URL provided"}, 400)
-            return
-
-        # Suno URLs look like: https://suno.com/song/UUID or https://cdn.suno.ai/UUID.mp3
-        # Extract the audio URL
-        try:
-            audio_url = None
-            song_id = ""
-
-            import re as _re_suno
-            # Extract song ID from various Suno URL formats
-            m = _re_suno.search(r'suno\.com/song/([a-f0-9-]+)', url)
-            if m:
-                song_id = m.group(1)
-                audio_url = f"https://cdn1.suno.ai/{song_id}.mp3"
-
-            m2 = _re_suno.search(r'cdn\d?\.suno\.ai/([a-f0-9-]+)\.mp3', url)
-            if m2:
-                song_id = m2.group(1)
-                audio_url = url
-
-            if not audio_url:
-                # Try treating the whole URL as a direct audio link
-                if url.endswith('.mp3') or url.endswith('.wav'):
-                    audio_url = url
-                else:
-                    self._send_json({"error": "Could not parse Suno URL. Try: https://suno.com/song/ID or paste the direct audio link"}, 400)
-                    return
-
-            # Download the audio
-            import requests
-            print(f"[SUNO] Downloading from: {audio_url}")
-            resp = requests.get(audio_url, timeout=60, stream=True)
-            if resp.status_code != 200:
-                self._send_json({"error": f"Failed to download audio (HTTP {resp.status_code})"}, 400)
-                return
-
-            # Save to uploads directory
-            upload_dir = os.path.join(OUTPUT_DIR, "uploads")
-            os.makedirs(upload_dir, exist_ok=True)
-            filename = f"suno_{song_id or int(time.time())}.mp3"
-            filepath = os.path.join(upload_dir, filename)
-
-            with open(filepath, "wb") as f:
-                for chunk in resp.iter_content(8192):
-                    f.write(chunk)
-
-            file_size = os.path.getsize(filepath)
-            print(f"[SUNO] Downloaded: {filepath} ({file_size/1024:.0f}KB)")
-
-            self._send_json({
-                "ok": True,
-                "filename": filename,
-                "filepath": filepath,
-                "size": file_size,
-                "source": "suno",
-                "songId": song_id,
-            })
-
-        except Exception as e:
-            self._send_json({"error": f"Suno import failed: {str(e)[:200]}"}, 500)
-
-    def _handle_suno_generate(self, body):
-        """Generate music via Suno API (or compatible music AI).
-        Falls back to instructions if no API key available."""
-        prompt = body.get("prompt", "")
-        style = body.get("style", "")
-        duration = body.get("duration", 60)
-
-        if not prompt:
-            self._send_json({"error": "Describe the music you want"}, 400)
-            return
-
-        suno_key = os.environ.get("SUNO_API_KEY", "")
-
-        if suno_key:
-            # TODO: Call Suno API when available
-            # For now, return instructions
-            pass
-
-        # No API key -- provide instructions
-        self._send_json({
-            "ok": False,
-            "noApiKey": True,
-            "instructions": {
-                "step1": "Go to suno.com and create an account (free tier available)",
-                "step2": f"Generate a song with this prompt: \"{prompt}\"",
-                "step3": "Copy the song URL from your browser",
-                "step4": "Paste it in the 'Import from Suno' field below",
-            },
-            "suggestedPrompt": f"{style + '. ' if style else ''}{prompt}",
-        })
-
-    # ---- Transcription handler ----
-
-    def _handle_transcribe(self, body):
-        """Transcribe audio to text with timestamps using OpenAI Whisper."""
-        audio_path = body.get("audioPath", "")
-
-        # Find the audio file
-        if not audio_path:
-            # Try current project's song
-            plan = load_movie_plan(OUTPUT_DIR)
-            if plan:
-                audio_path = plan.get("song_path", "")
-
-        if not audio_path or not os.path.isfile(audio_path):
-            # Check uploads directory
-            upload_dir = os.path.join(OUTPUT_DIR, "uploads")
-            if os.path.isdir(upload_dir):
-                for f in os.listdir(upload_dir):
-                    if f.endswith(('.mp3', '.wav', '.m4a')):
-                        audio_path = os.path.join(upload_dir, f)
-                        break
-
-        if not audio_path or not os.path.isfile(audio_path):
-            self._send_json({"error": "No audio file found. Upload a song first."}, 400)
-            return
-
-        openai_key = os.environ.get("OPENAI_API_KEY", "")
-        if not openai_key:
-            self._send_json({"error": "OPENAI_API_KEY not set. Add it to .env for transcription."}, 400)
-            return
-
-        try:
-            import requests as _req
-
-            # Call Whisper API
-            with open(audio_path, "rb") as f:
-                resp = _req.post(
-                    "https://api.openai.com/v1/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {openai_key}"},
-                    files={"file": (os.path.basename(audio_path), f, "audio/mpeg")},
-                    data={
-                        "model": "whisper-1",
-                        "response_format": "verbose_json",
-                        "timestamp_granularities[]": "word",
-                    },
-                    timeout=120,
-                )
-
-            if resp.status_code != 200:
-                self._send_json({"error": f"Whisper API error ({resp.status_code}): {resp.text[:200]}"}, resp.status_code)
-                return
-
-            data = resp.json()
-
-            # Extract word-level timestamps
-            words = []
-            for w in data.get("words", []):
-                words.append({
-                    "word": w.get("word", ""),
-                    "start": w.get("start", 0),
-                    "end": w.get("end", 0),
-                })
-
-            # Group into caption segments (roughly 5-8 words per segment)
-            segments = []
-            current_segment = {"text": "", "start": 0, "end": 0, "words": []}
-            word_count = 0
-
-            for w in words:
-                if word_count == 0:
-                    current_segment["start"] = w["start"]
-
-                current_segment["text"] += (" " if current_segment["text"] else "") + w["word"]
-                current_segment["end"] = w["end"]
-                current_segment["words"].append(w)
-                word_count += 1
-
-                # Break segment at 6 words or punctuation
-                if word_count >= 6 or w["word"].rstrip().endswith(('.', '!', '?', ',')):
-                    segments.append(current_segment)
-                    current_segment = {"text": "", "start": 0, "end": 0, "words": []}
-                    word_count = 0
-
-            if current_segment["text"]:
-                segments.append(current_segment)
-
-            # Save transcription
-            trans_path = os.path.join(OUTPUT_DIR, "transcription.json")
-            with open(trans_path, "w", encoding="utf-8") as f:
-                json.dump({
-                    "text": data.get("text", ""),
-                    "language": data.get("language", ""),
-                    "duration": data.get("duration", 0),
-                    "segments": segments,
-                    "words": words,
-                }, f, indent=2, ensure_ascii=False)
-
-            self._send_json({
-                "ok": True,
-                "text": data.get("text", ""),
-                "language": data.get("language", ""),
-                "segmentCount": len(segments),
-                "wordCount": len(words),
-                "segments": segments,
-            })
-
-        except Exception as e:
-            self._send_json({"error": f"Transcription failed: {str(e)[:200]}"}, 500)
-
-    # ---- Album Art handler ----
-
-    def _handle_generate_album_art(self, body):
-        """Generate album cover art matched to the project's visual style."""
-        title = body.get("title", "Untitled")
-        artist = body.get("artist", "")
-        style = body.get("style", "cinematic")
-        size = body.get("size", "1:1")  # 1:1 for album, 9:16 for Spotify Canvas
-
-        # Load project style for visual consistency
-        project_style = _prompt_os.get_project_style()
-
-        # Build prompt
-        parts = []
-
-        # Style from project
-        if project_style:
-            if project_style.get("visualLanguage"):
-                parts.append(project_style["visualLanguage"])
-            if project_style.get("colorPalette"):
-                parts.append(f"Color palette: {project_style['colorPalette']}")
-            if project_style.get("tone"):
-                parts.append(f"Mood: {project_style['tone']}")
-
-        # Album art specific
-        if size == "9:16":
-            parts.append(f"Spotify Canvas vertical loop visual for '{title}' by {artist}.")
-            parts.append("Abstract, mesmerizing, loop-friendly motion concept.")
-        else:
-            parts.append(f"Album cover art for '{title}' by {artist}.")
-            parts.append("Professional album artwork, striking composition, music industry quality.")
-
-        parts.append(f"Style: {style}.")
-        parts.append("High contrast, eye-catching, gallery quality. No text or typography in the image.")
-
-        prompt = " ".join(parts)[:1000]
-
-        # Get character/environment refs for visual consistency
-        refs = []
-        chars = _prompt_os.get_characters()
-        if chars:
-            # Use the first character's photo as style reference
-            char = chars[0]
-            ref_img = char.get("referencePhoto") or char.get("referenceImagePath", "")
-            if ref_img:
-                path = _resolve_sheet_or_photo(ref_img) if callable(_resolve_sheet_or_photo) else None
-                if not path:
-                    # Try direct file
-                    for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                        cand = os.path.join(POS_PHOTOS_CHARS_DIR, f"{char['id']}{ext}")
-                        if os.path.isfile(cand):
-                            path = cand
-                            break
-                if path:
-                    refs.append({"path": path, "tag": "Character"})
-
-        try:
-            from lib.video_generator import _runway_generate_scene_image
-
-            ratio_map = {"1:1": "1536:1536", "9:16": "1080:1920", "16:9": "1920:1080"}
-            gen_ratio = ratio_map.get(size, "1024:1024")
-
-            # Add @tags to prompt
-            for r in refs:
-                if f"@{r['tag']}" not in prompt:
-                    prompt = f"@{r['tag']} " + prompt
-
-            img_path = _runway_generate_scene_image(
-                prompt, refs[:3],
-                ratio=gen_ratio,
-                model="gen4_image",
-            )
-
-            if not img_path or not os.path.isfile(img_path):
-                self._send_json({"error": "Album art generation failed"}, 500)
-                return
-
-            # Save to output
-            art_dir = os.path.join(OUTPUT_DIR, "album_art")
-            os.makedirs(art_dir, exist_ok=True)
-            filename = f"album_{size.replace(':', 'x')}_{int(time.time())}.png"
-            dest = os.path.join(art_dir, filename)
-            import shutil
-            shutil.copy2(img_path, dest)
-
-            self._send_json({
-                "ok": True,
-                "imageUrl": f"/output/album_art/{filename}",
-                "filename": filename,
-                "size": size,
-                "prompt": prompt[:200],
-            })
-
-        except Exception as e:
-            self._send_json({"error": f"Album art error: {str(e)[:200]}"}, 500)
-
-    # ---- Reference Demo Image Generation (Lookbook) ----
-
-    def _handle_generate_reference_images(self):
-        """Generate reference/demo images for creative controls.
-        Uses a consistent subject (golden retriever) to show how each
-        lighting, camera angle, shot type, and color grade looks."""
-
-        refs_dir = os.path.join(OUTPUT_DIR, "reference_demos")
-        os.makedirs(refs_dir, exist_ok=True)
-
-        from lib.video_generator import _runway_generate_scene_image
-
-        base_subject = "A golden retriever dog sitting in a sunlit park, green grass, trees in background"
-
-        # Define all options to generate
-        demos = []
-
-        # Lighting types
-        for light in ["natural soft", "harsh sunlight", "overcast diffused", "neon",
-                       "cinematic contrast", "low key dramatic", "high key bright",
-                       "practical lighting", "volumetric fog", "backlit silhouette"]:
-            demos.append({
-                "category": "lighting",
-                "name": light,
-                "filename": f"light_{light.replace(' ', '_')}.jpg",
-                "prompt": f"{base_subject}. Lighting: {light}. Photorealistic, 8K, professional photography.",
-            })
-
-        # Camera angles
-        for angle in ["eye level", "low angle", "high angle", "top down", "dutch tilt", "ground level"]:
-            demos.append({
-                "category": "camera_angle",
-                "name": angle,
-                "filename": f"angle_{angle.replace(' ', '_')}.jpg",
-                "prompt": f"{base_subject}. Camera angle: {angle}. Photorealistic, 8K, professional cinematography.",
-            })
-
-        # Shot types
-        for shot in ["close-up", "medium", "full", "wide", "establishing"]:
-            framing = {
-                "close-up": "Extreme close-up of the dog's face, shallow depth of field, 85mm lens",
-                "medium": "Medium shot showing the dog from chest up, 50mm lens",
-                "full": "Full body shot of the dog head to tail, 35mm lens",
-                "wide": "Wide shot with the dog small in frame, expansive park visible, 24mm lens",
-                "establishing": "Establishing shot of the entire park, dog barely visible in distance, 16mm ultra-wide",
-            }
-            demos.append({
-                "category": "shot_type",
-                "name": shot,
-                "filename": f"shot_{shot.replace('-', '_')}.jpg",
-                "prompt": f"{framing[shot]}. {base_subject}. Photorealistic, 8K.",
-            })
-
-        # Color grades
-        for grade in ["warm", "cool", "vintage", "noir", "cyberpunk", "golden"]:
-            grade_desc = {
-                "warm": "warm golden tones, amber highlights, cozy feel",
-                "cool": "cool blue tones, teal shadows, crisp atmosphere",
-                "vintage": "muted desaturated colors, slight sepia, film grain",
-                "noir": "black and white, high contrast, dramatic shadows",
-                "cyberpunk": "neon purple and cyan lighting, futuristic mood",
-                "golden": "golden hour lighting, warm orange glow, long shadows",
-            }
-            demos.append({
-                "category": "color_grade",
-                "name": grade,
-                "filename": f"grade_{grade}.jpg",
-                "prompt": f"{base_subject}. Color grading: {grade_desc[grade]}. Photorealistic, 8K, cinematic.",
-            })
-
-        # Check which already exist (skip regeneration)
-        to_generate = []
-        already_done = []
-        for d in demos:
-            fpath = os.path.join(refs_dir, d["filename"])
-            if os.path.isfile(fpath):
-                already_done.append(d["name"])
-            else:
-                to_generate.append(d)
-
-        if not to_generate:
-            self._send_json({
-                "ok": True,
-                "message": f"All {len(demos)} reference images already exist",
-                "total": len(demos),
-                "generated": 0,
-            })
-            return
-
-        # Generate in background thread
-        def _gen_refs():
-            generated = 0
-            failed = 0
-            for i, d in enumerate(to_generate):
-                try:
-                    print(f"[REF-DEMO] Generating {i+1}/{len(to_generate)}: {d['category']}/{d['name']}...")
-                    img_path = _runway_generate_scene_image(
-                        d["prompt"], [],
-                        ratio="1024:1024",
-                        model="gen4_image_turbo",
-                    )
-                    if img_path and os.path.isfile(img_path):
-                        import shutil
-                        dest = os.path.join(refs_dir, d["filename"])
-                        shutil.copy2(img_path, dest)
-                        generated += 1
-                    else:
-                        failed += 1
-                        print(f"[REF-DEMO] Failed: {d['name']}")
-                except Exception as e:
-                    failed += 1
-                    print(f"[REF-DEMO] Error generating {d['name']}: {e}")
-
-                # Brief pause between generations
-                import time as _t
-                _t.sleep(1)
-
-            print(f"[REF-DEMO] Done! Generated: {generated}, Failed: {failed}, Skipped: {len(already_done)}")
-
-        thread = threading.Thread(target=_gen_refs, daemon=True)
-        thread.start()
-
-        self._send_json({
-            "ok": True,
-            "message": f"Generating {len(to_generate)} reference images in background ({len(already_done)} already exist)",
-            "total": len(demos),
-            "toGenerate": len(to_generate),
-            "alreadyDone": len(already_done),
-        })
-
     # ---- Upload handlers ----
 
     def _handle_upload(self):
         """Handle multipart file upload."""
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "upload"):
-            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
-            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -6128,6 +5231,12 @@ Do not include any explanation, just the JSON object."""
                             fn = parts[1].strip().strip('"').strip("'")
                             if fn:
                                 filename = os.path.basename(fn)
+                # Validate file extension
+                ALLOWED_EXTENSIONS = {'.mp3', '.wav', '.m4a', '.ogg', '.flac', '.mp4', '.webm', '.mov', '.avi', '.jpg', '.jpeg', '.png', '.webp', '.gif', '.zip'}
+                ext = os.path.splitext(filename)[1].lower()
+                if ext not in ALLOWED_EXTENSIONS:
+                    self._send_json({"error": f"File type {ext} not allowed"}, 400)
+                    return
                 file_data = section[header_end + 4:]
                 # Remove trailing \r\n-- if present
                 if file_data.endswith(b"\r\n"):
@@ -6171,6 +5280,9 @@ Do not include any explanation, just the JSON object."""
             return
 
         with gen_lock:
+            if gen_state["running"]:
+                self._send_json({"error": "Generation already in progress"}, 409)
+                return
             _reset_state()
             gen_state["running"] = True
             gen_state["phase"] = "starting"
@@ -6289,8 +5401,9 @@ Do not include any explanation, just the JSON object."""
             if "notes" in body:
                 plan["scenes"][index]["preview_notes"] = ""
 
-        with open(SCENE_PLAN_PATH, "w") as f:
-            json.dump(plan, f, indent=2)
+        with _plan_file_lock:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
 
         self._send_json({"ok": True, "index": index, "approved": approved})
 
@@ -6311,6 +5424,9 @@ Do not include any explanation, just the JSON object."""
             return
 
         with gen_lock:
+            if gen_state["running"]:
+                self._send_json({"error": "Generation already in progress"}, 409)
+                return
             _reset_state()
             gen_state["running"] = True
             gen_state["phase"] = "starting"
@@ -6373,6 +5489,9 @@ Do not include any explanation, just the JSON object."""
             return
 
         with gen_lock:
+            if gen_state["running"]:
+                self._send_json({"error": "Generation already in progress"}, 409)
+                return
             _reset_state()
             gen_state["running"] = True
             gen_state["phase"] = "starting"
@@ -6392,8 +5511,6 @@ Do not include any explanation, just the JSON object."""
             if gen_state["running"]:
                 self._send_json({"error": "Generation already in progress"}, 409)
                 return
-
-        with gen_lock:
             _reset_state()
             gen_state["running"] = True
             gen_state["phase"] = "starting"
@@ -6465,8 +5582,9 @@ Do not include any explanation, just the JSON object."""
                 plan["scenes"][index]["last_frame_path"] = dest
                 result["last_frame"] = f"/api/keyframes/{os.path.basename(dest)}"
 
-        with open(SCENE_PLAN_PATH, "w") as f:
-            json.dump(plan, f, indent=2)
+        with _plan_file_lock:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
         self._send_json({"ok": True, **result})
 
     def _handle_keyframe_from_thumbnail(self, index: int):
@@ -6505,8 +5623,9 @@ Do not include any explanation, just the JSON object."""
         dest = os.path.join(KEYFRAMES_DIR, f"scene_{index}_first.png")
         shutil.copy2(thumb_path, dest)
         plan["scenes"][index]["first_frame_path"] = dest
-        with open(SCENE_PLAN_PATH, "w") as f:
-            json.dump(plan, f, indent=2)
+        with _plan_file_lock:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
         self._send_json({
             "ok": True,
             "first_frame": f"/api/keyframes/{os.path.basename(dest)}",
@@ -6536,8 +5655,9 @@ Do not include any explanation, just the JSON object."""
             return
 
         plan["scenes"][index]["first_frame_path"] = dest
-        with open(SCENE_PLAN_PATH, "w") as f:
-            json.dump(plan, f, indent=2)
+        with _plan_file_lock:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
         self._send_json({
             "ok": True,
             "first_frame": f"/api/keyframes/{os.path.basename(dest)}",
@@ -6566,8 +5686,9 @@ Do not include any explanation, just the JSON object."""
         if position in ("last", "both"):
             plan["scenes"][index].pop("last_frame_path", None)
 
-        with open(SCENE_PLAN_PATH, "w") as f:
-            json.dump(plan, f, indent=2)
+        with _plan_file_lock:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
         self._send_json({"ok": True})
 
     def _handle_auto_chain(self):
@@ -6577,8 +5698,9 @@ Do not include any explanation, just the JSON object."""
             self._send_json({"error": "No scene plan available"}, 404)
             return
         plan = _chain_scene_keyframes(plan)
-        with open(SCENE_PLAN_PATH, "w") as f:
-            json.dump(plan, f, indent=2)
+        with _plan_file_lock:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
         # Count how many scenes got chained
         chained = sum(1 for s in plan["scenes"] if s.get("first_frame_path"))
         self._send_json({"ok": True, "chained_scenes": chained})
@@ -6742,370 +5864,10 @@ Do not include any explanation, just the JSON object."""
         _save_manual_plan(plan)
         self._send_json({"ok": True, "chained_scenes": chained})
 
-    # ---- Audio Generation endpoints (Runway) ----
-
-    def _handle_generate_sound(self):
-        """POST /api/generate-sound -- Runway sound_effect API."""
-        try:
-            body = json.loads(self._read_body())
-        except Exception:
-            self._send_json({"ok": False, "error": "Invalid JSON body"}, 400)
-            return
-
-        prompt_text = body.get("promptText", "").strip()
-        duration = body.get("duration", 10)
-        loop = body.get("loop", False)
-
-        if not prompt_text:
-            self._send_json({"ok": False, "error": "promptText is required"}, 400)
-            return
-
-        def _run():
-            import requests
-            try:
-                # Submit to Runway sound_effect API
-                payload = {
-                    "model": "eleven_text_to_sound_v2",
-                    "promptText": prompt_text,
-                    "duration": int(duration),
-                    "loop": bool(loop),
-                }
-                resp = requests.post(
-                    f"{RUNWAY_API_BASE}/sound_effect",
-                    headers=_runway_headers(),
-                    json=payload,
-                    timeout=60,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                task_id = data.get("id", "")
-                if not task_id:
-                    raise RuntimeError(f"No task ID returned: {data}")
-
-                print(f"[AUDIO] Sound effect task submitted: {task_id}")
-
-                # Poll for completion
-                result = _runway_poll(task_id)
-                audio_url = result["url"]
-
-                # Download to output/audio/
-                ext = ".mp3"
-                if ".wav" in audio_url:
-                    ext = ".wav"
-                filename = f"sfx_{task_id[:12]}_{int(time.time())}{ext}"
-                dest = os.path.join(AUDIO_GEN_DIR, filename)
-                _download(audio_url, dest)
-
-                print(f"[AUDIO] Sound effect saved: {dest}")
-                self._send_json({
-                    "ok": True,
-                    "audio_url": f"/api/audio/generated/{filename}",
-                    "filename": filename,
-                })
-            except Exception as e:
-                print(f"[AUDIO] Sound effect generation failed: {e}")
-                self._send_json({"ok": False, "error": str(e)}, 500)
-
-        # Run synchronously (polling blocks but keeps it simple like video gen)
-        _run()
-
-    def _handle_generate_tts(self):
-        """POST /api/generate-tts -- Runway text_to_speech API."""
-        try:
-            body = json.loads(self._read_body())
-        except Exception:
-            self._send_json({"ok": False, "error": "Invalid JSON body"}, 400)
-            return
-
-        prompt_text = body.get("promptText", "").strip()
-        voice_preset_id = body.get("voicePresetId", "Leslie")
-
-        if not prompt_text:
-            self._send_json({"ok": False, "error": "promptText is required"}, 400)
-            return
-
-        def _run():
-            import requests
-            try:
-                payload = {
-                    "model": "eleven_multilingual_v2",
-                    "promptText": prompt_text,
-                    "voice": {
-                        "type": "runway-preset",
-                        "presetId": voice_preset_id,
-                    },
-                }
-                resp = requests.post(
-                    f"{RUNWAY_API_BASE}/text_to_speech",
-                    headers=_runway_headers(),
-                    json=payload,
-                    timeout=60,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                task_id = data.get("id", "")
-                if not task_id:
-                    raise RuntimeError(f"No task ID returned: {data}")
-
-                print(f"[AUDIO] TTS task submitted: {task_id}")
-
-                # Poll for completion
-                result = _runway_poll(task_id)
-                audio_url = result["url"]
-
-                # Download to output/audio/
-                ext = ".mp3"
-                if ".wav" in audio_url:
-                    ext = ".wav"
-                filename = f"tts_{task_id[:12]}_{int(time.time())}{ext}"
-                dest = os.path.join(AUDIO_GEN_DIR, filename)
-                _download(audio_url, dest)
-
-                print(f"[AUDIO] TTS saved: {dest}")
-                self._send_json({
-                    "ok": True,
-                    "audio_url": f"/api/audio/generated/{filename}",
-                    "filename": filename,
-                })
-            except Exception as e:
-                print(f"[AUDIO] TTS generation failed: {e}")
-                self._send_json({"ok": False, "error": str(e)}, 500)
-
-        _run()
-
-    def _handle_generate_sts(self):
-        """POST /api/generate-speech-to-speech -- Runway speech_to_speech API."""
-        try:
-            body = json.loads(self._read_body())
-        except Exception:
-            self._send_json({"ok": False, "error": "Invalid JSON body"}, 400)
-            return
-
-        audio_filename = body.get("audioFilename", "").strip()
-        voice_preset_id = body.get("voicePresetId", "Maggie")
-
-        if not audio_filename:
-            self._send_json({"ok": False, "error": "audioFilename is required"}, 400)
-            return
-
-        # Resolve the uploaded audio file
-        audio_path = os.path.join(UPLOADS_DIR, audio_filename)
-        if not os.path.isfile(audio_path):
-            self._send_json({"ok": False, "error": f"Audio file not found: {audio_filename}"}, 404)
-            return
-
-        def _run():
-            import requests, base64
-            try:
-                # Read audio and convert to base64 data URI
-                with open(audio_path, "rb") as f:
-                    audio_bytes = f.read()
-                ext = os.path.splitext(audio_filename)[1].lower().lstrip(".")
-                mime = {"mp3": "audio/mp3", "wav": "audio/wav", "m4a": "audio/m4a"}.get(ext, "audio/mp3")
-                data_uri = f"data:{mime};base64,{base64.b64encode(audio_bytes).decode()}"
-
-                payload = {
-                    "model": "eleven_multilingual_sts_v2",
-                    "media": {
-                        "type": "audio",
-                        "uri": data_uri,
-                    },
-                    "voice": {
-                        "type": "runway-preset",
-                        "presetId": voice_preset_id,
-                    },
-                }
-                resp = requests.post(
-                    f"{RUNWAY_API_BASE}/speech_to_speech",
-                    headers=_runway_headers(),
-                    json=payload,
-                    timeout=60,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                task_id = data.get("id", "")
-                if not task_id:
-                    raise RuntimeError(f"No task ID returned: {data}")
-
-                print(f"[AUDIO] STS task submitted: {task_id}")
-
-                # Poll for completion
-                result = _runway_poll(task_id)
-                audio_url = result["url"]
-
-                # Download to output/audio/
-                out_ext = ".mp3"
-                if ".wav" in audio_url:
-                    out_ext = ".wav"
-                filename = f"sts_{task_id[:12]}_{int(time.time())}{out_ext}"
-                dest = os.path.join(AUDIO_GEN_DIR, filename)
-                _download(audio_url, dest)
-
-                print(f"[AUDIO] STS saved: {dest}")
-                self._send_json({
-                    "ok": True,
-                    "audio_url": f"/api/audio/generated/{filename}",
-                    "filename": filename,
-                })
-            except Exception as e:
-                print(f"[AUDIO] STS generation failed: {e}")
-                self._send_json({"ok": False, "error": str(e)}, 500)
-
-        _run()
-
-    def _handle_generate_voice_dubbing(self):
-        """POST /api/generate-voice-dubbing -- Runway voice_dubbing API."""
-        try:
-            body = json.loads(self._read_body())
-        except Exception:
-            self._send_json({"ok": False, "error": "Invalid JSON body"}, 400)
-            return
-
-        audio_filename = body.get("audioFilename", "").strip()
-        target_lang = body.get("targetLang", "es").strip()
-
-        if not audio_filename:
-            self._send_json({"ok": False, "error": "audioFilename is required"}, 400)
-            return
-
-        SUPPORTED_LANGS = {"en","hi","pt","zh","es","fr","de","ja","ar","ru","ko","id","it","nl","tr","pl","sv","fil","ms","ro","uk","el","cs","da","fi","bg","hr","sk","ta"}
-        if target_lang not in SUPPORTED_LANGS:
-            self._send_json({"ok": False, "error": f"Unsupported language: {target_lang}"}, 400)
-            return
-
-        audio_path = os.path.join(UPLOADS_DIR, audio_filename)
-        if not os.path.isfile(audio_path):
-            self._send_json({"ok": False, "error": f"Audio file not found: {audio_filename}"}, 404)
-            return
-
-        def _run():
-            import requests, base64
-            try:
-                with open(audio_path, "rb") as f:
-                    audio_bytes = f.read()
-                ext = os.path.splitext(audio_filename)[1].lower().lstrip(".")
-                mime = {"mp3": "audio/mp3", "wav": "audio/wav", "m4a": "audio/m4a"}.get(ext, "audio/mp3")
-                data_uri = f"data:{mime};base64,{base64.b64encode(audio_bytes).decode()}"
-
-                payload = {
-                    "model": "eleven_voice_dubbing",
-                    "audioUri": data_uri,
-                    "targetLang": target_lang,
-                    "disableVoiceCloning": False,
-                    "dropBackgroundAudio": False,
-                }
-                resp = requests.post(
-                    f"{RUNWAY_API_BASE}/voice_dubbing",
-                    headers=_runway_headers(),
-                    json=payload,
-                    timeout=60,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                task_id = data.get("id", "")
-                if not task_id:
-                    raise RuntimeError(f"No task ID returned: {data}")
-
-                print(f"[AUDIO] Voice dubbing task submitted: {task_id}")
-
-                result = _runway_poll(task_id)
-                audio_url = result["url"]
-
-                out_ext = ".mp3"
-                if ".wav" in audio_url:
-                    out_ext = ".wav"
-                filename = f"dub_{target_lang}_{task_id[:12]}_{int(time.time())}{out_ext}"
-                dest = os.path.join(AUDIO_GEN_DIR, filename)
-                _download(audio_url, dest)
-
-                print(f"[AUDIO] Voice dubbing saved: {dest}")
-                self._send_json({
-                    "ok": True,
-                    "audio_url": f"/api/audio/generated/{filename}",
-                    "filename": filename,
-                })
-            except Exception as e:
-                print(f"[AUDIO] Voice dubbing failed: {e}")
-                self._send_json({"ok": False, "error": str(e)}, 500)
-
-        _run()
-
-    def _handle_generate_voice_isolation(self):
-        """POST /api/generate-voice-isolation -- Runway voice_isolation API."""
-        try:
-            body = json.loads(self._read_body())
-        except Exception:
-            self._send_json({"ok": False, "error": "Invalid JSON body"}, 400)
-            return
-
-        audio_filename = body.get("audioFilename", "").strip()
-
-        if not audio_filename:
-            self._send_json({"ok": False, "error": "audioFilename is required"}, 400)
-            return
-
-        audio_path = os.path.join(UPLOADS_DIR, audio_filename)
-        if not os.path.isfile(audio_path):
-            self._send_json({"ok": False, "error": f"Audio file not found: {audio_filename}"}, 404)
-            return
-
-        def _run():
-            import requests, base64
-            try:
-                with open(audio_path, "rb") as f:
-                    audio_bytes = f.read()
-                ext = os.path.splitext(audio_filename)[1].lower().lstrip(".")
-                mime = {"mp3": "audio/mp3", "wav": "audio/wav", "m4a": "audio/m4a"}.get(ext, "audio/mp3")
-                data_uri = f"data:{mime};base64,{base64.b64encode(audio_bytes).decode()}"
-
-                payload = {
-                    "model": "eleven_voice_isolation",
-                    "audioUri": data_uri,
-                }
-                resp = requests.post(
-                    f"{RUNWAY_API_BASE}/voice_isolation",
-                    headers=_runway_headers(),
-                    json=payload,
-                    timeout=60,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                task_id = data.get("id", "")
-                if not task_id:
-                    raise RuntimeError(f"No task ID returned: {data}")
-
-                print(f"[AUDIO] Voice isolation task submitted: {task_id}")
-
-                result = _runway_poll(task_id)
-                audio_url = result["url"]
-
-                out_ext = ".mp3"
-                if ".wav" in audio_url:
-                    out_ext = ".wav"
-                filename = f"iso_{task_id[:12]}_{int(time.time())}{out_ext}"
-                dest = os.path.join(AUDIO_GEN_DIR, filename)
-                _download(audio_url, dest)
-
-                print(f"[AUDIO] Voice isolation saved: {dest}")
-                self._send_json({
-                    "ok": True,
-                    "audio_url": f"/api/audio/generated/{filename}",
-                    "filename": filename,
-                })
-            except Exception as e:
-                print(f"[AUDIO] Voice isolation failed: {e}")
-                self._send_json({"ok": False, "error": str(e)}, 500)
-
-        _run()
-
     # ---- Reference Image endpoints ----
 
     def _handle_upload_reference(self):
         """Upload a reference image with a name."""
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "upload"):
-            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
-            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -7317,7 +6079,7 @@ Do not include any explanation, just the JSON object."""
             except json.JSONDecodeError:
                 params = {}
             scene["prompt"] = params.get("prompt", "")
-            scene["duration"] = params.get("duration", 8)
+            scene["duration"] = params.get("duration", 5)
             scene["transition"] = params.get("transition", "crossfade")
             if "engine" in params:
                 scene["engine"] = params["engine"]
@@ -7423,67 +6185,8 @@ Do not include any explanation, just the JSON object."""
         _save_manual_plan(plan)
         self._send_json({"ok": True, "deleted": scene_id})
 
-    def _handle_manual_duplicate_scene(self, scene_id: str):
-        """Duplicate a manual scene (clone prompt, settings, photo — not clip)."""
-        plan = _load_manual_plan()
-        source = None
-        insert_idx = 0
-        for i, s in enumerate(plan["scenes"]):
-            if s["id"] == scene_id:
-                source = s
-                insert_idx = i + 1
-                break
-        if not source:
-            self._send_json({"error": "Scene not found"}, 404)
-            return
-
-        import copy
-        new_scene = copy.deepcopy(source)
-        new_scene["id"] = str(_uuid.uuid4())[:8]
-        # Clear generation state so it doesn't skip caching
-        new_scene.pop("clip_path", None)
-        new_scene.pop("has_clip", None)
-        new_scene.pop("gen_hash", None)
-        new_scene.pop("video_path", None)
-
-        # Copy photo file if it exists
-        if source.get("photo_path") and os.path.isfile(source["photo_path"]):
-            ext = os.path.splitext(source["photo_path"])[1]
-            new_photo = os.path.join(SCENE_PHOTOS_DIR, f"{new_scene['id']}{ext}")
-            import shutil
-            shutil.copy2(source["photo_path"], new_photo)
-            new_scene["photo_path"] = new_photo
-
-        plan["scenes"].insert(insert_idx, new_scene)
-        _save_manual_plan(plan)
-        self._send_json({"ok": True, "new_id": new_scene["id"]})
-
-    def _handle_manual_trim_scene(self, scene_id: str):
-        """Set trim in/out points for a scene clip."""
-        try:
-            body = json.loads(self._read_body())
-        except (json.JSONDecodeError, ValueError):
-            self._send_json({"error": "Invalid JSON"}, 400)
-            return
-
-        plan = _load_manual_plan()
-        for s in plan["scenes"]:
-            if s["id"] == scene_id:
-                trim_in = float(body.get("trim_in", 0))
-                trim_out = float(body.get("trim_out", 0))
-                s["trim_in"] = max(0, trim_in)
-                s["trim_out"] = max(0, trim_out)
-                _save_manual_plan(plan)
-                self._send_json({"ok": True, "trim_in": s["trim_in"], "trim_out": s["trim_out"]})
-                return
-        self._send_json({"error": "Scene not found"}, 404)
-
     def _handle_manual_upload_photo(self, scene_id: str):
         """Upload/replace a scene photo."""
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "upload"):
-            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
-            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -7557,8 +6260,6 @@ Do not include any explanation, just the JSON object."""
             if gen_state["running"]:
                 self._send_json({"error": "Generation already in progress"}, 409)
                 return
-
-        with gen_lock:
             _reset_state()
             gen_state["running"] = True
             gen_state["phase"] = "starting"
@@ -7577,8 +6278,6 @@ Do not include any explanation, just the JSON object."""
             if gen_state["running"]:
                 self._send_json({"error": "Generation already in progress"}, 409)
                 return
-
-        with gen_lock:
             _reset_state()
             gen_state["running"] = True
             gen_state["phase"] = "starting"
@@ -7593,8 +6292,6 @@ Do not include any explanation, just the JSON object."""
             if gen_state["running"]:
                 self._send_json({"error": "Generation already in progress"}, 409)
                 return
-
-        with gen_lock:
             _reset_state()
             gen_state["running"] = True
             gen_state["phase"] = "starting"
@@ -7672,7 +6369,7 @@ Do not include any explanation, just the JSON object."""
         # If only current has a clip, keep it as-is
 
         # Merge durations: combined = scene1.duration + scene2.duration
-        current["duration"] = current.get("duration", 8) + nxt.get("duration", 8)
+        current["duration"] = current.get("duration", 5) + nxt.get("duration", 5)
 
         # Keep current's photo if it has one, otherwise use next's photo
         current_has_photo = current.get("photo_path") and os.path.isfile(current.get("photo_path", ""))
@@ -7926,8 +6623,9 @@ Do not include any explanation, just the JSON object."""
                 transition = auto_assign_transition(prev_type, cur_type)
 
         scenes[index]["transition"] = transition
-        with open(SCENE_PLAN_PATH, "w") as f:
-            json.dump(plan, f, indent=2)
+        with _plan_file_lock:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
 
         self._send_json({"ok": True, "index": index, "transition": transition})
 
@@ -7950,8 +6648,9 @@ Do not include any explanation, just the JSON object."""
             if i < len(plan["scenes"]) and trans in TRANSITION_TYPES:
                 plan["scenes"][i]["transition"] = trans
 
-        with open(SCENE_PLAN_PATH, "w") as f:
-            json.dump(plan, f, indent=2)
+        with _plan_file_lock:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
 
         self._send_json({"ok": True})
 
@@ -8024,8 +6723,9 @@ Do not include any explanation, just the JSON object."""
             _save_manual_plan(project["manual_plan"])
 
         if "auto_plan" in project and project["auto_plan"]:
-            with open(SCENE_PLAN_PATH, "w") as f:
-                json.dump(project["auto_plan"], f, indent=2)
+            with _plan_file_lock:
+                with open(SCENE_PLAN_PATH, "w") as f:
+                    json.dump(project["auto_plan"], f, indent=2)
 
         if "cost_tracker" in project and project["cost_tracker"]:
             _save_cost_tracker(project["cost_tracker"])
@@ -8057,6 +6757,9 @@ Do not include any explanation, just the JSON object."""
                 pass
 
         with gen_lock:
+            if gen_state["running"]:
+                self._send_json({"error": "Generation already in progress"}, 409)
+                return
             _reset_state()
             gen_state["running"] = True
             gen_state["phase"] = "starting"
@@ -8123,7 +6826,7 @@ Do not include any explanation, just the JSON object."""
                 "-t", "1", "-c:v", "libx264", "-preset", "ultrafast",
                 "-an", tail_a,
             ]
-            subprocess.run(cmd_a, check=True, capture_output=True, **_subprocess_kwargs())
+            subprocess.run(cmd_a, check=True, capture_output=True, timeout=300, **_subprocess_kwargs())
 
             # Extract first 1s of clip B
             head_b = os.path.join(PREVIEWS_DIR, f"_head_{scene_id_b}.mp4")
@@ -8133,7 +6836,7 @@ Do not include any explanation, just the JSON object."""
                 "-t", "1", "-c:v", "libx264", "-preset", "ultrafast",
                 "-an", head_b,
             ]
-            subprocess.run(cmd_b, check=True, capture_output=True, **_subprocess_kwargs())
+            subprocess.run(cmd_b, check=True, capture_output=True, timeout=300, **_subprocess_kwargs())
 
             # Apply transition via xfade
             from lib.video_stitcher import _get_xfade_name
@@ -8161,7 +6864,7 @@ Do not include any explanation, just the JSON object."""
                     preview_path,
                 ]
 
-            subprocess.run(cmd_t, check=True, capture_output=True, **_subprocess_kwargs())
+            subprocess.run(cmd_t, check=True, capture_output=True, timeout=300, **_subprocess_kwargs())
 
             # Clean up temp files
             for tmp in [tail_a, head_b]:
@@ -8186,8 +6889,6 @@ Do not include any explanation, just the JSON object."""
             if gen_state["running"]:
                 self._send_json({"error": "Generation already in progress"}, 409)
                 return
-
-        with gen_lock:
             _reset_state()
             gen_state["running"] = True
             gen_state["phase"] = "starting"
@@ -8231,28 +6932,6 @@ Do not include any explanation, just the JSON object."""
         """Return current cost tracking data."""
         tracker = _load_cost_tracker()
         self._send_json(tracker)
-
-    def _handle_runway_credits(self):
-        """Get real Runway credit balance."""
-        try:
-            import requests
-            resp = requests.get(
-                f"{RUNWAY_API_BASE}/organization",
-                headers=_runway_headers(),
-                timeout=30,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                self._send_json({
-                    "ok": True,
-                    "creditBalance": data.get("creditBalance", 0),
-                    "tier": data.get("tier", {}),
-                    "usage": data.get("usage", {}),
-                })
-            else:
-                self._send_json({"error": f"Runway API {resp.status_code}"}, resp.status_code)
-        except Exception as e:
-            self._send_json({"error": str(e)[:200]}, 500)
 
     def _handle_quick_preview(self, scene_id: str):
         """Feature 5: Generate a 1-second preview or first frame for a scene."""
@@ -8307,10 +6986,6 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_pos_photo_upload(self, entity_id, entity_type):
         """Handle photo upload for characters/costumes/environments."""
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "upload"):
-            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
-            return
         try:
             ct = self.headers.get("Content-Type", "")
             if "multipart" not in ct:
@@ -8333,7 +7008,6 @@ Do not include any explanation, just the JSON object."""
                 "characters": POS_PHOTOS_CHARS_DIR,
                 "costumes": POS_PHOTOS_COSTUMES_DIR,
                 "environments": POS_PHOTOS_ENVS_DIR,
-                "props": POS_PHOTOS_PROPS_DIR,
             }
             out_dir = dirs_map[entity_type]
             os.makedirs(out_dir, exist_ok=True)  # Ensure dir exists after resets
@@ -8344,14 +7018,11 @@ Do not include any explanation, just the JSON object."""
             import io
             img = Image.open(io.BytesIO(file_part["data"]))
             img = img.convert("RGB")
-            orig_w, orig_h = img.size
-            # Preserve high resolution for character identity — cap at 4096
-            # Runway data URI limit ~5.2MB base64 = ~3.5MB file
-            max_dim = 4096
-            if img.width > max_dim or img.height > max_dim:
-                img.thumbnail((max_dim, max_dim), Image.LANCZOS)
-            img.save(out_path, "JPEG", quality=95)
-            print(f"[UPLOAD] {entity_type}/{entity_id}: {orig_w}x{orig_h} -> {img.width}x{img.height} (quality=95)")
+            # Resize to max 1280x720
+            max_w, max_h = 1280, 720
+            if img.width > max_w or img.height > max_h:
+                img.thumbnail((max_w, max_h), Image.LANCZOS)
+            img.save(out_path, "JPEG", quality=90)
 
             # Update entity record
             photo_url = f"/api/pos/{entity_type}/{entity_id}/photo"
@@ -8361,47 +7032,8 @@ Do not include any explanation, just the JSON object."""
                 _prompt_os.update_costume(entity_id, {"referenceImagePath": photo_url})
             elif entity_type == "environments":
                 _prompt_os.update_environment(entity_id, {"referenceImagePath": photo_url})
-            elif entity_type == "props":
-                _prompt_os.update_prop(entity_id, {"referenceImagePath": photo_url})
 
             self._send_json({"ok": True, "photo_url": photo_url})
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
-
-    def _handle_voice_sample_upload(self, voice_id):
-        """Handle audio sample upload for a voice profile."""
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "upload"):
-            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
-            return
-        try:
-            ct = self.headers.get("Content-Type", "")
-            if "multipart" not in ct:
-                self._send_json({"error": "Expected multipart upload"}, 400)
-                return
-            boundary = ct.split("boundary=")[-1].encode()
-            body = self._read_body()
-            parts = self._parse_multipart(body, boundary)
-            file_part = None
-            for p in parts:
-                if p.get("filename"):
-                    file_part = p
-                    break
-            if not file_part or not file_part["data"]:
-                self._send_json({"error": "No file uploaded"}, 400)
-                return
-
-            audio_dir = os.path.join(PROMPT_OS_DATA_DIR, "audio", "voices")
-            os.makedirs(audio_dir, exist_ok=True)
-            out_path = os.path.join(audio_dir, voice_id + ".mp3")
-
-            with open(out_path, "wb") as f:
-                f.write(file_part["data"])
-
-            sample_url = f"/api/pos/voices/{voice_id}/sample"
-            _prompt_os.update_voice(voice_id, {"sampleAudioPath": sample_url})
-
-            self._send_json({"ok": True, "sample_url": sample_url})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
@@ -8803,158 +7435,6 @@ Do not include any explanation, just the JSON object."""
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
-    # ---- Asset Sheet Generation (Runway-based) ----
-
-    def _handle_pos_generate_sheet(self, body):
-        """Generate an asset sheet for any asset type via Runway text_to_image.
-
-        POST /api/pos/sheets/generate
-        Body: {assetType, assetId, sheetType?, model?}
-        """
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "generate"):
-            self._send_json({"error": "Rate limited — too many generation requests. Please wait a minute."}, 429)
-            return
-        asset_type = body.get("assetType", "character")  # character|costume|environment|prop
-        asset_id = body.get("assetId", "")
-        sheet_type = body.get("sheetType", "full")  # full|face_closeup|detail
-        model = body.get("model", "gen4_image")
-
-        # Load asset
-        getter = getattr(_prompt_os, f'get_{asset_type}', None)
-        if not getter:
-            self._send_json({"error": f"Unknown asset type: {asset_type}"}, 400)
-            return
-        asset = getter(asset_id)
-        if not asset:
-            self._send_json({"error": f"{asset_type} not found"}, 404)
-            return
-
-        # Load project style
-        project_style = _prompt_os.get_project_style()
-
-        # Build prompt based on asset type and sheet type
-        ref_photos = []  # For _runway_generate_scene_image: [{path, tag}, ...]
-
-        # Resolve the reference photo to a local file path
-        def _resolve_ref_photo(ref_val, entity_type, entity_id):
-            """Resolve a reference photo value to a local file path."""
-            if not ref_val:
-                return None
-            m = re.search(rf"/api/pos/{entity_type}/([^/]+)/photo", ref_val)
-            if m:
-                eid = m.group(1)
-                type_dirs = {
-                    "characters": POS_PHOTOS_CHARS_DIR,
-                    "costumes": POS_PHOTOS_COSTUMES_DIR,
-                    "environments": POS_PHOTOS_ENVS_DIR,
-                    "props": POS_PHOTOS_PROPS_DIR,
-                }
-                photo_dir = type_dirs.get(entity_type, "")
-                if photo_dir:
-                    for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                        candidate = os.path.join(photo_dir, f"{eid}{ext}")
-                        if os.path.isfile(candidate):
-                            return candidate
-            elif os.path.isfile(ref_val):
-                return ref_val
-            return None
-
-        ref_photo_val = asset.get("referencePhoto") or asset.get("referenceImagePath") or ""
-
-        if asset_type == "character":
-            costume = None
-            if asset.get("costumes") and len(asset["costumes"]) > 0:
-                costume = _prompt_os.get_costume(asset["costumes"][0])
-            elif asset.get("linkedCostumeIds") and len(asset["linkedCostumeIds"]) > 0:
-                costume = _prompt_os.get_costume(asset["linkedCostumeIds"][0])
-
-            if sheet_type == "face_closeup":
-                prompt = build_face_closeup_prompt(asset, project_style)
-            else:
-                prompt = build_character_sheet_prompt(asset, costume, project_style)
-
-            ref_path = _resolve_ref_photo(ref_photo_val, "characters", asset_id)
-            if ref_path:
-                ref_photos.append({"path": ref_path, "tag": "Character"})
-
-        elif asset_type == "costume":
-            character = None
-            char_id = asset.get("characterId") or ""
-            if not char_id and asset.get("linkedCharacterIds"):
-                char_id = asset["linkedCharacterIds"][0] if asset["linkedCharacterIds"] else ""
-            if char_id:
-                character = _prompt_os.get_character(char_id)
-            prompt = build_costume_sheet_prompt(asset, character, project_style)
-            ref_path = _resolve_ref_photo(ref_photo_val, "costumes", asset_id)
-            if ref_path:
-                ref_photos.append({"path": ref_path, "tag": "Costume"})
-            if character:
-                char_ref = character.get("referencePhoto") or ""
-                char_path = _resolve_ref_photo(char_ref, "characters", char_id)
-                if char_path:
-                    ref_photos.append({"path": char_path, "tag": "Character"})
-
-        elif asset_type == "environment":
-            prompt = build_environment_sheet_prompt(asset, project_style)
-            ref_path = _resolve_ref_photo(ref_photo_val, "environments", asset_id)
-            if ref_path:
-                ref_photos.append({"path": ref_path, "tag": "Setting"})
-
-        elif asset_type == "prop":
-            prompt = build_prop_sheet_prompt(asset, project_style)
-            ref_path = _resolve_ref_photo(ref_photo_val, "props", asset_id)
-            if ref_path:
-                ref_photos.append({"path": ref_path, "tag": "Prop"})
-
-        else:
-            self._send_json({"error": f"Unsupported asset type: {asset_type}"}, 400)
-            return
-
-        # Generate via Runway text_to_image
-        try:
-            from lib.video_generator import _runway_generate_scene_image, _download
-
-            # Generate — returns local file path or "" on failure
-            img_path = _runway_generate_scene_image(
-                prompt=prompt,
-                reference_photos=ref_photos[:3],  # API max 3
-                model=model,
-                ratio="1536:1536",  # Higher-res square for production-quality sheets
-            )
-
-            if not img_path or not os.path.isfile(img_path):
-                self._send_json({"error": "Sheet generation failed — no image returned. Check Runway API key and credits."}, 500)
-                return
-
-            # Copy to sheets directory with a stable name
-            sheets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "prompt_os", "sheets")
-            os.makedirs(sheets_dir, exist_ok=True)
-            filename = f"{asset_type}_{asset_id}_{sheet_type}_{int(time.time())}.png"
-            local_path = os.path.join(sheets_dir, filename)
-
-            import shutil
-            shutil.copy2(img_path, local_path)
-
-            # Store sheet data
-            sheet_data = {
-                "url": f"/api/pos/sheets/{filename}",
-                "localPath": local_path,
-                "type": sheet_type,
-                "model": model,
-                "resolution": {"width": 1024, "height": 1024},
-                "prompt": prompt[:500],
-                "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            }
-
-            result = _prompt_os.add_sheet_image(asset_type, asset_id, sheet_data)
-            self._send_json(result)
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self._send_json({"error": f"Sheet generation error: {str(e)}"}, 500)
-
     # ---- Character Sheet Generation ----
 
     def _handle_pos_generate_character_sheet(self, char_id):
@@ -9161,7 +7641,7 @@ Do not include any explanation, just the JSON object."""
             if not duration:
                 plan = _load_scene_plan() if target == "auto" else _load_manual_plan()
                 if plan and plan.get("scenes"):
-                    duration = max(s.get("end_sec", s.get("duration", 8)) for s in plan["scenes"])
+                    duration = max(s.get("end_sec", s.get("duration", 5)) for s in plan["scenes"])
                 else:
                     duration = len(lines) * 4.0
             seg = float(duration) / max(len(lines), 1)
@@ -9172,13 +7652,17 @@ Do not include any explanation, just the JSON object."""
             plan = _load_scene_plan()
             if plan:
                 plan["lyrics"] = lyrics_data
-                with open(SCENE_PLAN_PATH, "w") as f:
-                    json.dump(plan, f, indent=2)
+                with _plan_file_lock:
+                    with open(SCENE_PLAN_PATH, "w") as f:
+                        json.dump(plan, f, indent=2)
         else:
             plan = _load_manual_plan()
             plan["lyrics"] = lyrics_data
             _save_manual_plan(plan)
         with gen_lock:
+            if gen_state["running"]:
+                self._send_json({"error": "Generation already in progress"}, 409)
+                return
             _reset_state()
             gen_state["running"] = True
             gen_state["phase"] = "starting"
@@ -9194,7 +7678,6 @@ Do not include any explanation, just the JSON object."""
             if gen_state["running"]:
                 self._send_json({"error": "Generation already in progress"}, 409)
                 return
-        with gen_lock:
             _reset_state()
             gen_state["running"] = True
             gen_state["phase"] = "starting"
@@ -9237,7 +7720,7 @@ Do not include any explanation, just the JSON object."""
             return
         new_id_a = str(_uuid.uuid4())[:8]
         new_id_b = str(_uuid.uuid4())[:8]
-        orig_dur = scene.get("duration", 8)
+        orig_dur = scene.get("duration", 5)
         dur_a = max(2, round(orig_dur * split_pct))
         dur_b = max(2, orig_dur - dur_a)
         scene_a = {"id": new_id_a, "prompt": scene.get("prompt", ""), "duration": dur_a,
@@ -9273,7 +7756,7 @@ Do not include any explanation, just the JSON object."""
             return
         scene = scenes[index]
         start = scene.get("start_sec", 0)
-        end = scene.get("end_sec", start + scene.get("duration", 8))
+        end = scene.get("end_sec", start + scene.get("duration", 5))
         mid = (start + end) / 2.0
         sa = dict(scene)
         sa["end_sec"] = round(mid, 3)
@@ -9296,8 +7779,9 @@ Do not include any explanation, just the JSON object."""
         for i, s in enumerate(new_scenes):
             s["index"] = i
         plan["scenes"] = new_scenes
-        with open(SCENE_PLAN_PATH, "w") as f:
-            json.dump(plan, f, indent=2)
+        with _plan_file_lock:
+            with open(SCENE_PLAN_PATH, "w") as f:
+                json.dump(plan, f, indent=2)
         self._send_json({"ok": True, "total_scenes": len(new_scenes)})
 
     # ---- Style Consistency Lock ----
@@ -9337,8 +7821,9 @@ Do not include any explanation, just the JSON object."""
                         s["prompt"] = (prompt.rstrip(", ") + ", " + style_lock) if prompt else style_lock
             else:
                 plan.pop("style_lock", None)
-            with open(SCENE_PLAN_PATH, "w") as f:
-                json.dump(plan, f, indent=2)
+            with _plan_file_lock:
+                with open(SCENE_PLAN_PATH, "w") as f:
+                    json.dump(plan, f, indent=2)
         self._send_json({"ok": True, "style_lock": style_lock, "enabled": enabled})
 
     # ---- Feature 1: Auto-describe photo ----
@@ -9429,10 +7914,6 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_watermark_upload(self):
         """Upload a PNG watermark file."""
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "upload"):
-            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
-            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -9537,7 +8018,7 @@ Do not include any explanation, just the JSON object."""
                 "-c", "copy",
                 temp_out,
             ]
-            subprocess.run(cmd, check=True, capture_output=True, **_subprocess_kwargs())
+            subprocess.run(cmd, check=True, capture_output=True, timeout=300, **_subprocess_kwargs())
             os.replace(temp_out, video_path)
 
             # Clean up
@@ -9612,10 +8093,6 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_multi_photo_upload(self, scene_id: str):
         """Upload multiple reference photos for a scene's mood board (up to 4)."""
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "upload"):
-            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
-            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -9670,10 +8147,6 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_upload_audio_tracks(self):
         """Upload separate vocal and instrumental audio tracks."""
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "upload"):
-            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
-            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -9759,10 +8232,6 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_manual_upload_video(self, scene_id: str):
         """Upload a user video clip for a manual scene (replaces generation)."""
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "upload"):
-            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
-            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -9837,10 +8306,6 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_manual_upload_vocal(self, scene_id: str):
         """Upload a voiceover audio clip for a manual scene."""
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "upload"):
-            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
-            return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self._send_json({"error": "Expected multipart/form-data"}, 400)
@@ -9945,8 +8410,9 @@ Do not include any explanation, just the JSON object."""
         if target == "manual":
             _save_manual_plan(plan)
         else:
-            with open(SCENE_PLAN_PATH, "w") as f:
-                json.dump(plan, f, indent=2)
+            with _plan_file_lock:
+                with open(SCENE_PLAN_PATH, "w") as f:
+                    json.dump(plan, f, indent=2)
 
         self._send_json({
             "ok": True,
@@ -10117,8 +8583,9 @@ Do not include any explanation, just the JSON object."""
                 _save_manual_plan(plan)
 
                 if project.get("auto_plan"):
-                    with open(SCENE_PLAN_PATH, "w") as f:
-                        json.dump(project["auto_plan"], f, indent=2)
+                    with _plan_file_lock:
+                        with open(SCENE_PLAN_PATH, "w") as f:
+                            json.dump(project["auto_plan"], f, indent=2)
 
                 if project.get("cost_tracker"):
                     _save_cost_tracker(project["cost_tracker"])
@@ -10352,7 +8819,7 @@ Do not include any explanation, just the JSON object."""
         duck_segments = []
         running_time = 0.0
         for s in plan.get("scenes", []):
-            dur = s.get("duration", 8)
+            dur = s.get("duration", 5)
             vocal_path = s.get("vocal_path", "")
             if vocal_path and os.path.isfile(vocal_path):
                 duck_segments.append({
@@ -10419,7 +8886,7 @@ Do not include any explanation, just the JSON object."""
             cp = s.get("clip_path", "")
             if cp and os.path.isfile(cp):
                 speed = s.get("speed", 1.0)
-                dur = s.get("duration", 8)
+                dur = s.get("duration", 5)
                 # Higher speed and shorter duration = higher energy
                 energy_score = speed / max(dur, 1)
                 candidates.append((energy_score, s))
@@ -10453,132 +8920,144 @@ Do not include any explanation, just the JSON object."""
     # ---- Item 42: Template library ----
 
     def _handle_list_templates(self):
-        """List all saved project templates."""
-        templates_dir = os.path.join(OUTPUT_DIR, "templates")
+        """List all saved templates."""
         templates = []
-        if os.path.isdir(templates_dir):
-            for fname in sorted(os.listdir(templates_dir)):
+        if os.path.isdir(TEMPLATES_DIR):
+            for fname in sorted(os.listdir(TEMPLATES_DIR)):
                 if fname.endswith(".json"):
+                    fpath = os.path.join(TEMPLATES_DIR, fname)
                     try:
-                        with open(os.path.join(templates_dir, fname), "r") as f:
-                            t = json.load(f)
+                        with open(fpath, "r") as f:
+                            tpl = json.load(f)
                         templates.append({
-                            "id": t.get("id", ""),
-                            "name": t.get("name", "Untitled"),
-                            "description": t.get("description", ""),
-                            "createdAt": t.get("createdAt", ""),
-                            "characterCount": len(t.get("characters", [])),
-                            "environmentCount": len(t.get("environments", [])),
+                            "filename": fname,
+                            "name": tpl.get("name", fname),
+                            "scene_count": len(tpl.get("scenes", [])),
+                            "saved_at": tpl.get("saved_at", ""),
                         })
                     except (json.JSONDecodeError, IOError):
                         pass
-        self._send_json(templates)
+        self._send_json({"templates": templates})
 
     def _handle_save_template(self):
-        """Save the current project state as a named project template."""
+        """Save current scene configuration as a named template."""
         body = self._read_body()
         try:
             params = json.loads(body) if body else {}
         except json.JSONDecodeError:
             params = {}
 
-        name = params.get("name", "").strip()
-        if not name:
-            name = f"Template {time.strftime('%Y%m%d_%H%M%S')}"
-        description = params.get("description", "")
+        template_name = params.get("name", "").strip()
+        if not template_name:
+            template_name = f"template_{time.strftime('%Y%m%d_%H%M%S')}"
 
-        # Collect all reusable project data
-        template = {
-            "id": str(_uuid.uuid4())[:8],
-            "name": name,
-            "description": description,
-            "createdAt": datetime.utcnow().isoformat(),
-            "projectStyle": _prompt_os.get_project_style(),
-            "styleLocks": _prompt_os.get_style_locks(),
-            "worldRules": _prompt_os.get_world_rules(),
-            "continuityRules": _prompt_os.get_continuity_rules(),
-            "characters": _prompt_os.get_characters(),
-            "costumes": _prompt_os.get_costumes(),
-            "environments": _prompt_os.get_environments(),
-            "props": _prompt_os.get_props(),
-            "voices": _prompt_os.get_voices(),
-            "settings": _load_settings(),
-        }
-
-        # Save to templates directory
-        templates_dir = os.path.join(OUTPUT_DIR, "templates")
-        os.makedirs(templates_dir, exist_ok=True)
-        template_path = os.path.join(templates_dir, f"{template['id']}.json")
-        with open(template_path, "w", encoding="utf-8") as f:
-            json.dump(template, f, indent=2, ensure_ascii=False)
-
-        self._send_json({"ok": True, "template": {"id": template["id"], "name": name}})
-
-    def _handle_load_template(self):
-        """Load a project template — replaces assets + style in the current project."""
-        body = self._read_body()
-        try:
-            params = json.loads(body) if body else {}
-        except json.JSONDecodeError:
-            params = {}
-
-        template_id = params.get("id", "")
-        if not template_id:
-            self._send_json({"error": "No template id specified"}, 400)
+        plan = _load_manual_plan()
+        scenes = plan.get("scenes", [])
+        if not scenes:
+            self._send_json({"error": "No scenes to save as template"}, 400)
             return
 
-        templates_dir = os.path.join(OUTPUT_DIR, "templates")
-        template_path = os.path.join(templates_dir, f"{template_id}.json")
-        if not os.path.isfile(template_path):
+        # Strip file paths (only save configuration, not files)
+        template_scenes = []
+        for s in scenes:
+            template_scenes.append({
+                "prompt": s.get("prompt", ""),
+                "duration": s.get("duration", 5),
+                "transition": s.get("transition", "crossfade"),
+                "speed": s.get("speed", 1.0),
+                "camera_movement": s.get("camera_movement", "zoom_in"),
+                "engine": s.get("engine", ""),
+                "color_grade": s.get("color_grade"),
+                "overlay": s.get("overlay"),
+                "loop": s.get("loop", False),
+            })
+
+        template = {
+            "name": template_name,
+            "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "scenes": template_scenes,
+            "color_grade": plan.get("color_grade", "none"),
+            "audio_viz": plan.get("audio_viz"),
+            "style_lock": plan.get("style_lock", ""),
+        }
+
+        safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', template_name)
+        filepath = os.path.join(TEMPLATES_DIR, f"{safe_name}.json")
+        with open(filepath, "w") as f:
+            json.dump(template, f, indent=2)
+
+        self._send_json({
+            "ok": True,
+            "filename": f"{safe_name}.json",
+            "name": template_name,
+            "scene_count": len(template_scenes),
+        })
+
+    def _handle_load_template(self):
+        """Load a template to pre-fill scenes."""
+        body = self._read_body()
+        try:
+            params = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            params = {}
+
+        filename = params.get("filename", "")
+        if not filename:
+            self._send_json({"error": "No template filename specified"}, 400)
+            return
+
+        filepath = os.path.join(TEMPLATES_DIR, os.path.basename(filename))
+        if not os.path.isfile(filepath):
             self._send_json({"error": "Template not found"}, 404)
             return
 
         try:
-            with open(template_path, "r", encoding="utf-8") as f:
+            with open(filepath, "r") as f:
                 template = json.load(f)
         except (json.JSONDecodeError, IOError) as e:
             self._send_json({"error": f"Failed to read template: {e}"}, 500)
             return
 
-        # Apply template data — style, rules, continuity
-        if template.get("projectStyle"):
-            _prompt_os.set_project_style(template["projectStyle"])
-        if template.get("styleLocks"):
-            _prompt_os.set_style_locks(template["styleLocks"])
-        if template.get("worldRules"):
-            _prompt_os.set_world_rules(template["worldRules"])
-        if template.get("continuityRules"):
-            _prompt_os.set_continuity_rules(template["continuityRules"])
+        # Create new scenes from template
+        plan = _load_manual_plan()
+        for tpl_scene in template.get("scenes", []):
+            scene_id = str(_uuid.uuid4())[:8]
+            scene = {
+                "id": scene_id,
+                "prompt": tpl_scene.get("prompt", ""),
+                "duration": tpl_scene.get("duration", 5),
+                "transition": tpl_scene.get("transition", "crossfade"),
+                "speed": tpl_scene.get("speed", 1.0),
+                "camera_movement": tpl_scene.get("camera_movement", "zoom_in"),
+                "engine": tpl_scene.get("engine", ""),
+                "color_grade": tpl_scene.get("color_grade"),
+                "overlay": tpl_scene.get("overlay"),
+                "loop": tpl_scene.get("loop", False),
+                "photo_path": None,
+                "photo_paths": [],
+                "clip_path": None,
+                "has_clip": False,
+                "video_path": None,
+                "vocal_path": None,
+                "vocal_volume": 80,
+                "previous_clip_path": None,
+            }
+            plan["scenes"].append(scene)
 
-        # Replace or merge assets
-        merge = params.get("merge", False)
-        if not merge:
-            # Full replace — clear existing and load template assets
-            from lib.prompt_os import CHARACTERS_PATH, COSTUMES_PATH, ENVIRONMENTS_PATH, PROPS_PATH, VOICES_PATH, _save_json
-            _save_json(CHARACTERS_PATH, template.get("characters", []))
-            _save_json(COSTUMES_PATH, template.get("costumes", []))
-            _save_json(ENVIRONMENTS_PATH, template.get("environments", []))
-            _save_json(PROPS_PATH, template.get("props", []))
-            _save_json(VOICES_PATH, template.get("voices", []))
+        # Apply template-level settings
+        if template.get("color_grade"):
+            plan["color_grade"] = template["color_grade"]
+        if template.get("style_lock"):
+            plan["style_lock"] = template["style_lock"]
+        if template.get("audio_viz"):
+            plan["audio_viz"] = template["audio_viz"]
 
-        self._send_json({"ok": True, "name": template.get("name", "")})
-
-    def _handle_delete_template(self):
-        """Delete a saved project template by id."""
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path.rstrip("/")
-        m = re.match(r'^/api/templates/([^/]+)$', path)
-        if not m:
-            self._send_json({"error": "Invalid template id"}, 400)
-            return
-        tid = m.group(1)
-        templates_dir = os.path.join(OUTPUT_DIR, "templates")
-        fpath = os.path.join(templates_dir, f"{tid}.json")
-        if os.path.isfile(fpath):
-            os.remove(fpath)
-            self._send_json({"ok": True})
-        else:
-            self._send_json({"error": "Not found"}, 404)
+        _save_manual_plan(plan)
+        self._send_json({
+            "ok": True,
+            "message": f"Loaded template '{template.get('name', '')}' with {len(template.get('scenes', []))} scenes",
+            "scenes_added": len(template.get("scenes", [])),
+        })
 
     # ---- Item 44: AI assistant suggestions ----
 
@@ -10896,14 +9375,14 @@ Do not include any explanation, just the JSON object."""
         if os.path.isdir(thumb_dir):
             for f in os.listdir(thumb_dir):
                 try: os.unlink(os.path.join(thumb_dir, f))
-                except: pass
+                except Exception: pass
             cleared.append("scene_thumbnails")
         # Clear keyframes
         kf_dir = os.path.join(OUTPUT_DIR, "keyframes")
         if os.path.isdir(kf_dir):
             for f in os.listdir(kf_dir):
                 try: os.unlink(os.path.join(kf_dir, f))
-                except: pass
+                except Exception: pass
             cleared.append("keyframes")
         # Clear clips
         for clips_dir in [CLIPS_DIR, MANUAL_CLIPS_DIR]:
@@ -10911,28 +9390,28 @@ Do not include any explanation, just the JSON object."""
                 for f in os.listdir(clips_dir):
                     fp = os.path.join(clips_dir, f)
                     try: os.unlink(fp)
-                    except: pass
+                    except Exception: pass
                 cleared.append(os.path.basename(clips_dir))
         # Clear uploaded scene photos
         photos_dir = os.path.join(UPLOADS_DIR, "scene_photos")
         if os.path.isdir(photos_dir):
             for f in os.listdir(photos_dir):
                 try: os.unlink(os.path.join(photos_dir, f))
-                except: pass
+                except Exception: pass
             cleared.append("scene_photos")
         # Clear uploaded scene videos
         videos_dir = os.path.join(UPLOADS_DIR, "scene_videos")
         if os.path.isdir(videos_dir):
             for f in os.listdir(videos_dir):
                 try: os.unlink(os.path.join(videos_dir, f))
-                except: pass
+                except Exception: pass
             cleared.append("scene_videos")
         # Clear uploaded scene vocals
         vocals_dir = os.path.join(UPLOADS_DIR, "scene_vocals")
         if os.path.isdir(vocals_dir):
             for f in os.listdir(vocals_dir):
                 try: os.unlink(os.path.join(vocals_dir, f))
-                except: pass
+                except Exception: pass
             cleared.append("scene_vocals")
         # Clear final video
         final = os.path.join(OUTPUT_DIR, "final_video.mp4")
@@ -10949,14 +9428,14 @@ Do not include any explanation, just the JSON object."""
         if os.path.isdir(previews_dir):
             for f in os.listdir(previews_dir):
                 try: os.unlink(os.path.join(previews_dir, f))
-                except: pass
+                except Exception: pass
             cleared.append("previews")
         # Clear GIFs
         gifs_dir = os.path.join(OUTPUT_DIR, "gifs")
         if os.path.isdir(gifs_dir):
             for f in os.listdir(gifs_dir):
                 try: os.unlink(os.path.join(gifs_dir, f))
-                except: pass
+                except Exception: pass
             cleared.append("gifs")
         # Clear uploaded songs
         songs_in_uploads = [f for f in os.listdir(UPLOADS_DIR)
@@ -10964,7 +9443,7 @@ Do not include any explanation, just the JSON object."""
                            and os.path.isfile(os.path.join(UPLOADS_DIR, f))]
         for f in songs_in_uploads:
             try: os.unlink(os.path.join(UPLOADS_DIR, f))
-            except: pass
+            except Exception: pass
         if songs_in_uploads:
             cleared.append(f"songs ({len(songs_in_uploads)})")
 
@@ -10980,7 +9459,7 @@ Do not include any explanation, just the JSON object."""
             try:
                 old_settings = json.loads(open(settings_path, encoding="utf-8").read())
                 kept_engine = old_settings.get("default_engine", "runway")
-            except:
+            except Exception:
                 kept_engine = "runway"
             # Write fresh settings with just the engine preference
             with open(settings_path, "w", encoding="utf-8") as f:
@@ -10992,7 +9471,7 @@ Do not include any explanation, just the JSON object."""
         if os.path.isdir(refs_dir):
             for f in os.listdir(refs_dir):
                 try: os.unlink(os.path.join(refs_dir, f))
-                except: pass
+                except Exception: pass
             cleared.append("references")
 
         # Clear storyboards
@@ -11000,7 +9479,7 @@ Do not include any explanation, just the JSON object."""
         if os.path.isdir(sb_dir):
             for f in os.listdir(sb_dir):
                 try: os.unlink(os.path.join(sb_dir, f))
-                except: pass
+                except Exception: pass
             cleared.append("storyboards")
 
         # Clear exports
@@ -11008,7 +9487,7 @@ Do not include any explanation, just the JSON object."""
         if os.path.isdir(exports_dir):
             for f in os.listdir(exports_dir):
                 try: os.unlink(os.path.join(exports_dir, f))
-                except: pass
+                except Exception: pass
             cleared.append("exports")
 
         # Clear frames
@@ -11468,8 +9947,12 @@ Do not include any explanation, just the JSON object."""
             if not os.path.isfile(plan_path):
                 self._send_json({"error": "No director plan exists. Generate one first."}, 400)
                 return
-            with open(plan_path, "r") as f:
-                plan = json.load(f)
+            try:
+                with open(plan_path, "r") as f:
+                    plan = json.load(f)
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Director plan file is corrupted"}, 500)
+                return
 
             created_scenes = 0
             all_shots_data = {}
@@ -11555,7 +10038,11 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_auto_director_plan(self):
         """Plan a full video via Auto Director."""
-        body = json.loads(self._read_body())
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
         style = body.get("style", "cinematic")
         engine = body.get("engine", "gen4_5")
         preset_id = body.get("preset_id")
@@ -11592,22 +10079,12 @@ Do not include any explanation, just the JSON object."""
             c = _prompt_os.get_character(cid)
             if c:
                 characters.append(c)
-        print(f"[DIRECTOR] character_ids={char_ids}, resolved {len(characters)} characters: {[c.get('name') for c in characters]}")
 
         environments = []
         for eid in env_ids:
             e = _prompt_os.get_environment(eid)
             if e:
                 environments.append(e)
-        print(f"[DIRECTOR] environment_ids={env_ids}, resolved {len(environments)} environments: {[e.get('name') for e in environments]}")
-
-        costume_ids = body.get("costume_ids", [])
-        costumes = []
-        for cid in costume_ids:
-            c = _prompt_os.get_costume(cid)
-            if c:
-                costumes.append(c)
-        print(f"[DIRECTOR] costume_ids={costume_ids}, resolved {len(costumes)} costumes: {[c.get('name') for c in costumes]}")
 
         try:
             storyline = body.get("storyline", "")
@@ -11638,9 +10115,6 @@ Do not include any explanation, just the JSON object."""
                 plan["universal_prompt"] = universal_prompt
                 plan["world_setting"] = world_setting
 
-            # Assign varied shot types for cinematic variety
-            _assign_shot_types(plan.get("scenes", []))
-
             # Save plan
             with open(AUTO_DIRECTOR_PLAN_PATH, "w") as f:
                 json.dump(plan, f, indent=2)
@@ -11652,7 +10126,11 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_auto_director_ai_plan(self):
         """Plan a full video via AI Story Planner (LLM-driven)."""
-        body = json.loads(self._read_body())
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
         lyrics = body.get("lyrics", "")
         creative_direction = body.get("creative_direction", body.get("style", "cinematic"))
         engine = body.get("engine", "grok")
@@ -11699,6 +10177,7 @@ Do not include any explanation, just the JSON object."""
         try:
             universal_prompt = body.get("universal_prompt", "")
             world_setting = body.get("world_setting", "")
+            story_model = body.get("story_model")  # e.g. "claude-sonnet-4-6", "grok-3", etc.
             plan = _auto_director.plan_with_ai(
                 song_path=song_path,
                 creative_direction=creative_direction,
@@ -11709,6 +10188,7 @@ Do not include any explanation, just the JSON object."""
                 natural_pacing=natural_pacing,
                 preset_id=preset_id,
                 budget=budget,
+                story_model=story_model,
             )
 
             # Inject universal prompt and world setting into every scene
@@ -11723,9 +10203,6 @@ Do not include any explanation, just the JSON object."""
                     scene["prompt"] = f"{prefix}. {scene['prompt']}"
                 plan["universal_prompt"] = universal_prompt
                 plan["world_setting"] = world_setting
-
-            # Assign varied shot types for cinematic variety
-            _assign_shot_types(plan.get("scenes", []))
 
             # Save plan (same path so generate/to-manual work)
             with open(AUTO_DIRECTOR_PLAN_PATH, "w") as f:
@@ -11749,8 +10226,19 @@ Do not include any explanation, just the JSON object."""
             self._send_json({"error": "Generation already in progress"}, 409)
             return
 
-        with open(AUTO_DIRECTOR_PLAN_PATH, "r") as f:
-            plan = json.load(f)
+        try:
+            with open(AUTO_DIRECTOR_PLAN_PATH, "r", encoding="utf-8") as f:
+                plan = json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Plan file is corrupted"}, 500)
+            return
+
+        # V4: check for blocking errors (character/asset mismatch)
+        if plan.get("status") == "blocked" and plan.get("blocking_errors"):
+            errors = plan["blocking_errors"]
+            msg = "Cannot generate: " + "; ".join(e.get("message", str(e)) for e in errors[:3])
+            self._send_json({"error": msg}, 400)
+            return
 
         def run_generation():
             try:
@@ -11768,147 +10256,128 @@ Do not include any explanation, just the JSON object."""
             self._send_json({"error": "No plan exists"}, 400)
             return
 
-        # Read render options from body (audio tracks, text overlays, transitions)
-        body = {}
         try:
-            raw = self._read_body()
-            if raw:
-                body = json.loads(raw)
-        except Exception:
-            body = {}
+            with open(AUTO_DIRECTOR_PLAN_PATH, "r", encoding="utf-8") as f:
+                plan = json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Plan file is corrupted"}, 500)
+            return
 
-        with open(AUTO_DIRECTOR_PLAN_PATH, "r") as f:
-            plan = json.load(f)
+        # Read render payload from request body
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            body = {}
 
         scenes = plan.get("scenes", [])
         song_path = plan.get("song_path")
 
-        # Collect valid clips
-        clip_paths = [s.get("clip_path") for s in scenes
-                      if s.get("clip_path") and os.path.isfile(s.get("clip_path", ""))]
-        if not clip_paths:
+        # Filter to scenes with valid clips on disk
+        valid_scenes = [s for s in scenes
+                        if s.get("clip_path") and os.path.isfile(s.get("clip_path", ""))]
+        if not valid_scenes:
             self._send_json({"error": "No clips found on disk to stitch"}, 400)
             return
 
-        default_transition = "crossfade"
-        transitions = [s.get("transition", default_transition) for s in scenes
-                       if s.get("clip_path") and os.path.isfile(s.get("clip_path", ""))]
+        clip_paths = [s.get("clip_path") for s in valid_scenes]
+        transitions = [s.get("transition", "crossfade") for s in valid_scenes]
         output_path = os.path.join(OUTPUT_DIR, "auto_director_final.mp4")
         audio = song_path if song_path and os.path.isfile(song_path) else None
 
-        # --- Audio mixing: combine multiple timeline tracks into one file ---
+        # Collect features from payload and scenes
+        text_overlays = body.get("textOverlays", [])
         audio_tracks = body.get("audioTracks", [])
-        mixed_audio = audio  # Default to song path from plan
-
-        if audio_tracks:
-            track_files = []
-            for track in audio_tracks:
-                url = track.get("url", "")
-                fpath = None
-                if url.startswith("/api/audio/generated/"):
-                    fname = url.split("/api/audio/generated/")[-1]
-                    fpath = os.path.join(AUDIO_GEN_DIR, os.path.basename(fname))
-                elif url.startswith("/uploads/") or url.startswith("uploads/"):
-                    fname = url.split("/uploads/")[-1] if "/uploads/" in url else url[len("uploads/"):]
-                    fpath = os.path.join(UPLOADS_DIR, os.path.basename(fname))
-                if fpath and os.path.isfile(fpath):
-                    vol = track.get("volume", 80)
-                    track_files.append({
-                        "path": fpath,
-                        "volume": max(0.0, min(2.0, vol / 100.0)),
-                        "type": track.get("type", "music"),
-                    })
-
-            if track_files and len(track_files) > 1:
-                # Mix multiple tracks using ffmpeg
-                try:
-                    mixed_path = os.path.join(OUTPUT_DIR, "mixed_audio.mp3")
-                    mix_multi_audio_tracks(
-                        [t["path"] for t in track_files],
-                        mixed_path,
-                        volumes=[t["volume"] for t in track_files],
-                    )
-                    mixed_audio = mixed_path
-                    print(f"[STITCH] Mixed {len(track_files)} audio tracks into {mixed_path}")
-                except Exception as e:
-                    print(f"[STITCH] Audio mix failed: {e}, using primary audio only")
-            elif track_files:
-                mixed_audio = track_files[0]["path"]
-                print(f"[STITCH] Using single audio track: {mixed_audio}")
-
-        # --- Text overlays: map timeline overlays to per-scene format ---
-        text_overlays_data = body.get("textOverlays", [])
-        text_overlays = None
-        if text_overlays_data:
-            text_overlays = []
-            cumulative_time = 0
-            for i, s in enumerate(scenes):
-                if not (s.get("clip_path") and os.path.isfile(s.get("clip_path", ""))):
-                    continue
-                dur = float(s.get("duration", 4))
-                scene_start = cumulative_time
-                scene_end = cumulative_time + dur
-
-                # Find overlays that overlap this scene
-                scene_overlay = None
-                for ovl in text_overlays_data:
-                    ovl_start = float(ovl.get("startTime", 0))
-                    ovl_end = float(ovl.get("endTime", 5))
-                    if ovl_start < scene_end and ovl_end > scene_start:
-                        scene_overlay = {
-                            "text": ovl.get("text", ""),
-                            "font_size": ovl.get("fontSize", 24),
-                            "position": ovl.get("position", "bottom-center"),
-                            "color": ovl.get("color", "#ffffff"),
-                        }
-                        break
-                text_overlays.append(scene_overlay)
-                cumulative_time += dur
-
-        # --- Per-scene transitions from Edit workspace ---
-        scene_transitions = body.get("sceneTransitions", {})
-        if scene_transitions:
-            new_transitions = []
-            valid_idx = 0
-            for i, s in enumerate(scenes):
-                if not (s.get("clip_path") and os.path.isfile(s.get("clip_path", ""))):
-                    continue
-                st = scene_transitions.get(str(i), {})
-                trans = st.get("entry", "none")
-                if trans == "none":
-                    trans = default_transition if valid_idx > 0 else "none"
-                new_transitions.append(trans)
-                valid_idx += 1
-            if new_transitions:
-                transitions = new_transitions
-
         output_resolution = body.get("outputResolution")
+        output_format = body.get("format", "MP4")
+        audio_crossfade = body.get("audioCrossfade", 0.0)
+
+        # Collect per-scene data
+        speeds = [s.get("speed", 1.0) for s in valid_scenes]
+        color_grades = [s.get("color_grade", "") for s in valid_scenes]
+        global_color_grade = body.get("colorGrade", "none")
+        speed_ramps = [s.get("speed_ramp", "none") for s in valid_scenes]
+        reversed_clips = [s.get("reversed", False) for s in valid_scenes]
+        audio_viz = body.get("audioViz")
 
         def run_stitch():
             try:
-                _auto_director._update_progress(phase="stitching", progress_detail="preparing...")
+                _auto_director._update_progress(phase="stitching")
 
-                def _stitch_progress(status):
-                    _auto_director._update_progress(phase="stitching", progress_detail=status)
+                # Progress callback to track stitch steps
+                def progress_cb(msg):
+                    with gen_lock:
+                        if "progress" not in gen_state:
+                            gen_state["progress"] = []
+                        gen_state["progress"].append(msg)
 
-                stitch(clip_paths, mixed_audio, output_path,
+                # Apply per-scene effects before stitching
+                processed_clip_paths = list(clip_paths)
+                for idx, s in enumerate(valid_scenes):
+                    effect_name = s.get("effect", "none")
+                    if effect_name and effect_name != "none" and idx < len(processed_clip_paths):
+                        cp = processed_clip_paths[idx]
+                        if cp and os.path.isfile(cp):
+                            intensity = s.get("effect_intensity", 0.5)
+                            effect_out = os.path.join(AUTO_DIRECTOR_CLIPS_DIR, f"_fx_{s.get('id', idx)}_{effect_name}.mp4")
+                            try:
+                                apply_effect(cp, effect_out, effect_name, intensity=intensity)
+                                processed_clip_paths[idx] = effect_out
+                            except Exception as e:
+                                print(f"[AUTO-RESTITCH] Effect {effect_name} failed for scene {idx}: {e}")
+
+                stitch(processed_clip_paths, audio, output_path,
                        transitions=transitions,
+                       speeds=speeds,
                        text_overlays=text_overlays,
+                       color_grade=global_color_grade,
+                       scene_color_grades=color_grades,
+                       audio_viz=audio_viz,
+                       speed_ramps=speed_ramps,
+                       reversed_clips=reversed_clips,
+                       audio_crossfade=audio_crossfade,
                        output_resolution=output_resolution,
-                       progress_cb=_stitch_progress)
+                       progress_cb=progress_cb)
 
-                # Optional AI upscale
-                final_output = output_path
-                if body.get("upscale"):
+                # Apply per-scene vocal overlays if any exist
+                vocal_entries = []
+                running_time = 0.0
+                for s in valid_scenes:
+                    dur = s.get("duration", 5)
+                    vp = s.get("vocal_path", "")
+                    if vp and os.path.isfile(vp):
+                        vocal_entries.append({
+                            "vocal_path": vp,
+                            "start_sec": running_time,
+                            "end_sec": running_time + dur,
+                            "volume": s.get("vocal_volume", 80),
+                        })
+                    running_time += dur
+
+                if vocal_entries and os.path.isfile(output_path):
+                    temp_vocal_out = output_path + ".vocal_tmp.mp4"
                     try:
-                        _stitch_progress("Upscaling to 4K...")
-                        upscaled = upscale_video(output_path, output_path.replace(".mp4", "_4k.mp4"), scale=2)
-                        if upscaled != output_path:
-                            final_output = upscaled
-                    except Exception as e:
-                        print(f"[STITCH] Upscale skipped: {e}")
+                        overlay_scene_vocals(output_path, temp_vocal_out, vocal_entries)
+                        os.replace(temp_vocal_out, output_path)
+                    except Exception:
+                        if os.path.isfile(temp_vocal_out):
+                            os.remove(temp_vocal_out)
 
-                _auto_director._update_progress(phase="done", output_file=final_output, progress_detail="")
+                # Auto-duck audio when vocals exist
+                auto_duck = body.get("autoDuck", False)
+                if auto_duck and vocal_entries and os.path.isfile(output_path):
+                    duck_level = body.get("duckLevel", 0.3)
+                    duck_segments = [{"start_sec": ve["start_sec"], "end_sec": ve["end_sec"]}
+                                     for ve in vocal_entries]
+                    if duck_segments:
+                        temp_duck_out = output_path + ".duck_tmp.mp4"
+                        try:
+                            apply_audio_ducking(output_path, temp_duck_out, duck_segments, duck_level)
+                            os.replace(temp_duck_out, output_path)
+                        except Exception:
+                            if os.path.isfile(temp_duck_out):
+                                os.remove(temp_duck_out)
+
+                _auto_director._update_progress(phase="done", output_file=output_path)
             except Exception as e:
                 _auto_director._update_progress(phase="error", error=f"Stitch failed: {e}")
 
@@ -11922,8 +10391,12 @@ Do not include any explanation, just the JSON object."""
             self._send_json({"error": "No Auto Director plan exists"}, 400)
             return
 
-        with open(AUTO_DIRECTOR_PLAN_PATH, "r") as f:
-            ad_plan = json.load(f)
+        try:
+            with open(AUTO_DIRECTOR_PLAN_PATH, "r", encoding="utf-8") as f:
+                ad_plan = json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Plan file is corrupted"}, 500)
+            return
 
         manual_plan = _load_manual_plan()
         manual_plan["song_path"] = ad_plan.get("song_path")
@@ -11932,7 +10405,7 @@ Do not include any explanation, just the JSON object."""
             manual_scene = {
                 "id": ad_scene.get("id", str(_uuid.uuid4())[:8]),
                 "prompt": ad_scene.get("prompt", ""),
-                "duration": ad_scene.get("duration", 8),
+                "duration": ad_scene.get("duration", 5),
                 "transition": ad_scene.get("transition", "crossfade"),
                 "speed": 1.0,
                 "overlay": None,
@@ -11961,7 +10434,11 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_movie_plan(self):
         """Create a full movie plan via the Movie Planner engine."""
-        body = json.loads(self._read_body())
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
         style = body.get("style", "cinematic")
         lyrics = body.get("lyrics", "")
         storyline = body.get("storyline", "")
@@ -12082,7 +10559,11 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_movie_scene_edit(self, scene_index):
         """Edit specific fields of a scene in the movie plan."""
-        body = json.loads(self._read_body())
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
         plan = load_movie_plan(OUTPUT_DIR)
         if not plan or not plan.get("scenes"):
             self._send_json({"error": "No movie plan exists"}, 400)
@@ -12138,7 +10619,11 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_scene_assets(self, scene_index):
         """Update scene asset bindings and rebuild shot prompt."""
-        body = json.loads(self._read_body())
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
         plan = load_movie_plan(OUTPUT_DIR)
         if not plan or not plan.get("scenes"):
             self._send_json({"error": "No movie plan exists"}, 400)
@@ -12252,7 +10737,11 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_draft_promote(self):
         """Promote a draft asset to a POS library entity."""
-        body = json.loads(self._read_body())
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
         draft_id = body.get("draft_id", "")
         if not draft_id:
             self._send_json({"error": "draft_id required"}, 400)
@@ -12281,7 +10770,11 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_draft_resolve(self):
         """Resolve a draft asset by mapping it to an existing library asset."""
-        body = json.loads(self._read_body())
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
         draft_id = body.get("draft_id", "")
         library_id = body.get("library_id", "")
         asset_type = body.get("asset_type", "")
@@ -12322,7 +10815,11 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_draft_remove(self):
         """Remove a draft asset (keep as generic text)."""
-        body = json.loads(self._read_body())
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
         draft_id = body.get("draft_id", "")
         if not draft_id:
             self._send_json({"error": "draft_id required"}, 400)
@@ -12344,7 +10841,11 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_movie_scene_regenerate(self, scene_index):
         """Regenerate one scene in the movie plan."""
-        body = json.loads(self._read_body())
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
         plan = load_movie_plan(OUTPUT_DIR)
         if not plan or not plan.get("scenes"):
             self._send_json({"error": "No movie plan exists"}, 400)
@@ -12391,9 +10892,606 @@ Do not include any explanation, just the JSON object."""
 
         self._send_json({"ok": True, "scenes": updated})
 
+    # ──── V4 Per-Shot Handlers ────
+
+    def _handle_v4_shot_regenerate(self, beat_idx, shot_idx):
+        """Regenerate a single shot within a V4 beat."""
+        if not os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
+            self._send_json({"error": "No plan found"}, 404)
+            return
+        try:
+            with open(AUTO_DIRECTOR_PLAN_PATH, "r", encoding="utf-8") as f:
+                plan = json.load(f)
+        except Exception:
+            self._send_json({"error": "Could not read plan"}, 500)
+            return
+
+        beats = plan.get("beats", [])
+        if beat_idx < 0 or beat_idx >= len(beats):
+            self._send_json({"error": f"Beat {beat_idx} out of range"}, 400)
+            return
+        shots = beats[beat_idx].get("shots", [])
+        if shot_idx < 0 or shot_idx >= len(shots):
+            self._send_json({"error": f"Shot {shot_idx} out of range in beat {beat_idx}"}, 400)
+            return
+
+        shot = shots[shot_idx]
+        # Reset shot for regeneration
+        shot["status"] = "planned"
+        shot["has_clip"] = False
+        shot["clip_path"] = None
+        shot["trimmed_clip_path"] = None
+        shot["gen_hash"] = None
+        shot["error"] = None
+
+        # Update flat scenes array too
+        flat_idx = shot.get("index")
+        if flat_idx is not None and flat_idx < len(plan.get("scenes", [])):
+            plan["scenes"][flat_idx] = shot
+
+        with _plan_file_lock:
+            with open(AUTO_DIRECTOR_PLAN_PATH, "w", encoding="utf-8") as f:
+                json.dump(plan, f, indent=2, ensure_ascii=False)
+
+        self._send_json({"ok": True, "shot": shot, "message": f"Shot {beat_idx}/{shot_idx} queued for regeneration"})
+
+    def _handle_v4_shot_edit(self, beat_idx, shot_idx):
+        """Edit properties of a single shot within a V4 beat."""
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        if not os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
+            self._send_json({"error": "No plan found"}, 404)
+            return
+        try:
+            with open(AUTO_DIRECTOR_PLAN_PATH, "r", encoding="utf-8") as f:
+                plan = json.load(f)
+        except Exception:
+            self._send_json({"error": "Could not read plan"}, 500)
+            return
+
+        beats = plan.get("beats", [])
+        if beat_idx < 0 or beat_idx >= len(beats):
+            self._send_json({"error": f"Beat {beat_idx} out of range"}, 400)
+            return
+        shots = beats[beat_idx].get("shots", [])
+        if shot_idx < 0 or shot_idx >= len(shots):
+            self._send_json({"error": f"Shot {shot_idx} out of range"}, 400)
+            return
+
+        shot = shots[shot_idx]
+        # Editable fields
+        for field in ("shot_size", "movement", "angle", "action", "emotion",
+                      "screen_direction", "is_hero", "prompt", "prompt_short",
+                      "target_duration", "character_lock_strength",
+                      "environment_lock_strength", "style_lock_strength", "seed_lock"):
+            if field in body:
+                shot[field] = body[field]
+        # Recalculate runway_duration if target changed
+        if "target_duration" in body:
+            import math
+            shot["runway_duration"] = max(2, min(10, math.ceil(shot["target_duration"] + 0.5)))
+            shot["duration"] = shot["runway_duration"]
+            shot["trim_out"] = shot["target_duration"]
+
+        # Invalidate clip if settings changed
+        shot["gen_hash"] = None
+
+        # Sync to flat scenes
+        flat_idx = shot.get("index")
+        if flat_idx is not None and flat_idx < len(plan.get("scenes", [])):
+            plan["scenes"][flat_idx] = shot
+
+        with _plan_file_lock:
+            with open(AUTO_DIRECTOR_PLAN_PATH, "w", encoding="utf-8") as f:
+                json.dump(plan, f, indent=2, ensure_ascii=False)
+
+        self._send_json({"ok": True, "shot": shot})
+
+    # ──── Preproduction Handlers ────
+
+    def _get_preprod_store(self):
+        from lib.preproduction_assets import PreproductionStore
+        return PreproductionStore(OUTPUT_DIR)
+
+    def _handle_preproduction_get_packages(self):
+        store = self._get_preprod_store()
+        self._send_json({"packages": store.get_all(), "mode": store.get_mode()})
+
+    def _handle_preproduction_get_package(self, pkg_id):
+        store = self._get_preprod_store()
+        pkg = store.get_by_id(pkg_id)
+        if pkg:
+            self._send_json(pkg)
+        else:
+            self._send_json({"error": "Package not found"}, 404)
+
+    def _handle_preproduction_report(self):
+        from lib.preproduction_assets import generate_preproduction_report
+        store = self._get_preprod_store()
+        packages = store.get_all()
+        # Get shots from plan if available
+        shots = []
+        if os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
+            try:
+                with open(AUTO_DIRECTOR_PLAN_PATH, "r", encoding="utf-8") as f:
+                    plan = json.load(f)
+                for beat in plan.get("beats", []):
+                    shots.extend(beat.get("shots", []))
+                if not shots:
+                    shots = plan.get("scenes", [])
+            except Exception:
+                pass
+        report = generate_preproduction_report(packages, shots)
+        self._send_json(report)
+
+    def _handle_preproduction_validate_get(self):
+        from lib.preproduction_assets import validate_preproduction
+        store = self._get_preprod_store()
+        packages = store.get_all()
+        mode = store.get_mode()
+        shots = []
+        if os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
+            try:
+                with open(AUTO_DIRECTOR_PLAN_PATH, "r", encoding="utf-8") as f:
+                    plan = json.load(f)
+                for beat in plan.get("beats", []):
+                    shots.extend(beat.get("shots", []))
+                if not shots:
+                    shots = plan.get("scenes", [])
+            except Exception:
+                pass
+        result = validate_preproduction(packages, shots, mode)
+        self._send_json(result)
+
+    def _handle_preproduction_create_package(self):
+        from lib.preproduction_assets import create_package
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        try:
+            pkg = create_package(
+                package_type=body.get("package_type", "character"),
+                name=body.get("name", "Unnamed"),
+                description=body.get("description", ""),
+                mode=body.get("mode", self._get_preprod_store().get_mode()),
+                related_ids=body.get("related_ids"),
+                must_keep=body.get("must_keep"),
+                avoid=body.get("avoid"),
+                canonical_notes=body.get("canonical_notes"),
+                lock_strength=body.get("lock_strength", 0.8),
+            )
+            store = self._get_preprod_store()
+            store.save_package(pkg)
+            self._send_json({"ok": True, "package": pkg})
+        except ValueError as e:
+            self._send_json({"error": str(e)}, 400)
+
+    def _handle_preproduction_update_package(self, pkg_id):
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        store = self._get_preprod_store()
+        pkg = store.get_by_id(pkg_id)
+        if not pkg:
+            self._send_json({"error": "Package not found"}, 404)
+            return
+        for field in ("name", "description", "must_keep", "avoid",
+                      "canonical_notes", "lock_strength", "mode"):
+            if field in body:
+                pkg[field] = body[field]
+        store.save_package(pkg)
+        self._send_json({"ok": True, "package": pkg})
+
+    def _handle_preproduction_generate_package(self, pkg_id):
+        """Generate all sheet views for a package."""
+        from lib.preproduction_assets import build_sheet_prompt, get_sheet_plan, update_sheet_image
+        store = self._get_preprod_store()
+        pkg = store.get_by_id(pkg_id)
+        if not pkg:
+            self._send_json({"error": "Package not found"}, 404)
+            return
+        pkg["status"] = "generating"
+        store.save_package(pkg)
+        img_dir = store.package_image_dir(pkg_id)
+
+        views = get_sheet_plan(pkg)
+        results = []
+        for view_def in views:
+            view_name = view_def["view"]
+            prompt = build_sheet_prompt(pkg, view_def)
+            try:
+                from lib.video_generator import _runway_generate_scene_image
+                img_path = _runway_generate_scene_image(
+                    prompt=prompt,
+                    reference_photos=[],
+                    ratio="1280:720",
+                    model="gen4_image",
+                    seed=pkg.get("seed"),
+                )
+                if img_path and os.path.isfile(img_path):
+                    import shutil
+                    dest = os.path.join(img_dir, f"{view_name}.png")
+                    shutil.copy2(img_path, dest)
+                    pkg = update_sheet_image(pkg, view_name, dest, prompt_used=prompt)
+                    results.append({"view": view_name, "status": "generated", "path": dest})
+                else:
+                    pkg = update_sheet_image(pkg, view_name, None, prompt_used=prompt)
+                    results.append({"view": view_name, "status": "failed"})
+            except Exception as e:
+                pkg = update_sheet_image(pkg, view_name, None, prompt_used=prompt)
+                results.append({"view": view_name, "status": "error", "error": str(e)})
+
+        pkg["status"] = "generated"
+        store.save_package(pkg)
+        self._send_json({"ok": True, "package": pkg, "results": results})
+
+    def _handle_preproduction_generate_view(self, pkg_id):
+        """Generate or regenerate a single sheet view."""
+        from lib.preproduction_assets import build_sheet_prompt, get_sheet_plan, update_sheet_image
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        store = self._get_preprod_store()
+        pkg = store.get_by_id(pkg_id)
+        if not pkg:
+            self._send_json({"error": "Package not found"}, 404)
+            return
+
+        view_name = body.get("view", "")
+        views = get_sheet_plan(pkg)
+        view_def = next((v for v in views if v["view"] == view_name), None)
+        if not view_def:
+            self._send_json({"error": f"Unknown view: {view_name}"}, 400)
+            return
+
+        prompt = body.get("custom_prompt") or build_sheet_prompt(pkg, view_def)
+        img_dir = store.package_image_dir(pkg_id)
+
+        try:
+            from lib.video_generator import _runway_generate_scene_image
+            img_path = _runway_generate_scene_image(
+                prompt=prompt, reference_photos=[], ratio="1280:720",
+                model="gen4_image", seed=body.get("seed"),
+            )
+            if img_path and os.path.isfile(img_path):
+                import shutil
+                dest = os.path.join(img_dir, f"{view_name}.png")
+                shutil.copy2(img_path, dest)
+                pkg = update_sheet_image(pkg, view_name, dest, seed=body.get("seed"), prompt_used=prompt)
+                store.save_package(pkg)
+                self._send_json({"ok": True, "view": view_name, "path": dest, "package": pkg})
+            else:
+                self._send_json({"error": "Image generation returned no result"}, 500)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_preproduction_hero_ref(self, pkg_id):
+        from lib.preproduction_assets import select_hero_ref
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        store = self._get_preprod_store()
+        pkg = store.get_by_id(pkg_id)
+        if not pkg:
+            self._send_json({"error": "Package not found"}, 404)
+            return
+        pkg = select_hero_ref(pkg, body.get("view", ""))
+        store.save_package(pkg)
+        self._send_json({"ok": True, "package": pkg})
+
+    def _handle_preproduction_approve(self, pkg_id):
+        from lib.preproduction_assets import approve_package
+        store = self._get_preprod_store()
+        pkg = store.get_by_id(pkg_id)
+        if not pkg:
+            self._send_json({"error": "Package not found"}, 404)
+            return
+        try:
+            pkg = approve_package(pkg)
+            store.save_package(pkg)
+            self._send_json({"ok": True, "package": pkg})
+        except ValueError as e:
+            self._send_json({"error": str(e)}, 400)
+
+    def _handle_preproduction_reject(self, pkg_id):
+        from lib.preproduction_assets import reject_package
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+        store = self._get_preprod_store()
+        pkg = store.get_by_id(pkg_id)
+        if not pkg:
+            self._send_json({"error": "Package not found"}, 404)
+            return
+        pkg = reject_package(pkg, body.get("reason", ""))
+        store.save_package(pkg)
+        self._send_json({"ok": True, "package": pkg})
+
+    def _handle_preproduction_delete(self, pkg_id):
+        store = self._get_preprod_store()
+        store.remove_package(pkg_id)
+        self._send_json({"ok": True})
+
+    def _handle_preproduction_upload_ref(self, pkg_id):
+        """Upload an external reference image for a sheet view."""
+        store = self._get_preprod_store()
+        pkg = store.get_by_id(pkg_id)
+        if not pkg:
+            self._send_json({"error": "Package not found"}, 404)
+            return
+        # Parse multipart form data
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._send_json({"error": "Expected multipart/form-data"}, 400)
+            return
+        import cgi
+        form = cgi.FieldStorage(
+            fp=self.rfile, headers=self.headers,
+            environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": content_type},
+        )
+        view_name = form.getfirst("view", "uploaded")
+        file_item = form["file"] if "file" in form else None
+        if not file_item or not file_item.file:
+            self._send_json({"error": "No file uploaded"}, 400)
+            return
+        img_dir = store.package_image_dir(pkg_id)
+        ext = os.path.splitext(file_item.filename or "img.png")[1] or ".png"
+        dest = os.path.join(img_dir, f"{view_name}{ext}")
+        with open(dest, "wb") as f:
+            f.write(file_item.file.read())
+        from lib.preproduction_assets import update_sheet_image
+        pkg = update_sheet_image(pkg, view_name, dest, prompt_used="uploaded")
+        store.save_package(pkg)
+        self._send_json({"ok": True, "view": view_name, "path": dest, "package": pkg})
+
+    def _handle_preproduction_plan_packages(self):
+        """Auto-plan packages from current beats + assets."""
+        from lib.preproduction_assets import plan_packages_from_beats
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+        store = self._get_preprod_store()
+        mode = body.get("mode", store.get_mode())
+        # Get beats from plan
+        beats = []
+        if os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
+            try:
+                with open(AUTO_DIRECTOR_PLAN_PATH, "r", encoding="utf-8") as f:
+                    plan = json.load(f)
+                beats = plan.get("beats", [])
+            except Exception:
+                pass
+        chars = _prompt_os.get_characters() or []
+        envs = _prompt_os.get_environments() or []
+        existing = store.get_all()
+        new_pkgs = plan_packages_from_beats(beats, chars, envs, mode, existing)
+        for pkg in new_pkgs:
+            store.save_package(pkg)
+        self._send_json({"ok": True, "new_packages": len(new_pkgs), "packages": store.get_all()})
+
+    def _handle_preproduction_bind_shots(self):
+        """Bind shots in the current plan to preproduction packages."""
+        from lib.preproduction_assets import bind_shots_to_packages
+        store = self._get_preprod_store()
+        packages = store.get_all()
+        if not os.path.isfile(AUTO_DIRECTOR_PLAN_PATH):
+            self._send_json({"error": "No plan found"}, 404)
+            return
+        try:
+            with open(AUTO_DIRECTOR_PLAN_PATH, "r", encoding="utf-8") as f:
+                plan = json.load(f)
+        except Exception:
+            self._send_json({"error": "Could not read plan"}, 500)
+            return
+        # Flatten shots, bind, then put back
+        all_shots = []
+        for beat in plan.get("beats", []):
+            all_shots.extend(beat.get("shots", []))
+        if not all_shots:
+            all_shots = plan.get("scenes", [])
+        bind_shots_to_packages(all_shots, packages)
+        # Save plan back
+        with _plan_file_lock:
+            with open(AUTO_DIRECTOR_PLAN_PATH, "w", encoding="utf-8") as f:
+                json.dump(plan, f, indent=2, ensure_ascii=False)
+        bound_count = sum(1 for s in all_shots if s.get("character_package_id") or s.get("environment_package_id"))
+        self._send_json({"ok": True, "bound_shots": bound_count, "total_shots": len(all_shots)})
+
+    def _handle_preproduction_set_mode(self):
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        store = self._get_preprod_store()
+        mode = body.get("mode", "fast")
+        store.set_mode(mode)
+        self._send_json({"ok": True, "mode": mode})
+
+    # ──── Taste Profile Handlers ────
+
+    def _get_taste_store(self):
+        from lib.taste_profile import TasteStore
+        data_dir = os.path.join(OUTPUT_DIR, "taste")
+        return TasteStore(data_dir)
+
+    def _handle_taste_get_quiz(self):
+        from lib.taste_profile import get_quiz_pairs, DIMENSION_LABELS
+        self._send_json({"pairs": get_quiz_pairs(), "dimension_labels": DIMENSION_LABELS})
+
+    def _handle_taste_get_overall(self):
+        store = self._get_taste_store()
+        profile = store.get_overall()
+        if profile:
+            from lib.taste_profile import generate_taste_summary
+            profile["summary"] = generate_taste_summary(profile)
+            self._send_json(profile)
+        else:
+            self._send_json({"exists": False})
+
+    def _handle_taste_get_project(self, project_id):
+        store = self._get_taste_store()
+        profile = store.get_project_profile(project_id)
+        if profile:
+            from lib.taste_profile import generate_taste_summary
+            profile["summary"] = generate_taste_summary(profile)
+            self._send_json(profile)
+        else:
+            self._send_json({"exists": False})
+
+    def _handle_taste_get_blended(self):
+        store = self._get_taste_store()
+        # Use project_id from query if available
+        parsed = urllib.parse.urlparse(self.path)
+        qs = urllib.parse.parse_qs(parsed.query)
+        project_id = qs.get("project_id", [None])[0]
+        blended = store.get_blended(project_id)
+        from lib.taste_profile import generate_taste_summary
+        blended["summary"] = generate_taste_summary(blended)
+        self._send_json(blended)
+
+    def _handle_taste_save_overall(self):
+        from lib.taste_profile import create_profile, update_from_sliders
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        store = self._get_taste_store()
+        profile = store.get_overall() or create_profile(
+            name=body.get("name", "My Style"), source="manual", is_overall=True)
+        if "dimensions" in body:
+            profile = update_from_sliders(profile, body["dimensions"])
+        if "notes" in body:
+            profile["notes"] = body["notes"]
+        store.save_overall(profile)
+        from lib.taste_profile import generate_taste_summary
+        profile["summary"] = generate_taste_summary(profile)
+        self._send_json({"ok": True, "profile": profile})
+
+    def _handle_taste_submit_quiz(self):
+        from lib.taste_profile import create_profile, process_quiz_answers, generate_taste_summary
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        store = self._get_taste_store()
+        answers = body.get("answers", [])
+        is_project = body.get("is_project", False)
+        project_id = body.get("project_id")
+        if is_project and project_id:
+            profile = store.get_project_profile(project_id) or create_profile(
+                name=body.get("name", "Project Style"), source="quiz", project_id=project_id)
+        else:
+            profile = store.get_overall() or create_profile(
+                name="My Style", source="quiz", is_overall=True)
+        profile = process_quiz_answers(profile, answers)
+        if is_project and project_id:
+            store.save_project_profile(project_id, profile)
+        else:
+            store.save_overall(profile)
+        profile["summary"] = generate_taste_summary(profile)
+        self._send_json({"ok": True, "profile": profile})
+
+    def _handle_taste_update_sliders(self):
+        from lib.taste_profile import update_from_sliders, generate_taste_summary
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        store = self._get_taste_store()
+        is_project = body.get("is_project", False)
+        project_id = body.get("project_id")
+        if is_project and project_id:
+            profile = store.get_project_profile(project_id)
+            if not profile:
+                self._send_json({"error": "Project profile not found"}, 404)
+                return
+        else:
+            profile = store.get_overall()
+            if not profile:
+                self._send_json({"error": "Overall profile not found"}, 404)
+                return
+        profile = update_from_sliders(profile, body.get("sliders", {}))
+        if is_project and project_id:
+            store.save_project_profile(project_id, profile)
+        else:
+            store.save_overall(profile)
+        profile["summary"] = generate_taste_summary(profile)
+        self._send_json({"ok": True, "profile": profile})
+
+    def _handle_taste_save_project(self, project_id):
+        from lib.taste_profile import create_profile, update_from_sliders, generate_taste_summary
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        store = self._get_taste_store()
+        profile = store.get_project_profile(project_id) or create_profile(
+            name=body.get("name", "Project Style"), source="manual", project_id=project_id)
+        if "dimensions" in body:
+            profile = update_from_sliders(profile, body["dimensions"])
+        if "inherit_overall" in body:
+            profile["inherit_overall"] = body["inherit_overall"]
+        if "notes" in body:
+            profile["notes"] = body["notes"]
+        store.save_project_profile(project_id, profile)
+        profile["summary"] = generate_taste_summary(profile)
+        self._send_json({"ok": True, "profile": profile})
+
+    def _handle_taste_record_behavior(self):
+        from lib.taste_profile import record_behavior
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        store = self._get_taste_store()
+        action = body.get("action", "")
+        context = body.get("context", {})
+        is_project = body.get("is_project", False)
+        project_id = body.get("project_id")
+        # Record to both overall and project if applicable
+        overall = store.get_overall()
+        if overall:
+            overall = record_behavior(overall, action, context)
+            store.save_overall(overall)
+        if is_project and project_id:
+            proj = store.get_project_profile(project_id)
+            if proj:
+                proj = record_behavior(proj, action, context)
+                store.save_project_profile(project_id, proj)
+        self._send_json({"ok": True})
+
+    def _handle_taste_reset_overall(self):
+        store = self._get_taste_store()
+        store.reset_overall()
+        self._send_json({"ok": True})
+
     def _handle_movie_scene_lock(self, scene_index):
         """Lock specific fields of a scene."""
-        body = json.loads(self._read_body())
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
         plan = load_movie_plan(OUTPUT_DIR)
         if not plan or not plan.get("scenes"):
             self._send_json({"error": "No movie plan exists"}, 400)
@@ -12426,7 +11524,11 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_movie_scene_unlock(self, scene_index):
         """Unlock specific fields of a scene."""
-        body = json.loads(self._read_body())
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
         plan = load_movie_plan(OUTPUT_DIR)
         if not plan or not plan.get("scenes"):
             self._send_json({"error": "No movie plan exists"}, 400)
@@ -12453,1085 +11555,6 @@ Do not include any explanation, just the JSON object."""
         save_movie_plan(plan, OUTPUT_DIR)
 
         self._send_json({"ok": True, "scene": scene})
-
-    def _handle_scene_upload_clip(self, scene_index):
-        """Upload an external video clip to a scene."""
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "upload"):
-            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
-            return
-        try:
-            ct = self.headers.get("Content-Type", "")
-            if "multipart" not in ct:
-                self._send_json({"error": "Expected multipart upload"}, 400)
-                return
-            boundary = ct.split("boundary=")[-1].encode()
-            body = self._read_body()
-            parts = self._parse_multipart(body, boundary)
-            file_part = None
-            for p in parts:
-                if p.get("filename"):
-                    file_part = p
-                    break
-            if not file_part or not file_part["data"]:
-                self._send_json({"error": "No file uploaded"}, 400)
-                return
-
-            plan = load_movie_plan(OUTPUT_DIR)
-            if not plan or scene_index >= len(plan.get("scenes", [])):
-                self._send_json({"error": "Invalid scene"}, 400)
-                return
-
-            # Save clip
-            clips_dir = os.path.join(OUTPUT_DIR, "auto_director", "clips")
-            os.makedirs(clips_dir, exist_ok=True)
-            ext = os.path.splitext(file_part.get("filename", "clip.mp4"))[1] or ".mp4"
-            filename = f"scene_{scene_index}_upload_{int(time.time())}{ext}"
-            clip_path = os.path.join(clips_dir, filename)
-            with open(clip_path, "wb") as f:
-                f.write(file_part["data"])
-
-            # Update plan
-            scene = plan["scenes"][scene_index]
-            scene["clip_path"] = clip_path
-            scene["clip_url"] = f"/api/clips/{filename}"
-            scene["has_clip"] = True
-            scene["clip_source"] = "upload"
-            save_movie_plan(plan, OUTPUT_DIR)
-
-            print(f"[UPLOAD] Clip uploaded for scene {scene_index}: {clip_path} ({len(file_part['data'])/1024:.0f}KB)")
-
-            self._send_json({
-                "ok": True,
-                "clip_url": scene["clip_url"],
-                "clip_path": clip_path,
-                "filename": filename,
-                "size": len(file_part["data"]),
-            })
-        except Exception as e:
-            self._send_json({"error": f"Upload failed: {str(e)[:200]}"}, 500)
-
-    def _handle_scene_upload_frame(self, scene_index):
-        """Upload an external image as a scene's first frame."""
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "upload"):
-            self._send_json({"error": "Rate limited — too many upload requests. Please wait a minute."}, 429)
-            return
-        try:
-            ct = self.headers.get("Content-Type", "")
-            if "multipart" not in ct:
-                self._send_json({"error": "Expected multipart upload"}, 400)
-                return
-            boundary = ct.split("boundary=")[-1].encode()
-            body = self._read_body()
-            parts = self._parse_multipart(body, boundary)
-            file_part = None
-            for p in parts:
-                if p.get("filename"):
-                    file_part = p
-                    break
-            if not file_part or not file_part["data"]:
-                self._send_json({"error": "No file uploaded"}, 400)
-                return
-
-            plan = load_movie_plan(OUTPUT_DIR)
-            if not plan or scene_index >= len(plan.get("scenes", [])):
-                self._send_json({"error": "Invalid scene"}, 400)
-                return
-
-            # Save frame
-            frames_dir = os.path.join(OUTPUT_DIR, "first_frames")
-            os.makedirs(frames_dir, exist_ok=True)
-
-            # Resize to project standard
-            from PIL import Image
-            import io
-            img = Image.open(io.BytesIO(file_part["data"]))
-            img = img.convert("RGB")
-            if img.width > 4096 or img.height > 4096:
-                img.thumbnail((4096, 4096), Image.LANCZOS)
-
-            frame_path = os.path.join(frames_dir, f"scene_{scene_index}_first.jpg")
-            img.save(frame_path, "JPEG", quality=95)
-
-            # Also save thumbnail
-            os.makedirs(SCENE_THUMBNAILS_DIR, exist_ok=True)
-            thumb_path = os.path.join(SCENE_THUMBNAILS_DIR, f"scene_{scene_index}.jpg")
-            img.save(thumb_path, "JPEG", quality=90)
-
-            # Update plan
-            scene = plan["scenes"][scene_index]
-            scene["first_frame_path"] = frame_path
-            scene["first_frame_source"] = "upload"
-            scene["preview"] = {
-                "status": "ready",
-                "image_url": f"/api/scene-thumbnails/scene_{scene_index}.jpg",
-            }
-            save_movie_plan(plan, OUTPUT_DIR)
-
-            print(f"[UPLOAD] Frame uploaded for scene {scene_index}: {img.width}x{img.height}")
-
-            self._send_json({
-                "ok": True,
-                "first_frame_url": f"/api/scene-thumbnails/scene_{scene_index}.jpg",
-                "frame_path": frame_path,
-                "width": img.width,
-                "height": img.height,
-            })
-        except Exception as e:
-            self._send_json({"error": f"Upload failed: {str(e)[:200]}"}, 500)
-
-    def _handle_generate_first_frame(self, scene_index):
-        """Generate ONLY a first frame image for a scene (fast, no video)."""
-        _gen_start = time.time()
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "generate"):
-            self._send_json({"error": "Rate limited — too many generation requests. Please wait a minute."}, 429)
-            return
-        # Read optional body for seed
-        body_data = {}
-        try:
-            cl = int(self.headers.get("Content-Length", 0))
-            if cl > 0:
-                raw_body = self.rfile.read(cl)
-                body_data = json.loads(raw_body)
-        except Exception:
-            pass
-
-        plan = load_movie_plan(OUTPUT_DIR)
-        if not plan or not plan.get("scenes"):
-            self._send_json({"error": "No plan"}, 400)
-            return
-        scenes = plan["scenes"]
-        if scene_index < 0 or scene_index >= len(scenes):
-            self._send_json({"error": "Invalid index"}, 400)
-            return
-
-        scene = scenes[scene_index]
-
-        # Apply seed from request body if provided
-        if body_data.get("seed") is not None:
-            scene["seed"] = body_data["seed"]
-
-        shot_type = scene.get("shot_type", "medium")
-
-        # Enrich scene to resolve photo paths (also fixes stale IDs by name match)
-        enriched = dict(scene)
-        _enrich_scene_with_assets(enriched)
-        # Persist any auto-fixed IDs back to the plan
-        for key in ("characters", "costumes", "environments"):
-            if enriched.get(key):
-                scene[key] = enriched[key]
-        save_movie_plan(plan, OUTPUT_DIR)
-
-        # Load project style lock and inject into prompt
-        project_style = _prompt_os.get_project_style()
-        style_prefix = ""
-        if project_style:
-            style_parts = []
-            if project_style.get("worldSetting"):
-                style_parts.append(f"Setting: {project_style['worldSetting']}.")
-            if project_style.get("tone"):
-                style_parts.append(f"Tone: {project_style['tone']}.")
-            if project_style.get("visualLanguage"):
-                style_parts.append(project_style["visualLanguage"] + ".")
-            if project_style.get("colorPalette"):
-                style_parts.append(f"Colors: {project_style['colorPalette']}.")
-            if project_style.get("textureMaterial"):
-                style_parts.append(f"Materials: {project_style['textureMaterial']}.")
-            if project_style.get("cameraLanguage"):
-                style_parts.append(f"Camera style: {project_style['cameraLanguage']}.")
-            if style_parts:
-                style_prefix = " ".join(style_parts) + " "
-
-        # Apply Director Brain learned preferences
-        try:
-            brain_harness_path = os.path.join(OUTPUT_DIR, "director_brain", "learned_harness.json")
-            if os.path.isfile(brain_harness_path):
-                with open(brain_harness_path, "r") as f:
-                    learned = json.load(f)
-                # If the brain has a preferred engine and scene doesn't override
-                if learned.get("preferred_engine") and not scene.get("engine"):
-                    print(f"[DIRECTOR BRAIN] Suggesting engine: {learned['preferred_engine']}")
-                # If scene's shot type is in the "avoid" list, warn
-                if shot_type in (learned.get("avoid_shot_types") or []):
-                    print(f"[DIRECTOR BRAIN] WARNING: Shot type '{shot_type}' is in your low-rated list")
-        except:
-            pass
-
-        # --- Collect all candidate photos by type ---
-        char_photos = []
-        char_tags = []
-
-        # Multiple characters from scene.characters array
-        chars_in_scene = enriched.get("characters", [])
-        if chars_in_scene:
-            for ci, char_ref in enumerate(chars_in_scene):
-                cid = char_ref.get("id", "") if isinstance(char_ref, dict) else ""
-                if cid:
-                    pc = _prompt_os.get_character(cid)
-                    if pc:
-                        ref_img = pc.get("referencePhoto", "") or pc.get("referenceImagePath", "")
-                        photo = ""
-                        if ref_img and os.path.isfile(ref_img):
-                            photo = ref_img
-                        else:
-                            import re as _re_ff
-                            _m = _re_ff.search(r"/api/pos/characters/([^/]+)/photo", ref_img or "")
-                            if _m:
-                                for _ext in (".jpg", ".jpeg", ".png", ".webp"):
-                                    _cand = os.path.join(POS_PHOTOS_CHARS_DIR, f"{_m.group(1)}{_ext}")
-                                    if os.path.isfile(_cand):
-                                        photo = _cand
-                                        break
-                        if photo:
-                            tag = pc.get("name", f"Char{ci}").replace(" ", "")[:16]
-                            if len(tag) < 3:
-                                tag = tag + "Ref"
-                            # Prefer approved sheet assets over raw reference photo
-                            if shot_type == "close-up" and pc.get("approvedFaceCloseUp"):
-                                face_url = pc["approvedFaceCloseUp"]
-                                face_path = _resolve_sheet_or_photo(face_url)
-                                if face_path:
-                                    # Replace with face close-up for close-up shots
-                                    char_photos = [{"path": face_path, "tag": tag}]
-                                    char_tags = [tag]
-                                    break  # Use this one
-                            elif pc.get("approvedSheet"):
-                                sheet_url = pc["approvedSheet"]
-                                sheet_path = _resolve_sheet_or_photo(sheet_url)
-                                if sheet_path:
-                                    # Use approved sheet instead of raw photo
-                                    photo = sheet_path
-                            char_photos.append({"path": photo, "tag": tag})
-                            char_tags.append(tag)
-        else:
-            # Fallback: single character photo
-            char_photo = enriched.get("character_photo_path", "")
-            if char_photo and os.path.isfile(char_photo):
-                char_photos.append({"path": char_photo, "tag": "Character"})
-                char_tags.append("Character")
-
-        costume_photos = []
-        # Check for approved costume sheets first
-        costumes_in_scene = enriched.get("costumes", [])
-        if costumes_in_scene:
-            for cos_ref in costumes_in_scene:
-                cos_id = cos_ref.get("id", "") if isinstance(cos_ref, dict) else ""
-                if cos_id:
-                    cos_obj = _prompt_os.get_costume(cos_id)
-                    if cos_obj:
-                        # Prefer approved sheet
-                        if cos_obj.get("approvedSheet"):
-                            cos_path = _resolve_sheet_or_photo(cos_obj["approvedSheet"])
-                            if cos_path:
-                                costume_photos.append({"path": cos_path, "tag": "Costume"})
-                                break
-                        # Fallback to reference photo
-                        cos_ref_img = cos_obj.get("referenceImagePath", "")
-                        if cos_ref_img:
-                            cos_path = _resolve_sheet_or_photo(cos_ref_img)
-                            if not cos_path:
-                                # Try photo directory
-                                for _ext in (".jpg", ".jpeg", ".png", ".webp"):
-                                    _cand = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{cos_id}{_ext}")
-                                    if os.path.isfile(_cand):
-                                        cos_path = _cand
-                                        break
-                            if cos_path:
-                                costume_photos.append({"path": cos_path, "tag": "Costume"})
-                                break
-        if not costume_photos:
-            cos_photo = enriched.get("costume_photo_path", "")
-            if cos_photo and os.path.isfile(cos_photo):
-                costume_photos.append({"path": cos_photo, "tag": "Costume"})
-
-        env_photos = []
-        # Check for approved environment sheets first
-        envs_in_scene = enriched.get("environments", [])
-        if envs_in_scene:
-            for env_ref in envs_in_scene:
-                env_id = env_ref.get("id", "") if isinstance(env_ref, dict) else ""
-                if env_id:
-                    env_obj = _prompt_os.get_environment(env_id)
-                    if env_obj:
-                        if env_obj.get("approvedSheet"):
-                            env_path = _resolve_sheet_or_photo(env_obj["approvedSheet"])
-                            if env_path:
-                                env_photos.append({"path": env_path, "tag": "Setting"})
-                                break
-                        env_ref_img = env_obj.get("referenceImagePath", "")
-                        if env_ref_img:
-                            env_path = _resolve_sheet_or_photo(env_ref_img)
-                            if not env_path:
-                                for _ext in (".jpg", ".jpeg", ".png", ".webp"):
-                                    _cand = os.path.join(POS_PHOTOS_ENVS_DIR, f"{env_id}{_ext}")
-                                    if os.path.isfile(_cand):
-                                        env_path = _cand
-                                        break
-                            if env_path:
-                                env_photos.append({"path": env_path, "tag": "Setting"})
-                                break
-        if not env_photos:
-            env_photo = enriched.get("environment_photo_path", "")
-            if env_photo and os.path.isfile(env_photo):
-                env_photos.append({"path": env_photo, "tag": "Setting"})
-
-        # Warn about low-resolution references
-        for photo_entry in char_photos + costume_photos + env_photos:
-            photo_path = photo_entry.get("path", "")
-            if photo_path and os.path.isfile(photo_path):
-                try:
-                    from PIL import Image
-                    with Image.open(photo_path) as _img:
-                        w, h = _img.size
-                        if w < 512 or h < 512:
-                            print(f"[QUALITY WARNING] Low-res reference: {os.path.basename(photo_path)} is {w}x{h} — recommend 1024+ for better detail")
-                except Exception:
-                    pass
-
-        # --- Use shot type system to select refs ---
-        refs = select_refs_for_shot_type(shot_type, char_photos, costume_photos, env_photos, max_refs=3)
-
-        if not refs:
-            # Build specific guidance about what's missing
-            missing = []
-            if not char_photos:
-                missing.append("character photo")
-            if not costume_photos:
-                missing.append("costume photo")
-            if not env_photos:
-                missing.append("environment photo")
-            if missing:
-                guidance = "Missing: " + ", ".join(missing) + ". Upload reference photos in the ASSETS tab."
-            else:
-                guidance = "No reference photos available for this scene. Upload photos in the ASSETS tab."
-            self._send_json({"error": guidance}, 400)
-            return
-
-        print(f"[FIRST FRAME][{scene_index}] Shot type: {shot_type} | Selected refs: {[(r['tag'], r['priority']) for r in refs]}")
-
-        # --- Build shot-type-aware prompt ---
-        has_char = any(r["tag"] in char_tags for r in refs)
-        has_costume = any(r["tag"] == "Costume" for r in refs)
-        has_env = any(r["tag"] == "Setting" for r in refs)
-
-        import re as _re_tag
-        # Use enriched prompt with cinematic detail fallbacks
-        prompt = _enrich_scene_prompt(scene, project_style)
-
-        # Clean prompt: remove inline character descriptions when we have photo refs
-        # The @tag reference image defines identity — text descriptions fight with it
-        if char_photos:
-            # Remove "name (role) — Long description. Face: details. More details." patterns
-            # This handles multi-sentence character descriptions embedded in scene prompts
-            prompt = _re_tag.sub(r'\b\w+\s*\([^)]*\)\s*[—–-]\s*[^,;]*(?:\.\s*(?:Face|Hair|Skin|Body|Eyes|Ears|Build|Height|Posture)[^.]*)*\.?', '', prompt)
-            # Remove standalone character description blocks (Silver anthropomorphic...)
-            prompt = _re_tag.sub(r'(?:Silver|Gold|Bronze|Metallic)\s+anthropomorphic[^.;]*[.;]?', '', prompt)
-            # Remove "Face: ..." / "Hair: ..." / "Build: ..." standalone descriptions
-            prompt = _re_tag.sub(r'(?:Face|Hair|Skin tone|Body type|Build|Eyes|Ears|Posture|Height):\s*[^.;]*[.;]', '', prompt)
-            # Remove "[reference photo available]" and similar brackets
-            prompt = _re_tag.sub(r'\[(?:reference photo|photo|ref)[^]]*\]', '', prompt)
-            # Remove any "character name — description" that slipped through (generic catch)
-            for ct in char_tags:
-                # Strip "CharName (role) — multi-sentence description..." blocks
-                clean_name = _re_tag.escape(ct.replace("Ref", ""))
-                if clean_name and len(clean_name) >= 2:
-                    # Greedy: match name + optional role + dash + everything until next scene action keyword or double newline
-                    prompt = _re_tag.sub(rf'(?:^|\s){clean_name}\s*\([^)]*\)\s*[—–-]\s*.*?(?=\.\s*(?:Setting|Camera|Transition|Shifting|Opening|Closing|The\s|In\s|A\s)|$)', '', prompt, flags=_re_tag.IGNORECASE | _re_tag.DOTALL)
-                    # Also catch without parenthetical: "tb — Silver anthropomorphic..."
-                    prompt = _re_tag.sub(rf'(?:^|\s){clean_name}\s+[—–-]\s*[^.]*(?:\.\s*(?:Face|Hair|Skin|Body|Eyes|Build)[^.]*)*\.?', '', prompt, flags=_re_tag.IGNORECASE)
-            # Clean up whitespace, dangling commas, double periods
-            prompt = _re_tag.sub(r',\s*,', ',', prompt)
-            prompt = _re_tag.sub(r'\.\s*\.', '.', prompt)
-            prompt = _re_tag.sub(r'\s{2,}', ' ', prompt).strip()
-            prompt = prompt.strip(' ,;—–-')
-
-        tag_prompt = prompt
-        # Remove any remaining vision-API artifacts
-        tag_prompt = _re_tag.sub(r'\[reference photo available\]', '', tag_prompt)
-        tag_prompt = _re_tag.sub(r'\s{2,}', ' ', tag_prompt).strip()
-
-        # Prepend project style to prompt
-        if style_prefix:
-            tag_prompt = style_prefix + tag_prompt
-
-        # Build shot-aware prompt (handles quality keywords + shot framing)
-        tag_prompt = build_shot_prompt(shot_type, tag_prompt, has_char, has_costume, has_env)
-
-        # Auto-inject continuity for non-first scenes
-        if scene_index > 0:
-            prev_scene = scenes[scene_index - 1] if scene_index < len(scenes) else None
-            if prev_scene:
-                continuity_text = "Continuing from the previous scene. Maintain visual continuity: same color palette, same lighting, same time of day."
-                # Check if same character appears
-                prev_chars = set()
-                for c in (prev_scene.get("characters") or []):
-                    cid = c.get("id", "") if isinstance(c, dict) else ""
-                    if cid: prev_chars.add(cid)
-                curr_chars = set()
-                for c in (scene.get("characters") or []):
-                    cid = c.get("id", "") if isinstance(c, dict) else ""
-                    if cid: curr_chars.add(cid)
-                if prev_chars & curr_chars:
-                    continuity_text += " The same character continues to appear — maintain identical appearance."
-
-                tag_prompt = tag_prompt + " " + continuity_text
-                tag_prompt = tag_prompt[:1000]
-
-        # Add @tag refs — let the PHOTOS define identity
-        selected_char_tags = [r["tag"] for r in refs if r["tag"] in char_tags]
-        for ct in selected_char_tags:
-            if f"@{ct}" not in tag_prompt:
-                tag_prompt = f"@{ct} " + tag_prompt
-        if has_costume:
-            if "@Costume" not in tag_prompt:
-                tag_prompt = f"{tag_prompt} Wearing the exact outfit from @Costume."
-        if has_env:
-            if "@Setting" not in tag_prompt:
-                tag_prompt = f"{tag_prompt} Set in the exact location from @Setting."
-        tag_prompt = tag_prompt[:1000]  # API limit
-
-        # Add negative prompt from project style
-        if project_style and project_style.get("negativePrompt"):
-            neg = project_style["negativePrompt"]
-            tag_prompt = tag_prompt + f" AVOID: {neg}"
-            tag_prompt = tag_prompt[:1000]
-
-        # Seed for reproducibility
-        scene_seed = scene.get("seed")
-        if scene_seed is not None:
-            try:
-                scene_seed = int(scene_seed)
-            except (ValueError, TypeError):
-                scene_seed = None
-        # Store seed for reproducibility — generate one if not provided
-        if scene_seed is None:
-            import random
-            scene_seed = random.randint(0, 4294967295)
-        scene["last_seed"] = scene_seed
-
-        try:
-            from lib.video_generator import _runway_generate_scene_image
-            print(f"[FIRST FRAME][{scene_index}] Generating with {len(refs)} refs: {[r['tag'] for r in refs]}, seed={scene_seed}")
-
-            # Get aspect ratio from project settings for higher-res output
-            settings = _load_settings()
-            ds = settings.get("director_state", {})
-            aspect = ds.get("aspect_ratio", "16:9")
-            ratio_map = {
-                "16:9": "2560:1440",   # 2K for better detail
-                "9:16": "1440:2560",
-                "1:1": "1536:1536",
-                "4:3": "1920:1440",
-                "3:4": "1440:1920",
-            }
-            gen_ratio = ratio_map.get(aspect, "1920:1080")
-
-            img_path = _runway_generate_scene_image(
-                tag_prompt, refs,
-                ratio=gen_ratio,
-                model="gen4_image",
-                seed=scene_seed,
-            )
-
-            if not img_path or not os.path.isfile(img_path):
-                self._send_json({"error": "Image generation failed"}, 500)
-                return
-
-            # Save as first frame
-            first_frame_dir = os.path.join(OUTPUT_DIR, "first_frames")
-            os.makedirs(first_frame_dir, exist_ok=True)
-            first_frame_path = os.path.join(first_frame_dir, f"scene_{scene_index}_first.jpg")
-            import shutil
-            shutil.copy2(img_path, first_frame_path)
-
-            # Also save as thumbnail
-            os.makedirs(SCENE_THUMBNAILS_DIR, exist_ok=True)
-            thumb_path = os.path.join(SCENE_THUMBNAILS_DIR, f"scene_{scene_index}.jpg")
-            shutil.copy2(img_path, thumb_path)
-
-            # Update plan with first_frame_path and preview
-            scene["first_frame_path"] = first_frame_path
-            scene["_lastGeneratedPrompt"] = prompt
-            scene["preview"] = {
-                "status": "ready",
-                "image_url": f"/api/scene-thumbnails/scene_{scene_index}.jpg",
-                "last_generated_at": datetime.utcnow().isoformat(),
-                "engine": "gen4_image_turbo",
-            }
-            scenes[scene_index] = scene
-            save_movie_plan(plan, OUTPUT_DIR)
-
-            print(f"[FIRST FRAME][{scene_index}] Saved: {first_frame_path}")
-
-            # Check actual output resolution
-            try:
-                from PIL import Image as _PILImg
-                with _PILImg.open(img_path) as _out_img:
-                    out_w, out_h = _out_img.size
-                    print(f"[FIRST FRAME][{scene_index}] Output: {out_w}x{out_h}")
-            except Exception:
-                out_w, out_h = 0, 0
-
-            # Check ref quality for UI warning
-            ref_warnings = []
-            for photo_entry in char_photos + costume_photos + env_photos:
-                pp = photo_entry.get("path", "")
-                if pp and os.path.isfile(pp):
-                    try:
-                        from PIL import Image
-                        with Image.open(pp) as _qi:
-                            qw, qh = _qi.size
-                            if qw < 512 or qh < 512:
-                                ref_warnings.append(f"{photo_entry.get('tag', 'ref')} photo is only {qw}x{qh} — upload a higher resolution for better detail")
-                    except Exception:
-                        pass
-
-            self._send_json({"ok": True, "first_frame_path": first_frame_path,
-                             "preview_url": f"/api/scene-thumbnails/scene_{scene_index}.jpg",
-                             "scene": scene,
-                             "ref_warnings": ref_warnings,
-                             "resolution": f"{out_w}x{out_h}" if out_w else "unknown"})
-
-            # Log analytics
-            try:
-                analytics_path = os.path.join(OUTPUT_DIR, "analytics.json")
-                analytics = []
-                if os.path.isfile(analytics_path):
-                    with open(analytics_path, "r") as f:
-                        analytics = json.load(f)
-
-                analytics.append({
-                    "type": "first_frame",
-                    "scene_index": scene_index,
-                    "shot_type": shot_type,
-                    "engine": "gen4_image",
-                    "ref_count": len(refs),
-                    "prompt_length": len(tag_prompt),
-                    "generation_time": round(time.time() - _gen_start, 1),
-                    "success": True,
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "has_style_lock": bool(style_prefix),
-                    "has_continuity": scene_index > 0,
-                })
-
-                # Keep last 500 entries
-                with open(analytics_path, "w") as f:
-                    json.dump(analytics[-500:], f, indent=2)
-            except:
-                pass
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self._send_json({"error": str(e)[:300]}, 500)
-
-    def _handle_multi_angle_clip(self, scene_index, body):
-        """Generate a multi-angle clip using keyframe interpolation.
-
-        1. Generate first frame at shot_type_start (e.g., wide establishing)
-        2. Generate last frame at shot_type_end (e.g., close-up)
-        3. Send both as keyframes to image_to_video
-        4. Runway interpolates between angles in one clip
-        """
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "generate"):
-            self._send_json({"error": "Rate limited — too many generation requests. Please wait a minute."}, 429)
-            return
-        plan = load_movie_plan(OUTPUT_DIR)
-        if not plan or not plan.get("scenes"):
-            self._send_json({"error": "No plan"}, 400)
-            return
-        scenes = plan["scenes"]
-        if scene_index < 0 or scene_index >= len(scenes):
-            self._send_json({"error": "Invalid scene index"}, 400)
-            return
-
-        scene = scenes[scene_index]
-
-        # Shot types for start and end of the clip
-        start_type = body.get("startShotType", "wide")
-        end_type = body.get("endShotType", "close-up")
-        duration = max(4, min(10, int(body.get("duration", 8))))  # Min 4s for multi-angle
-
-        # Use existing first frame if available, or generate new ones
-        enriched = dict(scene)
-        _enrich_scene_with_assets(enriched)
-
-        prompt = scene.get("shot_prompt", scene.get("prompt", "Cinematic scene"))
-
-        # Collect refs
-        char_photos = []
-        chars = enriched.get("characters", [])
-        for char_ref in chars:
-            cid = char_ref.get("id", "") if isinstance(char_ref, dict) else ""
-            if cid:
-                pc = _prompt_os.get_character(cid)
-                if pc:
-                    ref_img = pc.get("referencePhoto", "") or pc.get("referenceImagePath", "")
-                    import re as _mre
-                    _m = _mre.search(r"/api/pos/characters/([^/]+)/photo", ref_img or "")
-                    if _m:
-                        for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                            cand = os.path.join(POS_PHOTOS_CHARS_DIR, f"{_m.group(1)}{ext}")
-                            if os.path.isfile(cand):
-                                tag = pc.get("name", "Char").replace(" ", "")[:16]
-                                if len(tag) < 3: tag += "Ref"
-                                char_photos.append({"path": cand, "tag": tag})
-                                break
-
-        env_photos = []
-        envs = enriched.get("environments", [])
-        for env_ref in envs:
-            eid = env_ref.get("id", "") if isinstance(env_ref, dict) else ""
-            if eid:
-                for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                    cand = os.path.join(POS_PHOTOS_ENVS_DIR, f"{eid}{ext}")
-                    if os.path.isfile(cand):
-                        env_photos.append({"path": cand, "tag": "Setting"})
-                        break
-
-        all_refs = (char_photos + env_photos)[:3]
-
-        if not all_refs:
-            self._send_json({"error": "No reference photos — upload character or environment photos first"}, 400)
-            return
-
-        try:
-            from lib.video_generator import (
-                _runway_generate_scene_image, _runway_submit_text_to_video,
-                _runway_poll, _download, build_shot_prompt,
-            )
-
-            # Step 1: Generate FIRST frame (start angle)
-            has_char = len(char_photos) > 0
-            has_env = len(env_photos) > 0
-
-            start_prompt = build_shot_prompt(start_type, prompt, has_char, False, has_env)
-            # Add @tags
-            for ref in all_refs:
-                if f"@{ref['tag']}" not in start_prompt:
-                    start_prompt = f"@{ref['tag']} {start_prompt}"
-            start_prompt = start_prompt[:1000]
-
-            print(f"[MULTI-ANGLE][{scene_index}] Generating start frame ({start_type})...")
-            first_path = _runway_generate_scene_image(start_prompt, all_refs, ratio="1920:1080", model="gen4_image")
-
-            if not first_path or not os.path.isfile(first_path):
-                self._send_json({"error": f"Failed to generate {start_type} frame"}, 500)
-                return
-
-            # Step 2: Generate LAST frame (end angle)
-            end_prompt = build_shot_prompt(end_type, prompt, has_char, False, has_env)
-            for ref in all_refs:
-                if f"@{ref['tag']}" not in end_prompt:
-                    end_prompt = f"@{ref['tag']} {end_prompt}"
-            end_prompt = end_prompt[:1000]
-
-            print(f"[MULTI-ANGLE][{scene_index}] Generating end frame ({end_type})...")
-            last_path = _runway_generate_scene_image(end_prompt, all_refs, ratio="1920:1080", model="gen4_image")
-
-            if not last_path or not os.path.isfile(last_path):
-                # Fall back to single-frame if last frame fails
-                print(f"[MULTI-ANGLE][{scene_index}] Last frame failed, using single-frame mode")
-                last_path = None
-
-            # Step 3: Generate video with both keyframes
-            video_prompt = f"Camera smoothly transitions from {start_type} to {end_type}. Cinematic movement, professional cinematography, smooth motion."
-
-            # Get engine
-            engine = scene.get("engine", "")
-            if not engine:
-                settings = _load_settings()
-                engine = settings.get("director_state", {}).get("engine", "gen4_5")
-
-            print(f"[MULTI-ANGLE][{scene_index}] Generating clip: {start_type} -> {end_type}, {duration}s")
-
-            task_id = _runway_submit_text_to_video(
-                video_prompt, duration=duration, model=engine,
-                first_frame_path=first_path,
-                last_frame_path=last_path,
-            )
-
-            video_info = _runway_poll(task_id)
-
-            # Download clip
-            clips_dir = os.path.join(OUTPUT_DIR, "auto_director", "clips")
-            os.makedirs(clips_dir, exist_ok=True)
-            clip_filename = f"scene_{scene_index}_multiangle_{int(time.time())}.mp4"
-            clip_path = os.path.join(clips_dir, clip_filename)
-            _download(video_info["url"], clip_path)
-
-            # Save first frames
-            first_frame_dir = os.path.join(OUTPUT_DIR, "first_frames")
-            os.makedirs(first_frame_dir, exist_ok=True)
-            import shutil
-            ff_path = os.path.join(first_frame_dir, f"scene_{scene_index}_first.jpg")
-            shutil.copy2(first_path, ff_path)
-
-            # Update scene
-            scene["clip_path"] = clip_path
-            scene["clip_url"] = f"/api/clips/{clip_filename}"
-            scene["first_frame_path"] = ff_path
-            scene["has_clip"] = True
-            scene["multi_angle"] = True
-            scene["multi_angle_start"] = start_type
-            scene["multi_angle_end"] = end_type
-            scenes[scene_index] = scene
-            save_movie_plan(plan, OUTPUT_DIR)
-
-            self._send_json({
-                "ok": True,
-                "clip_url": scene["clip_url"],
-                "first_frame_url": f"/api/scene-thumbnails/scene_{scene_index}.jpg",
-                "start_type": start_type,
-                "end_type": end_type,
-                "duration": duration,
-            })
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self._send_json({"error": f"Multi-angle error: {str(e)[:300]}"}, 500)
-
-    def _handle_scene_restyle(self, scene_index, body):
-        """Restyle an existing clip using video_to_video (gen4_aleph)."""
-        from lib.video_generator import _runway_video_to_video, _download
-        plan = load_movie_plan(OUTPUT_DIR)
-        if not plan:
-            self._send_json({"error": "No plan found"}, 404)
-            return
-        scenes = plan.get("scenes", [])
-        if scene_index < 0 or scene_index >= len(scenes):
-            self._send_json({"error": f"Scene {scene_index} out of range"}, 404)
-            return
-        scene = scenes[scene_index]
-        clip_path = scene.get("clip_path", "")
-        if not clip_path or not os.path.isfile(clip_path):
-            self._send_json({"error": "No clip file found for this scene. Generate a clip first."}, 400)
-            return
-        style = body.get("style", "")
-        if not style:
-            self._send_json({"error": "No style description provided"}, 400)
-            return
-        try:
-            prompt = f"Restyle this video: {style}. Maintain all motion, action, and composition. Change only the visual style."
-            restyled_path = _runway_video_to_video(clip_path, prompt)
-            if not restyled_path or not os.path.isfile(restyled_path):
-                self._send_json({"error": "Restyle generation failed — no video returned"}, 500)
-                return
-            # Save to clips directory
-            clips_dir = os.path.join(OUTPUT_DIR, "auto_director", "clips")
-            os.makedirs(clips_dir, exist_ok=True)
-            dest = os.path.join(clips_dir, f"scene_{scene_index}_restyled_{int(time.time())}.mp4")
-            import shutil
-            shutil.copy2(restyled_path, dest)
-            scene["clip_path"] = dest
-            scene["clip_url"] = f"/api/clips/{os.path.basename(dest)}"
-            scene["restyled"] = True
-            scene["restyle_prompt"] = style
-            save_movie_plan(plan, OUTPUT_DIR)
-            self._send_json({
-                "ok": True,
-                "clip_url": scene["clip_url"],
-                "restyled_url": scene["clip_url"],
-            })
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self._send_json({"error": f"Restyle error: {str(e)[:300]}"}, 500)
-
-    def _handle_character_performance(self, scene_index, body):
-        """Generate character performance video using act_two model.
-
-        Takes a character image + reference performance video and generates
-        a new video where the character performs the same movements/expressions.
-        """
-        plan = load_movie_plan(OUTPUT_DIR)
-        if not plan or not plan.get("scenes"):
-            self._send_json({"error": "No plan"}, 400)
-            return
-        scenes = plan["scenes"]
-        if scene_index < 0 or scene_index >= len(scenes):
-            self._send_json({"error": "Invalid scene index"}, 400)
-            return
-
-        scene = scenes[scene_index]
-
-        # Get character image -- prefer first frame, then character photo
-        char_image_path = scene.get("first_frame_path", "")
-        if not char_image_path or not os.path.isfile(char_image_path):
-            # Try character reference photo
-            enriched = dict(scene)
-            _enrich_scene_with_assets(enriched)
-            char_image_path = enriched.get("character_photo_path", "")
-
-        if not char_image_path or not os.path.isfile(char_image_path):
-            self._send_json({"error": "No character image available. Generate a first frame or upload a character photo."}, 400)
-            return
-
-        # Reference video can come from body or from a previously generated clip
-        ref_video_path = body.get("referenceVideoPath", "")
-        if not ref_video_path:
-            # Check if there's an uploaded performance reference
-            perf_dir = os.path.join(OUTPUT_DIR, "performance_refs")
-            if os.path.isdir(perf_dir):
-                for f in os.listdir(perf_dir):
-                    if f.endswith(('.mp4', '.webm', '.mov')):
-                        ref_video_path = os.path.join(perf_dir, f)
-                        break
-
-        if not ref_video_path or not os.path.isfile(ref_video_path):
-            self._send_json({"error": "No reference performance video. Upload a 3-30 second video of the performance you want the character to replicate."}, 400)
-            return
-
-        body_control = body.get("bodyControl", True)
-        expression_intensity = body.get("expressionIntensity", 3)
-
-        try:
-            import base64
-            import requests
-            from lib.video_generator import _photo_to_data_uri
-
-            # Build character image URI
-            char_uri = _photo_to_data_uri(char_image_path)
-
-            # Build reference video URI
-            with open(ref_video_path, "rb") as vf:
-                video_bytes = vf.read()
-            video_b64 = base64.b64encode(video_bytes).decode("ascii")
-            video_uri = f"data:video/mp4;base64,{video_b64}"
-
-            payload = {
-                "model": "act_two",
-                "character": {"type": "image", "uri": char_uri},
-                "reference": {"type": "video", "uri": video_uri},
-                "bodyControl": body_control,
-                "expressionIntensity": max(1, min(5, int(expression_intensity))),
-                "contentModeration": {"publicFigureThreshold": "low"},
-            }
-
-            print(f"[ACT_TWO][{scene_index}] Submitting character performance: bodyControl={body_control}, intensity={expression_intensity}")
-
-            resp = requests.post(
-                f"{RUNWAY_API_BASE}/character_performance",
-                headers=_runway_headers(),
-                json=payload,
-                timeout=120,
-            )
-
-            if resp.status_code not in (200, 201):
-                err = resp.text[:500]
-                print(f"[ACT_TWO] Error {resp.status_code}: {err}")
-                self._send_json({"error": f"Act Two API error: {err[:200]}"}, resp.status_code)
-                return
-
-            data = resp.json()
-            task_id = data.get("id", "")
-            if not task_id:
-                self._send_json({"error": "No task ID returned from Act Two"}, 500)
-                return
-
-            print(f"[ACT_TWO][{scene_index}] Task: {task_id}")
-            result = _runway_poll(task_id)
-
-            # Download result
-            clips_dir = os.path.join(OUTPUT_DIR, "auto_director", "clips")
-            os.makedirs(clips_dir, exist_ok=True)
-            clip_path = os.path.join(clips_dir, f"scene_{scene_index}_performance_{int(time.time())}.mp4")
-            _download(result["url"], clip_path)
-
-            # Update scene
-            scene["clip_path"] = clip_path
-            scene["clip_url"] = f"/api/clips/{os.path.basename(clip_path)}"
-            scene["has_clip"] = True
-            scene["performance_mode"] = True
-            scenes[scene_index] = scene
-            save_movie_plan(plan, OUTPUT_DIR)
-
-            self._send_json({
-                "ok": True,
-                "clip_url": scene["clip_url"],
-                "clip_path": clip_path,
-            })
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self._send_json({"error": f"Character performance error: {str(e)[:300]}"}, 500)
-
-    def _handle_generate_scene_clip(self, scene_index):
-        """Generate a video clip for a scene using image_to_video with its first frame."""
-        _gen_start = time.time()
-        ip = self.client_address[0]
-        if not _check_rate_limit(ip, "generate"):
-            self._send_json({"error": "Rate limited — too many generation requests. Please wait a minute."}, 429)
-            return
-        # Read optional body for seed
-        clip_body_data = {}
-        try:
-            cl = int(self.headers.get("Content-Length", 0))
-            if cl > 0:
-                raw_body = self.rfile.read(cl)
-                clip_body_data = json.loads(raw_body)
-        except Exception:
-            pass
-
-        plan = load_movie_plan(OUTPUT_DIR)
-        if not plan or not plan.get("scenes"):
-            self._send_json({"error": "No plan"}, 400)
-            return
-        scenes = plan["scenes"]
-        if scene_index < 0 or scene_index >= len(scenes):
-            self._send_json({"error": "Invalid index"}, 400)
-            return
-
-        scene = scenes[scene_index]
-
-        # Apply seed from request body if provided
-        if clip_body_data.get("seed") is not None:
-            scene["seed"] = clip_body_data["seed"]
-
-        first_frame = scene.get("first_frame_path", "")
-
-        if not first_frame or not os.path.isfile(first_frame):
-            self._send_json({"error": "No first frame. Generate a first frame first."}, 400)
-            return
-
-        prompt = scene.get("shot_prompt", scene.get("prompt", ""))
-        duration = max(2, min(10, int(scene.get("duration", 5))))
-
-        # Get engine
-        enriched = dict(scene)
-        _enrich_scene_with_assets(enriched)
-        engine = scene.get("engine", "")
-        if not engine:
-            settings = _load_settings()
-            ds = settings.get("director_state", {})
-            engine = ds.get("engine", "") or settings.get("default_engine", "gen4_5")
-
-        try:
-            from lib.video_generator import _runway_submit_text_to_video, _runway_poll, _download
-
-            print(f"[CLIP][{scene_index}] Generating clip: engine={engine}, duration={duration}s, first_frame={first_frame}")
-
-            # For image_to_video: focus prompt on MOTION and ACTION, not visual description.
-            # The first frame image IS the visual reference — the prompt should describe
-            # what HAPPENS, not what things look like.
-            shot_type = scene.get("shot_type", "medium")
-            action = scene.get("action", "") or scene.get("visual_description", "") or ""
-            camera_move = scene.get("camera", "") or scene.get("camera_movement", "") or ""
-
-            video_prompt_parts = []
-            # Action/motion from scene
-            if action and action != prompt:
-                video_prompt_parts.append(action)
-            else:
-                video_prompt_parts.append(prompt)
-            # Camera movement
-            if camera_move:
-                video_prompt_parts.append(f"Camera: {camera_move}.")
-            # Shot-type motion hints
-            if shot_type == "close-up":
-                video_prompt_parts.append("Subtle facial movement, breathing, natural micro-expressions. Maintain exact likeness throughout.")
-            elif shot_type in ("wide", "establishing"):
-                video_prompt_parts.append("Atmospheric motion, environmental animation, cinematic sweep.")
-            else:
-                video_prompt_parts.append("Natural, fluid motion. Cinematic quality.")
-            video_prompt_parts.append("Smooth motion, no artifacts, consistent lighting.")
-            video_prompt = " ".join(video_prompt_parts)[:1000]
-
-            # Load project style for video prompt
-            project_style = _prompt_os.get_project_style()
-            if project_style:
-                vid_style_parts = []
-                if project_style.get("tone"):
-                    vid_style_parts.append(project_style["tone"])
-                if project_style.get("visualLanguage"):
-                    vid_style_parts.append(project_style["visualLanguage"])
-                if vid_style_parts:
-                    video_prompt = " ".join(vid_style_parts) + ". " + video_prompt
-                    video_prompt = video_prompt[:1000]
-
-            # Seed for reproducibility
-            clip_seed = scene.get("seed")
-            if clip_seed is not None:
-                try:
-                    clip_seed = int(clip_seed)
-                except (ValueError, TypeError):
-                    clip_seed = None
-            if clip_seed is None:
-                import random
-                clip_seed = random.randint(0, 4294967295)
-            scene["last_seed"] = clip_seed
-
-            task_id = _runway_submit_text_to_video(
-                video_prompt, duration=duration, model=engine,
-                first_frame_path=first_frame,
-                seed=clip_seed,
-            )
-
-            print(f"[CLIP][{scene_index}] Task submitted: {task_id[:16]}..., seed={clip_seed}")
-            video_info = _runway_poll(task_id)
-
-            # Download clip
-            clips_dir = os.path.join(OUTPUT_DIR, "auto_director")
-            os.makedirs(clips_dir, exist_ok=True)
-            clip_path = os.path.join(clips_dir, f"clip_{scene_index:03d}.mp4")
-            _download(video_info["url"], clip_path)
-
-            # Update scene
-            scene["clip_path"] = clip_path
-            scene["has_clip"] = True
-            scene["status"] = "done"
-            scenes[scene_index] = scene
-            # Save to BOTH plan files so UI and backend stay in sync
-            save_movie_plan(plan, OUTPUT_DIR)
-            with open(AUTO_DIRECTOR_PLAN_PATH, "w", encoding="utf-8") as f:
-                json.dump(plan, f, indent=2, ensure_ascii=False)
-
-            _record_cost(f"clip_{scene_index}", "video")
-            print(f"[CLIP][{scene_index}] Clip saved: {clip_path}")
-
-            self._send_json({
-                "ok": True,
-                "clip_path": clip_path,
-                "clip_url": f"/api/clips/{os.path.basename(clip_path)}",
-                "scene": scene,
-            })
-
-            # Log analytics
-            try:
-                analytics_path = os.path.join(OUTPUT_DIR, "analytics.json")
-                analytics = []
-                if os.path.isfile(analytics_path):
-                    with open(analytics_path, "r") as f:
-                        analytics = json.load(f)
-
-                analytics.append({
-                    "type": "scene_clip",
-                    "scene_index": scene_index,
-                    "shot_type": shot_type,
-                    "engine": engine,
-                    "duration": duration,
-                    "prompt_length": len(video_prompt),
-                    "generation_time": round(time.time() - _gen_start, 1),
-                    "success": True,
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "has_first_frame": bool(first_frame),
-                })
-
-                # Keep last 500 entries
-                with open(analytics_path, "w") as f:
-                    json.dump(analytics[-500:], f, indent=2)
-            except:
-                pass
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self._send_json({"error": str(e)[:300]}, 500)
 
     def _handle_scene_preview(self, scene_index):
         """Generate a preview for a single scene."""
@@ -13593,7 +11616,10 @@ Do not include any explanation, just the JSON object."""
 
     def _handle_scenes_preview_batch(self):
         """Generate previews for all missing/stale scenes in background."""
-        body = json.loads(self._read_body()) if self.headers.get("Content-Length") else {}
+        try:
+            body = json.loads(self._read_body()) if self.headers.get("Content-Length") else {}
+        except (json.JSONDecodeError, ValueError):
+            body = {}
         mode = body.get("mode", "missing_and_stale")
 
         plan = load_movie_plan(OUTPUT_DIR)
@@ -13719,87 +11745,48 @@ Do not include any explanation, just the JSON object."""
             print(f"[MOVIE PLANNER] Sync to pipeline failed: {e}")
 
 
-def _kill_stale_servers(port):
-    """Kill any existing processes listening on our port before starting."""
-    import subprocess as _sp
-    try:
-        # Find PIDs on our port
-        result = _sp.run(
-            ["netstat", "-ano"],
-            capture_output=True, text=True, timeout=5
-        )
-        pids = set()
-        my_pid = os.getpid()
-        for line in result.stdout.split("\n"):
-            if f":{port}" in line and "LISTENING" in line:
-                parts = line.strip().split()
-                if parts:
-                    try:
-                        pid = int(parts[-1])
-                        if pid != my_pid and pid != 0:
-                            pids.add(pid)
-                    except ValueError:
-                        pass
-
-        if pids:
-            print(f"  Cleaning up {len(pids)} stale server process(es) on port {port}...")
-            for pid in pids:
-                try:
-                    _sp.run(["taskkill", "/F", "/PID", str(pid)],
-                            capture_output=True, timeout=5)
-                except Exception:
-                    pass
-            # Wait for port to free
-            import time as _t
-            _t.sleep(2)
-            print(f"  Cleanup done.")
-    except Exception as e:
-        print(f"  Port cleanup skipped: {e}")
+def _cleanup_old_temp_files():
+    """Remove temp files older than 7 days from output directories."""
+    import time
+    cutoff = time.time() - 7 * 86400
+    for dirname in [os.path.join(OUTPUT_DIR, "temp"), os.path.join(OUTPUT_DIR, "waveforms")]:
+        if not os.path.isdir(dirname):
+            continue
+        for f in os.listdir(dirname):
+            fp = os.path.join(dirname, f)
+            try:
+                if os.path.isfile(fp) and os.path.getmtime(fp) < cutoff:
+                    os.remove(fp)
+            except OSError:
+                pass
 
 
-def _write_pid_file():
-    """Write PID file so we can find ourselves later."""
-    pid_path = os.path.join(OUTPUT_DIR, "server.pid")
-    with open(pid_path, "w") as f:
-        f.write(str(os.getpid()))
-
-
-def _remove_pid_file():
-    """Remove PID file on shutdown."""
-    pid_path = os.path.join(OUTPUT_DIR, "server.pid")
-    try:
-        os.remove(pid_path)
-    except OSError:
-        pass
+import ssl
+_SSL_CERT = os.environ.get("LUMN_SSL_CERT", "")
+_SSL_KEY = os.environ.get("LUMN_SSL_KEY", "")
 
 
 def main():
-    # Kill any stale servers before starting
-    _kill_stale_servers(PORT)
-
-    # Allow port reuse
-    import socketserver
-    socketserver.TCPServer.allow_reuse_address = True
-    HTTPServer.allow_reuse_address = True
-
+    _cleanup_old_temp_files()
     server = HTTPServer(("0.0.0.0", PORT), Handler)
-    server.allow_reuse_address = True
 
-    _write_pid_file()
+    if _SSL_CERT and _SSL_KEY and os.path.isfile(_SSL_CERT) and os.path.isfile(_SSL_KEY):
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(_SSL_CERT, _SSL_KEY)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        print(f"[HTTPS] SSL enabled with cert: {_SSL_CERT}")
+        proto = "https"
+    else:
+        proto = "http"
 
     print(f"\n  LUMN Studio")
-    print(f"  UI running at http://localhost:{PORT}")
-    print(f"  PID: {os.getpid()}")
+    print(f"  UI running at {proto}://localhost:{PORT}")
     print(f"  Press Ctrl+C to stop\n")
-
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nShutting down.")
-    finally:
         server.server_close()
-        _remove_pid_file()
-        print("Server stopped.")
 
 
 if __name__ == "__main__":

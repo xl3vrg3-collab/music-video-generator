@@ -751,3 +751,146 @@ def compile_shot_variants(
             prev_shot=prev_shot, tier=tier,
         )
     return variants
+
+
+# ---- V4 Shot Prompt Builder (compact, budget-managed) ----
+
+PROMPT_CHAR_LIMIT = 1000  # Runway API hard limit
+
+
+def compile_shot_prompt_v4(
+    shot: dict,
+    beat: dict = None,
+    style_bible: dict = None,
+    character: dict = None,
+    costume: dict = None,
+    environment: dict = None,
+    prev_shot: dict = None,
+    is_first_in_beat: bool = False,
+    package_notes: dict = None,
+    taste_modifiers: dict = None,
+) -> str:
+    """
+    Build a compact V4 shot prompt that fits within 1000 chars.
+
+    Strategy:
+    - First shot in beat: full environment + character + action + camera
+    - Subsequent shots: delta only (action + camera change + continuity anchors)
+    - Screen direction always baked in
+    - Lock strengths (from shot dict) control how much context is included
+
+    Returns:
+        Assembled prompt string, guaranteed <= 1000 chars
+    """
+    style_bible = style_bible or {}
+    beat = beat or {}
+
+    char_lock = shot.get("character_lock_strength", 0.8)
+    env_lock = shot.get("environment_lock_strength", 0.7)
+    style_lock = shot.get("style_lock_strength", 0.9)
+
+    parts = []
+    budget = PROMPT_CHAR_LIMIT
+
+    # 1. Style prefix (always, but compressed)
+    if style_lock > 0.3:
+        style_str = style_bible.get("global_style", DEFAULT_GLOBAL_STYLE)
+        if style_lock < 0.7:
+            style_str = style_str[:60]  # truncate for low lock
+        parts.append(style_str)
+
+    # 2. Environment (first shot in beat OR high lock)
+    if is_first_in_beat or env_lock >= 0.8:
+        env_block = build_environment_block(environment)
+        if env_block:
+            parts.append(env_block[:200] if is_first_in_beat else env_block[:80])
+    elif env_lock >= 0.5 and environment:
+        # Brief env reminder
+        env_name = environment.get("name", environment.get("description", ""))
+        if env_name:
+            parts.append(f"in {env_name[:50]}")
+
+    # 3. Character (first shot OR high lock)
+    if is_first_in_beat or char_lock >= 0.8:
+        char_block = build_character_block(character)
+        if char_block:
+            parts.append(char_block[:180] if is_first_in_beat else char_block[:80])
+        cost_block = build_costume_block(costume)
+        if cost_block:
+            parts.append(cost_block[:100] if is_first_in_beat else cost_block[:50])
+    elif char_lock >= 0.5 and character:
+        # Brief character reminder
+        name = character.get("name", "")
+        if name:
+            parts.append(name)
+
+    # 4. Action (always — this is the shot-specific content)
+    action = shot.get("action", "")
+    if isinstance(action, dict):
+        action = action.get("summary", "")
+    if action:
+        parts.append(action[:250])
+
+    # 5. Camera + shot size
+    shot_size = shot.get("shot_size", "MS")
+    movement = shot.get("movement", "static")
+    lens = shot.get("lens_feel", "")
+    angle = shot.get("angle", "eye_level")
+
+    cam_parts = [f"{shot_size} shot"]
+    if lens:
+        cam_parts.append(lens)
+    if movement and movement != "static":
+        cam_parts.append(movement.replace("_", " "))
+    elif movement == "static":
+        cam_parts.append("locked static camera")
+    if angle and angle != "eye_level":
+        cam_parts.append(f"{angle.replace('_', ' ')} angle")
+    parts.append(", ".join(cam_parts))
+
+    # 6. Screen direction
+    screen_dir = shot.get("screen_direction", "neutral")
+    if screen_dir == "L2R":
+        parts.append("subject moves left to right")
+    elif screen_dir == "R2L":
+        parts.append("subject moves right to left")
+
+    # 7. Emotion
+    emotion = shot.get("emotion", "")
+    if emotion:
+        parts.append(f"mood: {emotion[:60]}")
+
+    # 8. Continuity anchors (delta from previous)
+    anchors = shot.get("continuity_anchors", [])
+    if anchors:
+        parts.append("maintain: " + ", ".join(a[:40] for a in anchors[:3]))
+
+    # 9. Preproduction package notes (must_keep/avoid from approved packages)
+    if package_notes:
+        keeps = package_notes.get("must_keep", [])
+        avoids = package_notes.get("avoid", [])
+        if keeps:
+            parts.append("keep: " + ", ".join(k[:30] for k in keeps[:3]))
+        if avoids:
+            parts.append("avoid: " + ", ".join(a[:30] for a in avoids[:2]))
+
+    # 10. Taste profile modifiers (lighting, texture, tone from blended taste)
+    if taste_modifiers:
+        taste_parts = []
+        for key in ("lighting", "texture", "tone", "realism", "composition"):
+            mod = taste_modifiers.get(key, "")
+            if mod:
+                taste_parts.append(mod)
+        if taste_parts:
+            parts.append(", ".join(taste_parts[:3]))
+
+    # Assemble and enforce budget
+    assembled = ". ".join(p for p in parts if p)
+
+    if len(assembled) > PROMPT_CHAR_LIMIT:
+        # Progressive trimming: cut continuity, then emotion, then env detail
+        assembled = ". ".join(p for p in parts[:-1] if p)  # drop continuity
+    if len(assembled) > PROMPT_CHAR_LIMIT:
+        assembled = assembled[:PROMPT_CHAR_LIMIT - 3] + "..."
+
+    return assembled

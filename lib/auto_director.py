@@ -525,7 +525,7 @@ class AutoDirector:
     def plan_with_ai(self, song_path: str, creative_direction: str,
                       lyrics: str = "", characters=None, environments=None,
                       engine="grok", natural_pacing=True, preset_id=None,
-                      budget=None) -> dict:
+                      budget=None, story_model=None) -> dict:
         """
         Plan a full music video using LLM-driven story planning.
 
@@ -570,7 +570,7 @@ class AutoDirector:
         ai_scenes = None
         ai_error = None
         try:
-            planner = StoryPlanner()
+            planner = StoryPlanner(model=story_model)
             ai_scenes = planner.plan_story(
                 lyrics=lyrics,
                 creative_direction=creative_direction,
@@ -593,7 +593,10 @@ class AutoDirector:
                 storyline="",
             )
 
-        # 4. Build scene plan from AI output, mapping to our format
+        # 4. V4: Build BEATS from AI scenes, expand each to SHOTS
+        from lib.story_planner import expand_beat_to_shots, _SECTION_TO_SEQUENCE
+        from lib.prompt_assembler import compile_shot_prompt_v4, DEFAULT_GLOBAL_STYLE
+
         # Build name->object lookup maps for characters and environments
         char_by_name = {}
         for c in characters:
@@ -602,7 +605,16 @@ class AutoDirector:
         for e in environments:
             env_by_name[e.get("name", "").lower()] = e
 
-        scenes = []
+        style_bible = {
+            "global_style": creative_direction or DEFAULT_GLOBAL_STYLE,
+            "negative": "no text, no watermark, no blurry, no distorted faces",
+        }
+
+        v4_beats = []
+        all_shots = []
+        cumulative_time = 0.0
+        global_shot_idx = 0
+
         for i, ai_scene in enumerate(ai_scenes):
             section = sections[i] if i < len(sections) else sections[-1]
             stype = section.get("type", "verse")
@@ -615,13 +627,11 @@ class AutoDirector:
             char = None
             if ai_char_name:
                 char = char_by_name.get(ai_char_name.lower())
-                # Fuzzy match: try partial name match
                 if not char:
                     for cname, cobj in char_by_name.items():
                         if ai_char_name.lower() in cname or cname in ai_char_name.lower():
                             char = cobj
                             break
-            # Fallback: if AI didn't suggest, use template assignment logic
             if not char and characters:
                 temp_assignments = self.assign_characters_to_sections(characters, [section])
                 char = temp_assignments[0]
@@ -647,91 +657,23 @@ class AutoDirector:
                 if char_costumes:
                     costume = char_costumes[0]
 
-            # Duration
-            if natural_pacing:
-                clip_dur = _pick_natural_duration(stype, energy, beats=beats, start=start, end=end)
-            else:
-                clip_dur = round(end - start, 3)
-            clip_dur = get_valid_duration(engine, int(clip_dur))
-
-            # Transition
-            if i == 0:
-                transition = "crossfade"
-            else:
-                prev_type = sections[i - 1].get("type", "verse") if i < len(sections) else "verse"
-                transition = auto_assign_transition(prev_type, stype)
-
-            if preset_settings:
-                trans_style = preset_settings.get("transition_style", "mixed")
-                if trans_style == "slow" and transition == "hard_cut":
-                    transition = "dissolve"
-                elif trans_style == "fast" and transition in ("dissolve", "fade_black"):
-                    transition = "hard_cut"
-
-            # Camera from AI or fallback
-            camera = ai_scene.get("camera", "static")
-            # Normalize camera to our known values
-            cam_map = {
-                "slow pan right": "pan_right", "pan right": "pan_right",
-                "slow pan left": "pan_left", "pan left": "pan_left",
-                "slow zoom in": "zoom_in", "slow zoom out": "zoom_out",
-                "tracking shot": "tracking", "track": "tracking",
-                "orbital": "orbit", "orbiting": "orbit",
-                "dolly": "tracking", "dolly in": "zoom_in",
-                "crane up": "zoom_out", "crane down": "zoom_in",
-                "handheld": "static", "steady": "static",
-            }
-            camera_lower = camera.lower().strip()
-            camera = cam_map.get(camera_lower, camera_lower)
-            # Validate against known cameras
-            valid_cams = {"zoom_in", "zoom_out", "pan_left", "pan_right", "orbit", "tracking", "static"}
-            if camera not in valid_cams:
-                cam_pool = SECTION_CAMERAS.get(stype, SECTION_CAMERAS["verse"])
-                camera = random.choice(cam_pool)
-
-            # Build prompt: use AI visual_prompt as the primary prompt
-            visual_prompt = ai_scene.get("visual_prompt", "")
-            story_beat = ai_scene.get("story_beat", "")
-            emotion = ai_scene.get("emotion", "")
-
-            # Enhance with entity descriptions if not already included
-            prompt_parts = [visual_prompt]
-            if char and char.get("description", char.get("physicalDescription", "")):
-                char_desc = char.get("description", char.get("physicalDescription", ""))
-                if char_desc.lower() not in visual_prompt.lower():
-                    prompt_parts.append(char_desc)
-            if costume and costume.get("description", ""):
-                costume_desc = costume["description"]
-                if costume_desc.lower() not in visual_prompt.lower():
-                    prompt_parts.append(f"wearing {costume_desc}")
-            if env and env.get("description", ""):
-                env_desc = env["description"]
-                if env_desc.lower() not in visual_prompt.lower():
-                    prompt_parts.append(f"in {env_desc}")
-            prompt_parts.append(QUALITY_SUFFIX)
-            prompt = ", ".join(p for p in prompt_parts if p)
-
-            # Character reference photo
+            # Reference photos
             char_photo = None
             if char and char.get("referencePhoto"):
                 char_photo = self._resolve_reference_photo(char["referencePhoto"], "characters")
-
-            # Environment reference photo
             env_photo = None
             if env and env.get("referencePhoto"):
                 env_photo = self._resolve_reference_photo(env["referencePhoto"], "environments")
 
-            scene = {
-                "id": f"ai_{i:03d}",
-                "index": i,
-                "start_sec": start,
-                "end_sec": end,
-                "duration": clip_dur,
-                "prompt": prompt,
-                "section_type": stype,
-                "energy": energy,
-                "transition": transition,
-                "camera_movement": camera,
+            # Build beat dict from AI scene
+            beat_dict = {
+                "scene_number": i,
+                "beat_id": f"beat_{i:02d}",
+                "story_beat": ai_scene.get("story_beat", ""),
+                "visual_prompt": ai_scene.get("visual_prompt", ""),
+                "emotion": ai_scene.get("emotion", ""),
+                "character": ai_char_name,
+                "environment": ai_env_name,
                 "engine": engine,
                 "characterId": char["id"] if char else None,
                 "characterName": char["name"] if char else None,
@@ -741,36 +683,160 @@ class AutoDirector:
                 "costumeName": costume["name"] if costume else None,
                 "character_photo_path": char_photo,
                 "environment_photo_path": env_photo,
-                "clip_path": None,
-                "has_clip": False,
-                "status": "planned",
-                "error": None,
-                # AI-specific metadata
-                "ai_story_beat": story_beat,
-                "ai_emotion": emotion,
-                "ai_lyrics": ai_scene.get("lyrics_at_this_point", ""),
-                "planning_method": "ai",
+                "lighting": env.get("lighting", "") if env else "",
+                "color_grade": "",
             }
-            scenes.append(scene)
 
-        # 5. Coherence pass
-        scenes = coherence_pass(scenes)
+            # Expand beat into 2-5 shots
+            sequence_type = _SECTION_TO_SEQUENCE.get(stype, "montage")
+            shots = expand_beat_to_shots(
+                beat=beat_dict,
+                sequence_type=sequence_type,
+                energy=energy,
+                section_type=stype,
+                characters=characters,
+                environments=environments,
+                audio_beats=beats,
+                cumulative_time=cumulative_time,
+                global_shot_index=global_shot_idx,
+            )
 
-        # 6. Cost estimate
-        estimate = self.estimate_cost(len(scenes), engine)
+            # Assemble prompts for each shot using V4 compact builder
+            char_data = self.pos.get_character(char["id"]) if char else None
+            costume_data = self.pos.get_costume(costume["id"]) if costume else None
+            env_data = self.pos.get_environment(env["id"]) if env else None
+
+            for si, shot in enumerate(shots):
+                shot["prompt"] = compile_shot_prompt_v4(
+                    shot=shot,
+                    beat=beat_dict,
+                    style_bible=style_bible,
+                    character=char_data,
+                    costume=costume_data,
+                    environment=env_data,
+                    prev_shot=shots[si - 1] if si > 0 else None,
+                    is_first_in_beat=(si == 0),
+                )
+                # Transition logic
+                if global_shot_idx + si == 0:
+                    shot["transition"] = "crossfade"
+                elif si == 0:
+                    prev_stype = sections[i - 1].get("type", "verse") if i > 0 and i < len(sections) else "verse"
+                    shot["transition"] = auto_assign_transition(prev_stype, stype)
+                else:
+                    shot["transition"] = "hard_cut"  # within-beat cuts are hard cuts
+                shot["planning_method"] = "ai_v4"
+
+            # Build V4 beat object
+            beat_total_dur = sum(s["target_duration"] for s in shots)
+            v4_beat = {
+                "beat_id": f"beat_{i:02d}",
+                "beat_index": i,
+                "beat_type": stype,
+                "sequence_type": sequence_type,
+                "start_sec": start,
+                "end_sec": end,
+                "energy": energy,
+                "story_beat": ai_scene.get("story_beat", ""),
+                "emotion": ai_scene.get("emotion", ""),
+                "characterId": char["id"] if char else None,
+                "environmentId": env["id"] if env else None,
+                "shot_count": len(shots),
+                "total_duration": round(beat_total_dur, 2),
+                "shots": shots,
+            }
+            v4_beats.append(v4_beat)
+            all_shots.extend(shots)
+            cumulative_time += beat_total_dur
+            global_shot_idx += len(shots)
+
+        # Run shot validators if available
+        blocking_errors = []
+        try:
+            from lib.shot_validator import validate_all
+            validation = validate_all(all_shots, characters)
+            if validation.get("is_blocked"):
+                blocking_errors = validation["character_binding"]["failures"]
+                print(f"[AUTO DIRECTOR] Character binding BLOCKED: {blocking_errors}")
+        except ImportError:
+            pass
+
+        # 4b. Preproduction package binding + taste integration
+        try:
+            from lib.preproduction_assets import (
+                PreproductionStore, bind_shots_to_packages,
+                get_shot_package_notes, get_shot_references
+            )
+            from lib.taste_profile import TasteStore, taste_to_prompt_modifiers
+            preprod_store = PreproductionStore(self.output_dir)
+            packages = preprod_store.get_all()
+            if packages:
+                bind_shots_to_packages(all_shots, packages)
+                print(f"[AUTO DIRECTOR] Bound {sum(1 for s in all_shots if s.get('character_package_id'))} shots to preproduction packages")
+
+            # Get blended taste profile
+            taste_store = TasteStore(os.path.join(self.output_dir, "taste"))
+            blended = taste_store.get_blended()
+            taste_mods = taste_to_prompt_modifiers(blended) if blended.get("dimensions") else None
+
+            # Re-assemble prompts with package notes and taste
+            if packages or taste_mods:
+                for si, shot in enumerate(all_shots):
+                    pkg_notes = get_shot_package_notes(shot, packages) if packages else None
+                    beat_idx = next((bi for bi, b in enumerate(v4_beats) if b["beat_id"] == shot.get("beat_id")), 0)
+                    beat_dict_ref = v4_beats[beat_idx] if beat_idx < len(v4_beats) else {}
+                    char_id = shot.get("characterId") or beat_dict_ref.get("characterId")
+                    env_id = shot.get("environmentId") or beat_dict_ref.get("environmentId")
+                    char_data_r = self.pos.get_character(char_id) if char_id else None
+                    env_data_r = self.pos.get_environment(env_id) if env_id else None
+                    costume_id = shot.get("costumeId") or beat_dict_ref.get("costumeId")
+                    costume_data_r = self.pos.get_costume(costume_id) if costume_id else None
+                    shot["prompt"] = compile_shot_prompt_v4(
+                        shot=shot, beat=beat_dict_ref, style_bible=style_bible,
+                        character=char_data_r, costume=costume_data_r,
+                        environment=env_data_r,
+                        prev_shot=all_shots[si - 1] if si > 0 else None,
+                        is_first_in_beat=(shot.get("shot_index", 0) == 0),
+                        package_notes=pkg_notes, taste_modifiers=taste_mods,
+                    )
+        except ImportError:
+            pass  # preproduction/taste modules not available
+
+        # 5. Coherence pass on flat shot list
+        all_shots = coherence_pass(all_shots)
+
+        # Sync shots back into beats
+        shot_idx = 0
+        for beat_obj in v4_beats:
+            n = beat_obj["shot_count"]
+            beat_obj["shots"] = all_shots[shot_idx:shot_idx + n]
+            shot_idx += n
+
+        # 6. Cost estimate (V4: count total shots * runway_duration)
+        total_runway_secs = sum(s.get("runway_duration", 3) for s in all_shots)
+        hero_count = sum(1 for s in all_shots if s.get("is_hero"))
+        estimate = self.estimate_cost(len(all_shots), engine)
+        estimate["total_shots"] = len(all_shots)
+        estimate["total_beats"] = len(v4_beats)
+        estimate["total_runway_seconds"] = total_runway_secs
+        estimate["hero_shots"] = hero_count
+        estimate["hero_take_overhead"] = round(hero_count * 2 * estimate.get("cost_per_scene", 0.15), 2)
 
         plan = {
+            "plan_version": 4,
             "song_path": song_path,
             "style": creative_direction,
+            "style_bible": style_bible,
             "lyrics": lyrics,
             "engine": engine,
             "preset_id": preset_id,
-            "planning_method": "ai",
+            "planning_method": "ai_v4",
             "ai_error": ai_error,
             "bpm": bpm,
             "duration": duration,
             "num_sections": len(sections),
-            "scenes": scenes,
+            "beats": v4_beats,
+            "scenes": all_shots,  # flattened shot list for backwards compat
             "estimate": estimate,
             "analysis": {
                 "bpm": bpm,
@@ -780,8 +846,52 @@ class AutoDirector:
             },
             "characters": [{"id": c["id"], "name": c["name"]} for c in characters],
             "environments": [{"id": e["id"], "name": e["name"]} for e in environments],
+            "blocking_errors": blocking_errors,
+            "status": "blocked" if blocking_errors else "ready",
+            "preproduction": {
+                "mode": "fast",
+                "packages": {"characters": [], "costumes": [], "environments": [], "props": []},
+            },
+            "taste": {
+                "overall_profile_id": None,
+                "project_profile_id": None,
+                "inherit_overall": True,
+                "blend_summary": {},
+            },
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }
+
+        # Populate preproduction section from store
+        try:
+            from lib.preproduction_assets import PreproductionStore
+            preprod_store = PreproductionStore(self.output_dir)
+            all_pkgs = preprod_store.get_all()
+            for pkg in all_pkgs:
+                t = pkg.get("package_type", "")
+                key = t + "s" if not t.endswith("s") else t
+                if key in plan["preproduction"]["packages"]:
+                    plan["preproduction"]["packages"][key].append({
+                        "package_id": pkg["package_id"],
+                        "name": pkg.get("name"),
+                        "status": pkg.get("status"),
+                        "has_hero_ref": bool(pkg.get("hero_image_path")),
+                    })
+            plan["preproduction"]["mode"] = preprod_store.get_mode()
+        except (ImportError, Exception):
+            pass
+
+        # Populate taste section
+        try:
+            from lib.taste_profile import TasteStore, generate_taste_summary
+            taste_store = TasteStore(os.path.join(self.output_dir, "taste"))
+            overall = taste_store.get_overall()
+            if overall:
+                plan["taste"]["overall_profile_id"] = overall.get("profile_id")
+            blended = taste_store.get_blended()
+            if blended.get("dimensions"):
+                plan["taste"]["blend_summary"] = blended["dimensions"]
+        except (ImportError, Exception):
+            pass
 
         return plan
 
@@ -989,10 +1099,18 @@ class AutoDirector:
         3. Overlay audio
         4. Return path to final video
         """
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
         scenes = plan["scenes"]
         song_path = plan.get("song_path")
+
+        # Load preproduction packages for hero ref injection during generation
+        try:
+            from lib.preproduction_assets import PreproductionStore
+            preprod_store = PreproductionStore(self.output_dir)
+            self._preprod_packages = preprod_store.get_all()
+            self._preprod_pkg_index = {p["package_id"]: p for p in self._preprod_packages}
+        except (ImportError, Exception):
+            self._preprod_packages = []
+            self._preprod_pkg_index = {}
 
         self._update_progress(
             phase="generating",
@@ -1132,6 +1250,20 @@ class AutoDirector:
                                 _cos_photo_path = _cand
                                 break
 
+            # Override photo paths from preproduction packages if bound
+            if scene.get("character_package_id") and hasattr(self, "_preprod_packages"):
+                pkg = self._preprod_pkg_index.get(scene["character_package_id"])
+                if pkg and pkg.get("hero_image_path") and os.path.isfile(pkg["hero_image_path"]):
+                    scene["character_photo_path"] = pkg["hero_image_path"]
+            if scene.get("environment_package_id") and hasattr(self, "_preprod_packages"):
+                pkg = self._preprod_pkg_index.get(scene["environment_package_id"])
+                if pkg and pkg.get("hero_image_path") and os.path.isfile(pkg["hero_image_path"]):
+                    _env_photo_path = pkg["hero_image_path"]
+            if scene.get("costume_package_id") and hasattr(self, "_preprod_packages"):
+                pkg = self._preprod_pkg_index.get(scene["costume_package_id"])
+                if pkg and pkg.get("hero_image_path") and os.path.isfile(pkg["hero_image_path"]):
+                    _cos_photo_path = pkg["hero_image_path"]
+
             gen_scene = {
                 "prompt": scene["prompt"],
                 "duration": scene.get("duration", 8),
@@ -1144,6 +1276,10 @@ class AutoDirector:
                 "costume_description": costume_description,
                 "environment_photo_path": _env_photo_path,
                 "costume_photo_path": _cos_photo_path,
+                # Frame chaining + continuity (set by sequential loop)
+                "first_frame_path": scene.get("first_frame_path", ""),
+                "continuity_context": scene.get("continuity_context", {}),
+                "continuity_mode": True,
             }
 
             photo_path = scene.get("character_photo_path")
@@ -1209,14 +1345,108 @@ class AutoDirector:
 
                     return scene_id, False, str(e2)
 
-        # Generate all clips, 2 concurrent
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {executor.submit(generate_one, s): s for s in scenes}
-            for future in as_completed(futures):
+        # V4: Generate clips SEQUENTIALLY with smart frame chaining.
+        # - Same environment → frame chain (last frame of N = first frame of N+1)
+        # - Environment change → break chain, use @tag re-establishment
+        # - After generation, trim each clip to exact target_duration
+        from lib.video_generator import trim_to_target
+
+        prev_clip_path = None
+        prev_scene = None
+        trimmed_dir = os.path.join(ad_clips_dir, "trimmed")
+        os.makedirs(trimmed_dir, exist_ok=True)
+
+        for scene in scenes:
+            # ── Smart frame chaining: only chain when same environment ──
+            same_env = (prev_scene
+                        and prev_scene.get("environmentId")
+                        and prev_scene.get("environmentId") == scene.get("environmentId"))
+
+            if prev_clip_path and os.path.isfile(prev_clip_path) and same_env:
+                lf_dir = os.path.join(ad_clips_dir, "last_frames")
+                os.makedirs(lf_dir, exist_ok=True)
+                lf_path = os.path.join(lf_dir, f"lf_{scene['index']:03d}.jpg")
                 try:
-                    future.result()
-                except Exception:
-                    pass
+                    from lib.video_generator import extract_last_frame
+                    extract_last_frame(prev_clip_path, lf_path)
+                    scene["first_frame_path"] = lf_path
+                    print(f"[AUTO DIRECTOR] Frame chain: shot {scene['index']} "
+                          f"from last frame (same env)")
+                except Exception as e:
+                    print(f"[AUTO DIRECTOR] Frame chain extract failed: {e}")
+            elif prev_scene and not same_env:
+                print(f"[AUTO DIRECTOR] Env change at shot {scene['index']} "
+                      f"— breaking frame chain, using @tag re-establishment")
+
+            # ── Continuity context from previous scene ──
+            if prev_scene:
+                scene["continuity_context"] = {
+                    "has_character": bool(prev_scene.get("characterId")),
+                    "character_description": prev_scene.get("character_description_resolved", ""),
+                    "character_photo": prev_scene.get("character_photo_path", ""),
+                    "same_environment": same_env,
+                    "environment_description": prev_scene.get("environment_description_resolved", ""),
+                    "previous_prompt": prev_scene.get("prompt", "")[:200],
+                    "color_grade": prev_scene.get("color_grade", ""),
+                }
+
+            # Generate this shot
+            scene_id, ok, err = generate_one(scene)
+
+            # ── V4: Trim clip to exact target_duration ──
+            if ok and scene.get("clip_path") and scene.get("target_duration"):
+                raw_clip = scene["clip_path"]
+                trim_out = os.path.join(trimmed_dir, f"trimmed_{scene['index']:03d}.mp4")
+                try:
+                    trimmed = trim_to_target(
+                        raw_clip, trim_out,
+                        trim_in=scene.get("trim_in", 0.0),
+                        target_duration=scene["target_duration"],
+                    )
+                    scene["trimmed_clip_path"] = trimmed
+                except Exception as e:
+                    print(f"[AUTO DIRECTOR] Trim failed for shot {scene['index']}: {e}")
+                    scene["trimmed_clip_path"] = raw_clip
+
+            # Store resolved descriptions for next scene's context
+            char_id = scene.get("characterId")
+            if char_id:
+                char_data = self.pos.get_character(char_id) if char_id else None
+                if char_data:
+                    desc_parts = []
+                    phys = char_data.get("physicalDescription",
+                                         char_data.get("description", ""))
+                    if phys:
+                        desc_parts.append(phys[:300])
+                    if char_data.get("hair"):
+                        desc_parts.append(char_data["hair"])
+                    if char_data.get("distinguishingFeatures"):
+                        desc_parts.append(char_data["distinguishingFeatures"])
+                    scene["character_description_resolved"] = ", ".join(desc_parts)
+
+            env_id = scene.get("environmentId")
+            if env_id:
+                env_data = self.pos.get_environment(env_id) if env_id else None
+                if env_data:
+                    env_parts = []
+                    if env_data.get("description"):
+                        env_parts.append(env_data["description"])
+                    if env_data.get("lighting"):
+                        env_parts.append(env_data["lighting"])
+                    scene["environment_description_resolved"] = ", ".join(env_parts)
+
+            # Track for next iteration — use trimmed clip for frame chaining
+            if ok and scene.get("clip_path"):
+                prev_clip_path = scene.get("trimmed_clip_path", scene["clip_path"])
+            prev_scene = scene
+
+        # Sync shot statuses back into beats if V4 plan
+        if plan.get("plan_version") == 4 and plan.get("beats"):
+            shot_idx = 0
+            for beat_obj in plan["beats"]:
+                n = beat_obj.get("shot_count", len(beat_obj.get("shots", [])))
+                beat_obj["shots"] = scenes[shot_idx:shot_idx + n]
+                shot_idx += n
 
         # Save updated plan back to disk (with clip_paths and statuses)
         plan["scenes"] = scenes
@@ -1230,7 +1460,8 @@ class AutoDirector:
         # Stitch
         self._update_progress(phase="stitching")
 
-        clip_paths = [s.get("clip_path") for s in scenes]
+        # V4: prefer trimmed clips, fall back to raw clips
+        clip_paths = [s.get("trimmed_clip_path") or s.get("clip_path") for s in scenes]
         valid_clips = [c for c in clip_paths if c and os.path.isfile(c)]
 
         if not valid_clips:
