@@ -938,6 +938,95 @@ def _runway_generate_scene_image(prompt: str, reference_photos: list,
     return ""
 
 
+# ---- Multi-engine sheet/image generation ----
+
+# Default engine per asset type (based on quality testing)
+# gemini_2.5_flash scored 9/10 with best photorealism; Grok looked drawn
+SHEET_ENGINE_DEFAULTS = {
+    "character": "gemini_2.5_flash",
+    "costume": "gemini_2.5_flash",
+    "environment": "gemini_2.5_flash",
+    "prop": "gemini_2.5_flash",
+}
+
+# Ratio mappings per engine (different APIs need different formats)
+_ENGINE_RATIO_MAP = {
+    "gemini_2.5_flash": "1344:768",   # Runway gemini format
+    "gen4_image": "1280:720",
+    "gen4_image_turbo": "1280:720",
+}
+
+
+def generate_sheet_image(prompt: str, model: str = "grok",
+                         reference_photos: list = None,
+                         ratio: str = "1280:720",
+                         seed: int = None) -> str:
+    """Generate a sheet/still image using the best available engine.
+
+    Routes to the appropriate API based on model name.
+    Returns path to downloaded image file, or "" on failure.
+
+    Supported models:
+      - "grok" / "grok-imagine-image"   (xAI, best for character/costume)
+      - "dall-e-3" / "dalle3" / "openai" (OpenAI DALL-E 3)
+      - "gemini_2.5_flash"               (Runway Gemini, best for environments)
+      - "gen4_image" / "gen4_image_turbo" (Runway native)
+    """
+    import tempfile
+
+    # Normalize model aliases
+    model_lower = model.lower().replace("-", "_")
+    if model_lower in ("grok", "grok_imagine_image"):
+        return _generate_sheet_via_grok(prompt)
+    elif model_lower in ("dall_e_3", "dalle3", "openai"):
+        return _generate_sheet_via_dalle(prompt)
+    elif model_lower.startswith("gemini"):
+        # Gemini models go through Runway with adjusted ratio
+        runway_ratio = _ENGINE_RATIO_MAP.get(model, "1344:768")
+        return _runway_generate_scene_image(
+            prompt, reference_photos or [], runway_ratio, model, seed,
+        )
+    else:
+        # Default: Runway native models
+        return _runway_generate_scene_image(
+            prompt, reference_photos or [], ratio, model, seed,
+        )
+
+
+def _generate_sheet_via_grok(prompt: str) -> str:
+    """Generate sheet image via Grok (xAI). Returns file path."""
+    import tempfile
+    print(f"[GROK/image] Generating sheet: {prompt[:80]}...")
+    try:
+        url = _generate_image(prompt)
+        if not url:
+            return ""
+        dest = os.path.join(tempfile.gettempdir(), f"grok_sheet_{int(time.time())}.png")
+        _download(url, dest)
+        print(f"[GROK/image] Sheet saved to {dest}")
+        return dest
+    except Exception as e:
+        print(f"[GROK/image] Failed: {e}")
+        return ""
+
+
+def _generate_sheet_via_dalle(prompt: str) -> str:
+    """Generate sheet image via DALL-E 3. Returns file path."""
+    import tempfile
+    print(f"[DALLE/image] Generating sheet: {prompt[:80]}...")
+    try:
+        url = _openai_generate_image(prompt)
+        if not url:
+            return ""
+        dest = os.path.join(tempfile.gettempdir(), f"dalle_sheet_{int(time.time())}.png")
+        _download(url, dest)
+        print(f"[DALLE/image] Sheet saved to {dest}")
+        return dest
+    except Exception as e:
+        print(f"[DALLE/image] Failed: {e}")
+        return ""
+
+
 def _runway_video_to_video(video_path: str, prompt: str, reference_image_path: str = None) -> str:
     """Transform an existing video using gen4_aleph with an optional image reference.
 
@@ -1297,34 +1386,40 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
 
     try:
         # ---- TWO-STEP PIPELINE: Generate scene image with @tag refs, then animate ----
-        # Collect all available reference photos for text_to_image @tag system
-        reference_photos = []
+        # Collect ALL available reference photos for text_to_image @tag system.
+        # Runway allows max 3 @Tags — prioritize: Character > Setting > Prop/Costume
+        all_refs = []
         if has_photo and photo_path:
-            reference_photos.append({"path": photo_path, "tag": "Character"})
-        costume_photo = scene.get("costume_photo_path", "")
-        if costume_photo and os.path.isfile(costume_photo):
-            reference_photos.append({"path": costume_photo, "tag": "Costume"})
+            all_refs.append({"path": photo_path, "tag": "Character", "priority": 1})
         env_photo_path = scene.get("environment_photo_path", "")
         if env_photo_path and os.path.isfile(env_photo_path):
-            reference_photos.append({"path": env_photo_path, "tag": "Setting"})
+            all_refs.append({"path": env_photo_path, "tag": "Setting", "priority": 2})
+        # Props get priority 3 (above costume) — collar, leash, etc. are visually distinct
+        for prop_path in (scene.get("prop_photo_paths") or []):
+            if os.path.isfile(prop_path):
+                all_refs.append({"path": prop_path, "tag": "PropRef", "priority": 3})
+                break  # Only one prop ref (tag names must be unique)
+        costume_photo = scene.get("costume_photo_path", "")
+        if costume_photo and os.path.isfile(costume_photo):
+            all_refs.append({"path": costume_photo, "tag": "Costume", "priority": 4})
 
-        # Check for chained frame from previous scene (for character continuity)
-        chained_frame = scene.get("first_frame_path", "")
-        has_chained_frame = chained_frame and os.path.isfile(chained_frame)
+        # Select top 3 by priority (Runway max 3 @Tag references)
+        all_refs.sort(key=lambda r: r["priority"])
+        reference_photos = [{"path": r["path"], "tag": r["tag"]} for r in all_refs[:3]]
 
-        # PIPELINE: Two modes for first frame selection:
-        # A) FIRST SCENE (no chained frame): Use @tag reference photos to generate
-        #    a scene image that establishes the character's look.
-        # B) CONTINUATION SCENES (has chained frame): Use the last frame from the
-        #    previous clip as the starting point. This preserves the SAME character
-        #    appearance across scenes instead of re-rolling a new interpretation.
+        # PIPELINE: Two modes for first frame selection (priority order):
+        # A) PRE-COMPOSED ANCHOR: Use the scene compositor's approved anchor image.
+        # B) @TAG GENERATION: Generate scene image from canonical sheet refs.
+        #    EVERY shot gets its own composed first frame — no frame chaining.
+        #    This ensures character/environment consistency across all shots.
         first_frame = None
-        if has_chained_frame:
-            # Mode B: Use chained frame for continuity
-            first_frame = chained_frame
-            _report(f"using chained frame from previous scene for character continuity")
+        anchor_path = scene.get("anchor_image_path", "")
+        if anchor_path and os.path.isfile(anchor_path):
+            # Mode A: Pre-composed anchor from scene compositor
+            first_frame = anchor_path
+            _report(f"using pre-composed anchor image: {os.path.basename(anchor_path)}")
         elif reference_photos:
-            # Mode A: First scene — generate scene image with @tag refs
+            # Mode B: Generate scene image with @tag refs from canonical sheets
             tag_prompt = gen_prompt
             if any(r["tag"] == "Character" for r in reference_photos):
                 if "@Character" not in tag_prompt:
@@ -1335,8 +1430,12 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
             if any(r["tag"] == "Setting" for r in reference_photos):
                 if "@Setting" not in tag_prompt:
                     tag_prompt = f"{tag_prompt} Set in the location from @Setting."
+            if any(r["tag"] == "PropRef" for r in reference_photos):
+                if "@PropRef" not in tag_prompt:
+                    tag_prompt = f"{tag_prompt} Featuring the item from @PropRef."
 
-            _report(f"generating scene image with {len(reference_photos)} photo refs (@tags)...")
+            ref_tags = [r["tag"] for r in reference_photos]
+            _report(f"composing first frame with {len(reference_photos)} @Tag refs: {ref_tags}")
             scene_image = _runway_generate_scene_image(
                 tag_prompt, reference_photos,
                 ratio="1280:720",
@@ -1344,9 +1443,9 @@ def _runway_generate_scene(scene: dict, output_dir: str, index: int,
             )
             if scene_image:
                 first_frame = scene_image
-                _report(f"scene image ready — animating into video ({model}, {duration}s)...")
+                _report(f"first frame composed — animating into video ({model}, {duration}s)...")
             else:
-                _report(f"scene image failed — falling back to text-only video...")
+                _report(f"first frame composition failed — falling back to text-only video...")
 
         # Also inject text descriptions to reinforce
         char_desc = scene.get("character_description", "")

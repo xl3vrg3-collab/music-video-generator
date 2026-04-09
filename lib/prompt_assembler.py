@@ -894,3 +894,98 @@ def compile_shot_prompt_v4(
         assembled = assembled[:PROMPT_CHAR_LIMIT - 3] + "..."
 
     return assembled
+
+
+# ── V5 Anchor Composition Prompt ──
+
+# Shot family → framing language for still image composition
+_FAMILY_FRAMING = {
+    "wide_establishing": "a wide establishing cinematic still showing the full environment",
+    "environment_reestablish": "a wide re-establishing shot of the location",
+    "character_closeup": "a tight close-up portrait focusing on the character's face and expression",
+    "emotional_moment": "an intimate close-up capturing raw emotion on the character's face",
+    "wardrobe_reveal": "a medium shot showcasing the character's outfit and costume details",
+    "prop_interaction": "a medium shot of the character interacting with a key prop",
+    "action_scene": "a dynamic medium-wide shot capturing the character in action within the environment",
+    "dialogue_shot": "a medium shot framing the character mid-conversation",
+    "insert_detail": "a tight detail shot of a specific object or texture",
+    "generic": "a cinematic still frame",
+}
+
+
+def compile_anchor_prompt(shot: dict, style_bible: dict = None,
+                          refs: list = None, taste_mods: dict = None) -> str:
+    """
+    Build a prompt for text_to_image anchor composition.
+
+    Optimized for STILL images (no camera movement language).
+    Includes @Tag references for active canonical refs.
+    Guaranteed under 1000 chars.
+
+    Args:
+        shot: Shot dict with action, emotion, shot_size, shot_family
+        style_bible: Global style dict
+        refs: Selected canonical refs [{tag, package_type, ...}]
+        taste_mods: Optional taste modifiers
+
+    Returns:
+        Prompt string with @Tag mentions, under 1000 chars.
+    """
+    style_bible = style_bible or {}
+    refs = refs or []
+
+    parts = []
+
+    # 1. Framing language from shot family
+    family = shot.get("shot_family", "generic")
+    framing = _FAMILY_FRAMING.get(family, _FAMILY_FRAMING["generic"])
+
+    # Build @Tag-aware framing
+    tag_names = {r.get("tag", "") for r in refs}
+    if "Character" in tag_names:
+        framing = framing.replace("the character", "@Character")
+        framing = framing.replace("a character", "@Character")
+    if "Setting" in tag_names:
+        framing += " set in @Setting"
+    if "Costume" in tag_names:
+        framing += ", wearing outfit from @Costume"
+    if "Prop" in tag_names:
+        framing += ", featuring @Prop"
+    parts.append(framing)
+
+    # 2. Style
+    style_str = style_bible.get("global_style", "")
+    if style_str:
+        parts.append(style_str[:80])
+
+    # 3. Action / scene description
+    action = shot.get("action", "")
+    if isinstance(action, dict):
+        action = action.get("summary", "")
+    if action:
+        parts.append(action[:250])
+
+    # 4. Emotion
+    emotion = shot.get("emotion", "")
+    if emotion:
+        parts.append(f"mood: {emotion[:50]}")
+
+    # 5. Taste modifiers
+    if taste_mods:
+        taste_parts = []
+        for key in ("lighting", "texture", "tone"):
+            mod = taste_mods.get(key, "")
+            if mod:
+                taste_parts.append(mod)
+        if taste_parts:
+            parts.append(", ".join(taste_parts[:3]))
+
+    # 6. Technical quality
+    parts.append("cinematic still, high detail, 4k, professional color grading")
+
+    # Assemble
+    assembled = ". ".join(p for p in parts if p)
+    if len(assembled) > PROMPT_CHAR_LIMIT:
+        assembled = assembled[:PROMPT_CHAR_LIMIT - 3] + "..."
+
+    return assembled

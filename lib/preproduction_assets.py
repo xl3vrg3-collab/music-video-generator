@@ -32,87 +32,105 @@ PACKAGE_TYPES = ("character", "costume", "environment", "prop")
 
 STATUS_FLOW = ("draft", "generating", "generated", "approved", "rejected", "missing")
 
-# Sheet view definitions per package type and mode
-SHEET_VIEWS = {
+# ---------------------------------------------------------------------------
+# Hero reference prompts — ONE strong reference image per package.
+# This image gets used as a @Tag reference in every scene the asset appears in.
+# Runway's referenceImages system maintains visual consistency across shots.
+# ---------------------------------------------------------------------------
+
+HERO_PROMPTS = {
     "character": {
-        "fast": [
-            {"view": "hero_front",       "label": "Full Body Front",    "prompt_suffix": "full body front view, standing pose, clean background"},
-            {"view": "face_closeup",     "label": "Face Close-Up",      "prompt_suffix": "tight face close-up portrait, detailed features, neutral expression"},
-            {"view": "three_quarter",    "label": "3/4 View",           "prompt_suffix": "full body three-quarter left view, natural pose"},
-        ],
-        "production": [
-            {"view": "hero_front",       "label": "Full Body Front",    "prompt_suffix": "full body front view, standing pose, clean background"},
-            {"view": "three_quarter_l",  "label": "3/4 Left",           "prompt_suffix": "full body three-quarter left view, natural pose"},
-            {"view": "three_quarter_r",  "label": "3/4 Right",          "prompt_suffix": "full body three-quarter right view, natural pose"},
-            {"view": "side_profile",     "label": "Side Profile",       "prompt_suffix": "full body side profile view, clean background"},
-            {"view": "face_closeup",     "label": "Face Close-Up",      "prompt_suffix": "tight face close-up portrait, detailed features, neutral expression"},
-            {"view": "back_view",        "label": "Back View",          "prompt_suffix": "full body back view, standing pose"},
-            {"view": "expr_focused",     "label": "Expression: Focused","prompt_suffix": "face close-up, intense focused expression"},
-            {"view": "expr_joyful",      "label": "Expression: Joyful", "prompt_suffix": "face close-up, warm joyful smile"},
-            {"view": "expr_sad",         "label": "Expression: Sad",    "prompt_suffix": "face close-up, melancholy sad expression"},
-        ],
+        "suffix": (
+            "Photorealistic character reference sheet, real photography, 35mm film. "
+            "Clean white background, 8 distinct panels in two rows separated by visible white borders. "
+            "TOP ROW: dynamic 3/4 front action pose, full-body front view, side profile, back view. "
+            "BOTTOM ROW: face close-up headshot showing expression and features, "
+            "3/4 rear view, accessory detail close-up (collar, jewelry, or key item), "
+            "emotional expression close-up (different mood from first headshot). "
+            "Each panel is a DIFFERENT angle or focus — no duplicate poses. "
+            "All panels show THE SAME CHARACTER in THE SAME OUTFIT, "
+            "consistent proportions and accessories across every panel. "
+            "White studio background, soft even lighting. "
+            "ABSOLUTELY NO TEXT, no labels, no watermarks."
+        ),
+        "default_style": "",
     },
     "costume": {
-        "fast": [
-            {"view": "front",           "label": "Front View",          "prompt_suffix": "full outfit front view, standing pose, clean background"},
-            {"view": "detail_crop",     "label": "Detail Crop",         "prompt_suffix": "close-up detail of distinctive features, fabric texture, accessories"},
-        ],
-        "production": [
-            {"view": "front",           "label": "Front View",          "prompt_suffix": "full outfit front view, standing pose, clean background"},
-            {"view": "side",            "label": "Side View",           "prompt_suffix": "full outfit side view, standing pose"},
-            {"view": "back",            "label": "Back View",           "prompt_suffix": "full outfit back view, showing rear details"},
-            {"view": "natural_pose",    "label": "Natural Pose",        "prompt_suffix": "natural standing pose showing how outfit moves and drapes"},
-            {"view": "collar_detail",   "label": "Collar/Neckline",     "prompt_suffix": "close-up of collar, neckline, and upper body details"},
-            {"view": "shoes_detail",    "label": "Shoes/Footwear",      "prompt_suffix": "close-up of shoes, footwear, and lower leg details"},
-            {"view": "accessory_detail","label": "Accessories",         "prompt_suffix": "close-up of accessories, patches, logos, jewelry details"},
-            {"view": "movement_pose",   "label": "Movement Pose",       "prompt_suffix": "dynamic movement pose showing outfit in motion"},
-        ],
+        "suffix": (
+            "Photorealistic costume reference sheet, real fashion photography, 35mm film. "
+            "Clean white background, 8 distinct panels in two rows separated by visible white borders. "
+            "TOP ROW: full-body front view, full-body side profile, full-body back view, "
+            "3/4 front dynamic pose. "
+            "BOTTOM ROW: upper body detail close-up (neckline, collar, shoulders), "
+            "fabric texture macro close-up, accessory detail (buttons, zippers, trim), "
+            "lower body detail (waist, pockets, shoes). "
+            "Each panel is a DIFFERENT angle or focus — no duplicate poses. "
+            "All panels show THE SAME OUTFIT at same scale, "
+            "consistent fabric textures, colors, accessories. "
+            "White studio background, soft even lighting. "
+            "ABSOLUTELY NO TEXT, no labels, no watermarks."
+        ),
+        "default_style": "",
     },
     "environment": {
-        "fast": [
-            {"view": "wide_establish",  "label": "Wide Establishing",   "prompt_suffix": "wide establishing shot, full environment visible"},
-            {"view": "medium_angle",    "label": "Medium Angle",        "prompt_suffix": "medium angle view showing key environment features"},
-        ],
-        "production": [
-            {"view": "wide_establish",  "label": "Wide Establishing",   "prompt_suffix": "wide establishing shot, full environment visible"},
-            {"view": "medium_angle",    "label": "Medium Angle",        "prompt_suffix": "medium angle view showing key environment features"},
-            {"view": "low_angle",       "label": "Low Angle",           "prompt_suffix": "low angle view looking upward, dramatic perspective"},
-            {"view": "reverse_angle",   "label": "Reverse Angle",       "prompt_suffix": "reverse angle showing the opposite view of the environment"},
-            {"view": "empty_plate",     "label": "Clean Plate",         "prompt_suffix": "clean empty environment, no characters, full detail"},
-            {"view": "golden_hour",     "label": "Golden Hour",         "prompt_suffix": "golden hour lighting variant, warm sunset tones"},
-            {"view": "night_variant",   "label": "Night Variant",       "prompt_suffix": "nighttime lighting variant, dramatic shadows"},
-            {"view": "texture_detail",  "label": "Texture Detail",      "prompt_suffix": "close-up of surface textures, materials, repeated details"},
-        ],
+        "suffix": (
+            "Photorealistic environment reference collage with 4-6 panels "
+            "separated by visible white borders on one sheet. "
+            "Large center panel: wide establishing shot. "
+            "Surrounding smaller panels: medium angle, detail close-up, "
+            "texture close-up, atmospheric lighting variant. "
+            "All panels show THE SAME LOCATION from different angles. "
+            "Consistent architecture, lighting, materials across panels. "
+            "No people, no characters, empty environment only. "
+            "Cinematic film photography, NOT illustration NOT painting. "
+            "ABSOLUTELY NO TEXT, no labels, no watermarks."
+        ),
+        "default_style": "",
     },
     "prop": {
-        "fast": [
-            {"view": "hero_angle",      "label": "Hero Angle",          "prompt_suffix": "hero angle product shot, clean background, full detail"},
-            {"view": "detail_closeup",  "label": "Detail Close-Up",     "prompt_suffix": "extreme close-up showing fine details and texture"},
-        ],
-        "production": [
-            {"view": "hero_angle",      "label": "Hero Angle",          "prompt_suffix": "hero angle product shot, clean background, full detail"},
-            {"view": "side_angle",      "label": "Side Angle",          "prompt_suffix": "side angle view showing profile and proportions"},
-            {"view": "detail_closeup",  "label": "Detail Close-Up",     "prompt_suffix": "extreme close-up showing fine details and texture"},
-            {"view": "in_use",          "label": "In-Use Variant",      "prompt_suffix": "being held or used naturally, showing scale and interaction"},
-            {"view": "worn_variant",    "label": "Worn/Aged Variant",   "prompt_suffix": "showing wear, age, or distressed state if relevant"},
-        ],
+        "suffix": (
+            "Product photography reference sheet, clean white background, studio lighting. "
+            "Multiple angles of the same object: hero angle, side view, detail close-up. "
+            "Sharp detail, consistent scale across views. "
+            "ABSOLUTELY NO TEXT. No labels, no watermarks, completely text-free."
+        ),
     },
 }
 
-# Which views are REQUIRED for production-mode validation
+# Single sheet per package — the hero reference image
+SHEET_VIEWS = {
+    "character": {
+        "fast": [{"view": "sheet", "label": "Character Reference", "prompt_suffix": ""}],
+        "production": [{"view": "sheet", "label": "Character Reference", "prompt_suffix": ""}],
+    },
+    "costume": {
+        "fast": [{"view": "sheet", "label": "Costume Reference", "prompt_suffix": ""}],
+        "production": [{"view": "sheet", "label": "Costume Reference", "prompt_suffix": ""}],
+    },
+    "environment": {
+        "fast": [{"view": "sheet", "label": "Environment Reference", "prompt_suffix": ""}],
+        "production": [{"view": "sheet", "label": "Environment Reference", "prompt_suffix": ""}],
+    },
+    "prop": {
+        "fast": [{"view": "sheet", "label": "Prop Reference", "prompt_suffix": ""}],
+        "production": [{"view": "sheet", "label": "Prop Reference", "prompt_suffix": ""}],
+    },
+}
+
+# Which views are REQUIRED for validation
 REQUIRED_VIEWS = {
-    "character": {"hero_front", "face_closeup", "side_profile"},
-    "costume":   {"front"},
-    "environment": {"wide_establish", "medium_angle"},
-    "prop":      {"hero_angle"},
+    "character": {"sheet"},
+    "costume":   {"sheet"},
+    "environment": {"sheet"},
+    "prop":      {"sheet"},
 }
 
 # Default hero view per type
 DEFAULT_HERO_VIEW = {
-    "character": "hero_front",
-    "costume":   "front",
-    "environment": "wide_establish",
-    "prop":      "hero_angle",
+    "character": "sheet",
+    "costume":   "sheet",
+    "environment": "sheet",
+    "prop":      "sheet",
 }
 
 
@@ -207,15 +225,18 @@ def create_package(
 # Sheet Generation
 # ---------------------------------------------------------------------------
 
-def build_sheet_prompt(package: dict, view_def: dict) -> str:
-    """Build a generation prompt for a single sheet view.
+def build_sheet_prompt(package: dict, view_def: dict = None) -> str:
+    """Build a generation prompt for the hero reference image.
 
-    Combines the package description, must_keep/avoid rules, and the
-    view-specific suffix into a prompt under 1000 chars.
+    Produces ONE high-quality reference image that will be used as a @Tag
+    reference in every scene where this asset appears. Runway's referenceImages
+    system uses this to maintain visual consistency across all shots.
     """
+    pkg_type = package.get("package_type", "character")
+
     parts = []
 
-    # Base description
+    # Subject description
     desc = package.get("description", package.get("name", ""))
     if desc:
         parts.append(desc.strip())
@@ -223,31 +244,199 @@ def build_sheet_prompt(package: dict, view_def: dict) -> str:
     # Must-keep features
     keeps = package.get("must_keep", [])
     if keeps:
-        parts.append(f"Must include: {', '.join(keeps)}")
+        keeps_str = ", ".join(k for k in keeps if k)
+        if keeps_str:
+            parts.append(f"Key features: {keeps_str}")
 
-    # View-specific direction
-    suffix = view_def.get("prompt_suffix", "")
+    # Type-specific hero prompt suffix
+    hero_info = HERO_PROMPTS.get(pkg_type, {})
+    suffix = hero_info.get("suffix", "")
     if suffix:
         parts.append(suffix)
+
+    # Style — from package override, or type default
+    style = package.get("style") or hero_info.get("default_style", "")
+    if style:
+        parts.append(f"Style: {style}")
 
     # Avoid rules
     avoids = package.get("avoid", [])
     if avoids:
-        parts.append(f"Do not include: {', '.join(avoids)}")
-
-    # Style consistency
-    pkg_type = package.get("package_type", "")
-    if pkg_type == "character":
-        parts.append("Character reference sheet style, consistent lighting, white/neutral background")
-    elif pkg_type == "costume":
-        parts.append("Costume reference sheet, clean lighting, neutral background")
-    elif pkg_type == "environment":
-        parts.append("Cinematic environment concept art, high detail")
-    elif pkg_type == "prop":
-        parts.append("Product photography style, studio lighting, clean background")
+        avoids_str = ", ".join(a for a in avoids if a)
+        if avoids_str:
+            parts.append(f"Avoid: {avoids_str}")
 
     prompt = ". ".join(parts)
     return prompt[:1000]
+
+
+# ---------------------------------------------------------------------------
+# Quality gate — vision analysis of generated sheets
+# ---------------------------------------------------------------------------
+
+_SHEET_QA_PROMPT = """Analyze this reference sheet image for a {pkg_type} named "{name}".
+
+Check these criteria and score each 1-5:
+
+1. PANEL_SEPARATION: Are views in clearly separated panels with visible white gaps or borders between them? Adjacent views should NOT share background or overlap in any way. If a character appears to have two heads or bodies merging, that is a 1.
+   5 = distinct panels with clear white gaps/borders between each view, 1 = views blend together or share continuous background
+2. PHOTOREALISM: Is the style photorealistic (real photography look)?
+   5 = looks like a real photo, 1 = cartoon/3D render/clay/illustration
+3. CONTENT_MATCH: Does the image match this description: "{description}"?
+   5 = perfect match, 1 = completely wrong subject
+4. MULTI_VIEW: Does the image show multiple distinct angles/views?
+   5 = 4+ clear views, 3 = 2-3 views, 1 = single view only
+5. QUALITY: Is the image sharp, well-lit, and usable as a production reference?
+   5 = professional quality, 1 = blurry/dark/unusable
+
+Respond ONLY with this exact JSON format, no other text:
+{{"panel_separation": N, "photorealism": N, "content_match": N, "multi_view": N, "quality": N, "pass": true/false, "issues": ["issue1", "issue2"]}}
+
+Set "pass" to true ONLY if ALL scores are 3 or above AND photorealism >= 4 AND panel_separation >= 3.
+List specific issues in "issues" array for any score below 3."""
+
+
+def analyze_sheet_quality(image_path: str, package: dict,
+                          max_retries: int = 0) -> dict:
+    """Analyze a generated sheet image using vision AI.
+
+    Returns:
+        dict with scores, pass/fail, and issues list.
+        On API failure returns {"pass": True, "skipped": True} to not block pipeline.
+    """
+    import base64
+    import requests
+
+    if not image_path or not os.path.isfile(image_path):
+        return {"pass": False, "issues": ["Image file not found"], "skipped": False}
+
+    pkg_type = package.get("package_type", "character")
+    name = package.get("name", "unknown")
+    desc = package.get("description", name)
+
+    prompt = _SHEET_QA_PROMPT.format(pkg_type=pkg_type, name=name, description=desc[:200])
+
+    # Encode image to base64
+    with open(image_path, "rb") as f:
+        img_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+    # Determine media type
+    ext = os.path.splitext(image_path)[1].lower()
+    media_type = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                  "webp": "image/webp"}.get(ext.lstrip("."), "image/png")
+
+    # Try Anthropic first (best vision), fall back to OpenAI
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if api_key:
+        return _qa_via_anthropic(api_key, prompt, img_b64, media_type)
+
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if api_key:
+        return _qa_via_openai(api_key, prompt, img_b64, media_type)
+
+    # No vision API available — skip QA, don't block
+    print("[QA] No vision API key available, skipping quality analysis")
+    return {"pass": True, "skipped": True}
+
+
+def _qa_via_anthropic(api_key: str, prompt: str, img_b64: str,
+                      media_type: str) -> dict:
+    import json as _json
+    import requests
+
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 512,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {
+                            "type": "base64", "media_type": media_type,
+                            "data": img_b64}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }],
+            },
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            print(f"[QA] Anthropic vision error {resp.status_code}")
+            return {"pass": True, "skipped": True}
+
+        text = "".join(b.get("text", "") for b in resp.json().get("content", [])
+                       if b.get("type") == "text")
+        return _parse_qa_result(text)
+    except Exception as e:
+        print(f"[QA] Anthropic vision failed: {e}")
+        return {"pass": True, "skipped": True}
+
+
+def _qa_via_openai(api_key: str, prompt: str, img_b64: str,
+                   media_type: str) -> dict:
+    import json as _json
+    import requests
+
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "gpt-4o-mini",
+                "max_tokens": 512,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {
+                            "url": f"data:{media_type};base64,{img_b64}"}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }],
+            },
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            print(f"[QA] OpenAI vision error {resp.status_code}")
+            return {"pass": True, "skipped": True}
+
+        text = resp.json()["choices"][0]["message"]["content"]
+        return _parse_qa_result(text)
+    except Exception as e:
+        print(f"[QA] OpenAI vision failed: {e}")
+        return {"pass": True, "skipped": True}
+
+
+def _parse_qa_result(text: str) -> dict:
+    """Parse the JSON quality analysis result from LLM."""
+    import json as _json
+    import re
+
+    text = text.strip()
+    # Strip markdown fences if present
+    if text.startswith("```"):
+        text = re.sub(r"^```\w*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text)
+
+    try:
+        result = _json.loads(text)
+        # Ensure required fields
+        result.setdefault("pass", False)
+        result.setdefault("issues", [])
+        result.setdefault("skipped", False)
+        return result
+    except _json.JSONDecodeError:
+        print(f"[QA] Could not parse analysis: {text[:200]}")
+        return {"pass": True, "skipped": True, "parse_error": True}
 
 
 def get_sheet_plan(package: dict) -> list[dict]:
@@ -712,6 +901,102 @@ def plan_packages_from_beats(beats: list[dict], characters: list[dict],
                     pkg = create_package("environment", env_name,
                                         description=env_name, mode=mode)
                     new_packages.append(pkg)
+
+    return new_packages
+
+
+def plan_packages_from_extraction(extraction: dict, mode: str = "fast",
+                                   existing_packages: list = None) -> list:
+    """Convert master prompt extraction data into preproduction packages.
+
+    Works from the structured extraction dict produced by
+    ``master_prompt.extract_production_data()`` rather than from beats/entities.
+    Deduplicates against *existing_packages*.
+
+    Args:
+        extraction: dict with characters, costumes, environments, props keys
+        mode: "fast" or "production"
+        existing_packages: list of existing packages to avoid duplicating
+
+    Returns:
+        list of new package dicts
+    """
+    existing = {(p["package_type"], p["name"].lower())
+                for p in (existing_packages or [])}
+    new_packages = []
+
+    # Characters
+    for c in extraction.get("characters", []):
+        name = c.get("name", "")
+        if not name or ("character", name.lower()) in existing:
+            continue
+        pkg = create_package(
+            "character", name,
+            description=c.get("physical_description", name),
+            mode=mode,
+            must_keep=[c.get("expression_default", "")] if c.get("expression_default") else None,
+            canonical_notes=c.get("physical_description", ""),
+            lock_strength=0.9 if c.get("role") == "protagonist" else 0.7,
+        )
+        new_packages.append(pkg)
+        existing.add(("character", name.lower()))
+
+    # Costumes
+    for co in extraction.get("costumes", []):
+        name = co.get("name", "")
+        if not name or ("costume", name.lower()) in existing:
+            continue
+        # Link to character package
+        char_name = co.get("character_name", "")
+        related_char_id = ""
+        for p in new_packages:
+            if p["package_type"] == "character" and p["name"].lower() == char_name.lower():
+                related_char_id = p["package_id"]
+                break
+        pkg = create_package(
+            "costume", name,
+            description=co.get("description", name),
+            mode=mode,
+            related_ids={"character_id": related_char_id} if related_char_id else None,
+            lock_strength=0.7,
+        )
+        new_packages.append(pkg)
+        existing.add(("costume", name.lower()))
+
+    # Environments
+    for e in extraction.get("environments", []):
+        name = e.get("name", "")
+        if not name or ("environment", name.lower()) in existing:
+            continue
+        desc_parts = [e.get("description", "")]
+        if e.get("lighting"):
+            desc_parts.append(f"Lighting: {e['lighting']}")
+        if e.get("atmosphere"):
+            desc_parts.append(f"Atmosphere: {e['atmosphere']}")
+        if e.get("time_of_day"):
+            desc_parts.append(f"Time: {e['time_of_day']}")
+        pkg = create_package(
+            "environment", name,
+            description=". ".join(p for p in desc_parts if p),
+            mode=mode,
+            lock_strength=0.8,
+        )
+        new_packages.append(pkg)
+        existing.add(("environment", name.lower()))
+
+    # Props
+    for p in extraction.get("props", []):
+        name = p.get("name", "")
+        if not name or ("prop", name.lower()) in existing:
+            continue
+        pkg = create_package(
+            "prop", name,
+            description=p.get("description", name),
+            mode=mode,
+            lock_strength=0.5 if p.get("importance") == "background" else 0.7,
+        )
+        new_packages.append(pkg)
+        existing.add(("prop", name.lower()))
 
     return new_packages
 

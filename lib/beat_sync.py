@@ -43,6 +43,11 @@ SYNC_PRIORITIES = {
 }
 
 
+def _approx_in(val, lst, tol=0.01):
+    """Check if val is approximately in lst (within tolerance)."""
+    return any(abs(val - v) < tol for v in lst)
+
+
 def analyze_for_sync(audio_analysis: dict) -> dict:
     """
     Build a beat-sync analysis from audio analysis data.
@@ -61,6 +66,8 @@ def analyze_for_sync(audio_analysis: dict) -> dict:
     # Calculate bar times (4 beats per bar)
     beat_duration = 60.0 / bpm if bpm > 0 else 0.5
     bar_duration = beat_duration * 4
+    if bar_duration <= 0:
+        bar_duration = 0.5  # Fallback
     bar_times = []
     t = 0
     while t < duration:
@@ -174,7 +181,7 @@ def generate_beat_sync_plan(
             reason = "beat"
             if abs(t - sec_start) < 0.1:
                 reason = f"{sec_type}_start"
-            elif t in sync["downbeats"]:
+            elif _approx_in(t, sync["downbeats"]):
                 reason = "downbeat"
             elif any(abs(t - tr["time"]) < 0.2 for tr in sync["transitions"]):
                 reason = "section_transition"
@@ -190,6 +197,9 @@ def generate_beat_sync_plan(
 
             shot_idx += 1
             t += target_dur
+
+    # Filter out any cuts with negative times
+    cuts = [c for c in cuts if c.get("time", 0) >= 0]
 
     # Determine pacing profile
     if len(sections) >= 3:

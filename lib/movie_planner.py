@@ -12,6 +12,7 @@ import json
 import math
 import os
 import re
+import threading
 import time
 import uuid
 
@@ -1360,11 +1361,14 @@ class AssetCoverage:
 
         for scene in scenes:
             for c in scene.get("characters", []):
-                used_char_ids.add(c.get("id", ""))
+                if isinstance(c, dict):
+                    used_char_ids.add(c.get("id", ""))
             for c in scene.get("costumes", []):
-                used_costume_ids.add(c.get("id", ""))
+                if isinstance(c, dict):
+                    used_costume_ids.add(c.get("id", ""))
             for e in scene.get("environments", []):
-                used_env_ids.add(e.get("id", ""))
+                if isinstance(e, dict):
+                    used_env_ids.add(e.get("id", ""))
 
         # Characters
         all_char_ids = {_safe_id(c) for c in bible.characters}
@@ -1727,12 +1731,15 @@ def load_movie_plan(output_dir):
     return None
 
 
+_movie_plan_file_lock = threading.Lock()
+
 def save_movie_plan(plan, output_dir):
     """Save the movie plan to disk."""
     plan_path = os.path.join(output_dir, "movie_plan.json")
     os.makedirs(output_dir, exist_ok=True)
-    with open(plan_path, "w", encoding="utf-8") as f:
-        json.dump(plan, f, indent=2, ensure_ascii=False)
+    with _movie_plan_file_lock:
+        with open(plan_path, "w", encoding="utf-8") as f:
+            json.dump(plan, f, indent=2, ensure_ascii=False)
 
 
 def rebuild_bible_from_plan(plan):

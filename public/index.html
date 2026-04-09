@@ -166,6 +166,66 @@
   [data-theme="light"] .header { border-bottom-color: rgba(0,0,0,0.06); }
   [data-theme="light"] .msc-photo-preview::after { display: none; }
 
+  /* ── Light Mode: Stage Stepper ── */
+  [data-theme="light"] .stage-step.active .stage-step__dot {
+    border-color:rgba(0,180,210,0.5); background:rgba(0,180,210,0.1);
+    color:var(--text); box-shadow:0 0 8px rgba(0,180,210,0.1);
+  }
+  [data-theme="light"] .stage-step.complete .stage-step__dot {
+    border-color:rgba(0,160,100,0.5); background:rgba(0,160,100,0.08);
+    color:#00875a;
+  }
+  [data-theme="light"] .stage-step.complete .stage-step__label { color:#00875a; }
+  [data-theme="light"] .stage-step.skippable .stage-step__dot { border-color:rgba(0,0,0,0.12); }
+  [data-theme="light"] .stage-step:hover:not(.active) .stage-step__dot {
+    border-color:rgba(0,0,0,0.18); background:rgba(0,0,0,0.03);
+  }
+  [data-theme="light"] .stage-connector { background:rgba(0,0,0,0.08); }
+  [data-theme="light"] .stage-connector.done { background:rgba(0,160,100,0.25); }
+
+  /* ── Light Mode: Bottom Action Bar ── */
+  [data-theme="light"] .bottom-action-bar {
+    background:linear-gradient(180deg, rgba(255,255,255,0.88), rgba(248,246,243,0.97));
+    border-top:1px solid rgba(0,0,0,0.07);
+  }
+  [data-theme="light"] .bar-btn { border-color:rgba(0,0,0,0.1); color:var(--text-dim); }
+  [data-theme="light"] .bar-btn:hover { border-color:rgba(0,0,0,0.2); color:var(--text); background:rgba(0,0,0,0.03); }
+  [data-theme="light"] .bar-btn--primary {
+    background:linear-gradient(135deg, rgba(0,180,210,0.1), rgba(100,80,200,0.08));
+    border-color:rgba(0,180,210,0.3); color:var(--text);
+  }
+  [data-theme="light"] .bar-btn--primary:hover {
+    background:linear-gradient(135deg, rgba(0,180,210,0.18), rgba(100,80,200,0.14));
+    border-color:rgba(0,180,210,0.45); box-shadow:0 0 12px rgba(0,180,210,0.08);
+  }
+  [data-theme="light"] .bar-btn--primary.gold { background:linear-gradient(135deg,rgba(220,150,40,0.1),rgba(200,120,0,0.06)); border-color:rgba(200,140,30,0.3); color:var(--text); }
+  [data-theme="light"] .bar-btn--primary.gold:hover { background:linear-gradient(135deg,rgba(220,150,40,0.18),rgba(200,120,0,0.12)); border-color:rgba(200,140,30,0.45); }
+  [data-theme="light"] .bar-btn--primary.green { background:linear-gradient(135deg,rgba(0,160,100,0.1),rgba(0,130,80,0.06)); border-color:rgba(0,160,100,0.3); color:var(--text); }
+  [data-theme="light"] .bar-btn--primary.green:hover { background:linear-gradient(135deg,rgba(0,160,100,0.18),rgba(0,130,80,0.12)); border-color:rgba(0,160,100,0.45); }
+  [data-theme="light"] .bar-btn--primary.amber { background:linear-gradient(135deg,rgba(200,140,20,0.08),rgba(180,110,0,0.05)); border-color:rgba(200,140,20,0.25); color:var(--text); }
+  [data-theme="light"] .bar-btn--primary.amber:hover { background:linear-gradient(135deg,rgba(200,140,20,0.15),rgba(180,110,0,0.1)); border-color:rgba(200,140,20,0.4); }
+
+  /* ── Light Mode: Inspector Panel ── */
+  [data-theme="light"] #inspectorPanel.open { box-shadow:-4px 0 20px rgba(0,0,0,0.08); }
+  [data-theme="light"] .inspector-header { background:var(--bg); }
+  [data-theme="light"] .inspector-header__close { border-color:rgba(0,0,0,0.1); }
+
+  /* ── Light Mode: Power Toggle ── */
+  [data-theme="light"] .power-toggle { background:rgba(200,150,40,0.05); border-color:rgba(180,130,30,0.25); color:#b07800; }
+  [data-theme="light"] .power-toggle:hover { border-color:rgba(180,130,30,0.5); background:rgba(200,150,40,0.1); box-shadow:0 0 8px rgba(180,130,30,0.08); }
+  [data-theme="light"] .power-toggle.active { border-color:rgba(180,130,30,0.5); color:#8a5d00; background:rgba(200,150,40,0.12); box-shadow:0 0 12px rgba(180,130,30,0.1); }
+  [data-theme="light"] [data-power="true"] #inspectorPanel { box-shadow:-4px 0 20px rgba(0,0,0,0.08); }
+
+  /* ── Light Mode: Header ── */
+  [data-theme="light"] .header {
+    background:linear-gradient(180deg, rgba(255,255,255,0.92), rgba(248,246,243,0.85)) !important;
+    border-bottom:1px solid rgba(0,0,0,0.06) !important;
+  }
+  [data-theme="light"] .header h1 {
+    background:linear-gradient(135deg, #1A1A1A, #444);
+    -webkit-background-clip:text; background-clip:text;
+  }
+
   /* ===== THEME TOGGLE ===== */
   .theme-toggle {
     position: fixed; top: 16px; right: 160px; z-index: 101;
@@ -2475,6 +2535,141 @@
     border-color: rgba(255,255,255,0.08) !important;
   }
 
+  /* ── Stage Stepper ── */
+  .stage-stepper {
+    display:flex; align-items:center; justify-content:center;
+    padding:12px 16px 4px; gap:0; user-select:none;
+  }
+  .stage-step {
+    display:flex; flex-direction:column; align-items:center;
+    cursor:pointer; position:relative; flex:0 0 auto; padding:0 2px;
+  }
+  .stage-step__dot {
+    width:28px; height:28px; border-radius:50%;
+    border:2px solid var(--border); background:transparent;
+    display:flex; align-items:center; justify-content:center;
+    font-size:11px; font-weight:700; color:var(--text-dim);
+    transition:all 0.25s ease; position:relative; z-index:1;
+  }
+  .stage-step__label {
+    font-size:9px; letter-spacing:0.5px; text-transform:uppercase;
+    color:var(--text-dim); margin-top:4px; white-space:nowrap;
+    transition:color 0.25s ease; font-weight:500;
+  }
+  .stage-step.active .stage-step__dot {
+    border-color:rgba(0,229,255,0.6); background:rgba(0,229,255,0.12);
+    color:#fff; box-shadow:0 0 14px rgba(0,229,255,0.2);
+  }
+  .stage-step.active .stage-step__label { color:var(--text); font-weight:600; }
+  .stage-step.complete .stage-step__dot {
+    border-color:rgba(0,255,163,0.5); background:rgba(0,255,163,0.1);
+    color:#00ffa3;
+  }
+  .stage-step.complete .stage-step__label { color:rgba(0,255,163,0.7); }
+  .stage-step.skippable .stage-step__dot {
+    border-style:dashed; border-color:rgba(255,255,255,0.12);
+  }
+  .stage-step:hover:not(.active) .stage-step__dot {
+    border-color:rgba(255,255,255,0.25); background:rgba(255,255,255,0.04);
+  }
+  .stage-connector {
+    flex:1; height:2px; min-width:16px; max-width:60px;
+    background:var(--border); margin:0 4px; margin-bottom:18px;
+    transition:background 0.25s ease;
+  }
+  .stage-connector.done { background:rgba(0,255,163,0.3); }
+
+  /* ── Stage Description ── */
+  .stage-desc {
+    text-align:center; padding:2px 16px 6px;
+    font-size:11px; color:var(--text-dim); min-height:18px;
+  }
+  .stage-desc strong { color:var(--text); font-weight:600; }
+
+  /* ── Bottom Action Bar ── */
+  .bottom-action-bar {
+    position:sticky; bottom:0; z-index:40;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 16px; gap:10px;
+    background:linear-gradient(180deg, rgba(12,12,16,0.85), rgba(10,10,14,0.98));
+    border-top:1px solid rgba(255,255,255,0.06);
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+  }
+  .bottom-action-bar__secondary { display:flex; gap:6px; align-items:center; flex:1; min-width:0; }
+  .bottom-action-bar__primary { display:flex; gap:8px; align-items:center; flex-shrink:0; }
+  .bar-btn {
+    padding:6px 14px; font-size:10px; font-family:inherit;
+    letter-spacing:0.5px; text-transform:uppercase; font-weight:600;
+    border:1px solid var(--border); border-radius:6px;
+    background:transparent; color:var(--text-dim); cursor:pointer;
+    transition:all 0.2s ease; white-space:nowrap;
+  }
+  .bar-btn:hover { border-color:rgba(255,255,255,0.2); color:var(--text); background:rgba(255,255,255,0.04); }
+  .bar-btn--back { padding:6px 10px; }
+  .bar-btn--primary {
+    background:linear-gradient(135deg, rgba(0,229,255,0.15), rgba(124,92,255,0.15));
+    border-color:rgba(0,229,255,0.3); color:#fff;
+  }
+  .bar-btn--primary:hover {
+    background:linear-gradient(135deg, rgba(0,229,255,0.25), rgba(124,92,255,0.25));
+    border-color:rgba(0,229,255,0.5); box-shadow:0 0 16px rgba(0,229,255,0.15);
+  }
+  .bar-btn--primary.gold { background:linear-gradient(135deg,rgba(255,180,60,0.18),rgba(255,140,0,0.12)); border-color:rgba(255,180,60,0.35); }
+  .bar-btn--primary.gold:hover { background:linear-gradient(135deg,rgba(255,180,60,0.3),rgba(255,140,0,0.2)); border-color:rgba(255,180,60,0.5); box-shadow:0 0 16px rgba(255,180,60,0.15); }
+  .bar-btn--primary.green { background:linear-gradient(135deg,rgba(0,255,163,0.15),rgba(0,200,130,0.1)); border-color:rgba(0,255,163,0.3); }
+  .bar-btn--primary.green:hover { background:linear-gradient(135deg,rgba(0,255,163,0.25),rgba(0,200,130,0.18)); border-color:rgba(0,255,163,0.5); box-shadow:0 0 16px rgba(0,255,163,0.15); }
+  .bar-btn--primary.amber { background:linear-gradient(135deg,rgba(255,180,60,0.12),rgba(255,140,0,0.08)); border-color:rgba(255,180,60,0.25); }
+  .bar-btn--primary.amber:hover { background:linear-gradient(135deg,rgba(255,180,60,0.22),rgba(255,140,0,0.15)); border-color:rgba(255,180,60,0.4); box-shadow:0 0 16px rgba(255,180,60,0.12); }
+  .bar-stage-label { font-size:10px; color:var(--text-dim); white-space:nowrap; }
+
+  /* ── Stage placeholder ── */
+  .stage-placeholder {
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    min-height:300px; color:var(--text-dim); gap:12px; padding:40px;
+  }
+  .stage-placeholder__icon { font-size:32px; opacity:0.4; }
+  .stage-placeholder__title { font-size:14px; font-weight:600; color:var(--text); }
+  .stage-placeholder__sub { font-size:11px; max-width:400px; text-align:center; line-height:1.6; }
+
+  /* ── Inspector Panel ── */
+  #inspectorPanel {
+    position:fixed; top:0; right:0; bottom:0; width:320px; max-width:90vw;
+    background:var(--surface); border-left:1px solid var(--border);
+    z-index:900; transform:translateX(100%); transition:transform 0.25s ease;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  #inspectorPanel.open { transform:translateX(0); box-shadow:-4px 0 24px rgba(0,0,0,0.3); }
+  .inspector-header {
+    padding:12px 16px; border-bottom:1px solid var(--border); display:flex;
+    align-items:center; gap:8px; background:var(--bg); flex-shrink:0;
+  }
+  .inspector-header__type { font-size:9px; text-transform:uppercase; letter-spacing:1px; color:var(--cyan); font-weight:600; }
+  .inspector-header__name { font-size:13px; font-weight:700; color:var(--text); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .inspector-header__close { background:none; border:1px solid var(--border); color:var(--text-dim); width:28px; height:28px; border-radius:var(--radius); cursor:pointer; font-size:14px; display:flex; align-items:center; justify-content:center; }
+  .inspector-header__close:hover { color:var(--text); border-color:var(--text-dim); }
+  .inspector-body { flex:1; overflow-y:auto; padding:16px; }
+  .inspector-body .inspector-field { margin-bottom:12px; }
+  .inspector-body .inspector-field label { font-size:9px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:4px; }
+  .inspector-body .inspector-field .val { font-size:11px; color:var(--text); line-height:1.5; }
+  .inspector-footer { padding:10px 16px; border-top:1px solid var(--border); display:flex; gap:6px; flex-shrink:0; }
+  @media (max-width:1024px) {
+    #inspectorPanel { position:fixed; top:auto; left:0; right:0; bottom:0; width:100%; max-width:100%; height:55vh; transform:translateY(100%); border-left:none; border-top:1px solid var(--border); border-radius:var(--radius-lg) var(--radius-lg) 0 0; }
+    #inspectorPanel.open { transform:translateY(0); }
+  }
+
+  /* ── Power Mode ── */
+  .power-only { display:none !important; }
+  [data-power="true"] .power-only { display:block !important; }
+  [data-power="true"] .guided-only { display:none !important; }
+  [data-power="true"] #inspectorPanel { transform:translateX(0); box-shadow:-4px 0 24px rgba(0,0,0,0.3); }
+  [data-power="true"] details[open] > summary ~ * { /* auto-expanded */ }
+  .power-toggle { background:rgba(255,180,60,0.04); border:1.5px solid rgba(255,180,60,0.2); color:var(--amber); font-size:11px; font-weight:700; padding:6px 14px; border-radius:var(--radius); cursor:pointer; letter-spacing:1px; transition:all 0.2s; }
+  .power-toggle:hover { border-color:var(--amber); color:var(--amber); background:rgba(255,180,60,0.1); box-shadow:0 0 12px rgba(255,180,60,0.1); }
+  .power-toggle.active { border-color:var(--amber); color:#fff; background:linear-gradient(135deg,rgba(255,180,60,0.2),rgba(255,120,0,0.15)); box-shadow:0 0 16px rgba(255,180,60,0.15); }
+  @media (max-width:1024px) {
+    [data-power="true"] #inspectorPanel { transform:translateY(0); }
+  }
+
   /* 7. Header Polish */
   .header {
     background: linear-gradient(180deg, rgba(12,12,16,0.95), rgba(10,10,14,0.85)) !important;
@@ -3430,8 +3625,8 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
   <span id="themeLabel">Dark</span>
 </div>
 
-<!-- Cost Tracker (fixed top-right) -->
-<div class="cost-tracker" id="costTracker" onclick="window._showCostBreakdown()" style="cursor:pointer;" data-tooltip="Click for details">
+<!-- Cost Tracker (hidden — now inline in header) -->
+<div class="cost-tracker" id="costTracker" onclick="window._showCostBreakdown()" style="cursor:pointer;display:none;" data-tooltip="Click for details">
   <div class="cost-tracker-expanded">
     <div style="display:flex;align-items:center;gap:6px;">
       <span style="font-size:12px;">&#128176;</span>
@@ -3470,6 +3665,18 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
         onfocus="this.style.borderColor='var(--green)'"
         onblur="this.style.borderColor='var(--border)'">
       <span id="currentProjectLabel" style="color:var(--text-dim);font-size:10px;"></span>
+      <span style="flex:1;"></span>
+      <span id="headerCostDisplay" onclick="window._showCostBreakdown()" style="cursor:pointer;display:inline-flex;align-items:center;gap:8px;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.5px;" title="Click for cost breakdown">
+        <span style="color:var(--text-dim);">Spent</span>
+        <span id="headerCostValue" style="color:var(--green);font-weight:700;">$0.00</span>
+        <span style="color:var(--text-dim);opacity:0.4;">/</span>
+        <span id="headerBudgetValue" style="color:var(--text-dim);">$10.00</span>
+      </span>
+      <span style="color:var(--border);font-size:10px;">|</span>
+      <span id="headerCreditsDisplay" style="display:inline-flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.5px;">
+        <span style="color:var(--text-dim);">Credits</span>
+        <span id="headerCreditsValue" style="color:var(--cyan);font-weight:700;">—</span>
+      </span>
     </div>
   </div>
 
@@ -3501,8 +3708,8 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
       <button class="btn-toolbar" id="showGuideBtn" onclick="document.getElementById('gettingStarted').style.display='';localStorage.removeItem('lumn_checklist_dismissed');" style="display:none;" data-tooltip="Show getting started guide">Guide</button>
       <button class="btn-toolbar" onclick="window._showWelcome()" data-tooltip="Show welcome screen">Welcome</button>
     </div>
-    <div class="toolbar-group" style="margin-left:auto;">
-      <span id="creditsDisplay" style="font-size:10px;color:var(--text-dim);cursor:pointer;" onclick="window._refreshCredits()" title="Click to refresh credits">Credits: —</span>
+    <div class="toolbar-group" style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+      <button class="power-toggle" id="powerModeBtn" onclick="window._togglePowerMode()" title="Power Mode — reveals all advanced controls, pins inspector, enables keyboard shortcuts">&#9889; PWR</button>
     </div>
   </div>
   <script>
@@ -3516,21 +3723,46 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
   });
   </script>
 
-  <!-- Workspace Navigation -->
-  <div class="mode-toggle" id="workspaceNav" style="flex-wrap:nowrap;overflow-x:auto;gap:0;padding:4px 8px;">
-    <button class="mode-btn active" id="wsProjectBtn" onclick="window._switchWorkspace('project')" title="Define your story, genre, and creative vision" aria-label="Step 1: Project Setup" style="font-size:11px;padding:8px 18px;">&#127916; Project</button>
-    <button class="mode-btn" id="wsAssetsBtn" onclick="window._switchWorkspace('assets')" title="Create characters, costumes, environments, and props" aria-label="Step 2: Create Assets" style="font-size:11px;padding:8px 18px;">&#127917; Assets</button>
-    <button class="mode-btn" id="wsShotsBtn" onclick="window._switchWorkspace('shots')" title="Generate AI scenes with your assets" aria-label="Step 3: Generate Shots" style="font-size:11px;padding:8px 18px;">&#128248; Shots</button>
-    <button class="mode-btn" id="wsEditBtn" onclick="window._switchWorkspace('edit')" title="Arrange shots into a sequence with transitions" aria-label="Step 4: Edit Sequence" style="font-size:11px;padding:8px 18px;">&#9986;&#65039; Edit</button>
-    <button class="mode-btn" id="wsAudioBtn" onclick="window._switchWorkspace('audio')" title="Add music, voice, and sound effects" aria-label="Step 5: Add Audio" style="font-size:11px;padding:8px 18px;">&#127925; Audio</button>
-    <button class="mode-btn" id="wsOutputBtn" onclick="window._switchWorkspace('output')" title="Export your finished video" aria-label="Step 6: Export Video" style="font-size:11px;padding:8px 18px;">&#127902;&#65039; Output</button>
-  </div>
-  <!-- Step indicator + progress bar + status -->
-  <div id="pipelineProgress" style="padding:4px 16px;display:flex;align-items:center;gap:10px;">
-    <span id="pipelineStepLabel" style="color:var(--text-dim);font-size:11px;white-space:nowrap;">Step 1 of 6 — Project: Define your story</span>
-    <div style="flex:1;height:5px;background:var(--border);border-radius:2px;overflow:hidden;">
-      <div id="pipelineProgressFill" style="height:100%;width:16.7%;background:linear-gradient(90deg,#7c5cff,#FFD6A0);border-radius:2px;transition:width 0.5s ease;"></div>
+  <!-- ══ STAGE STEPPER ══ -->
+  <div class="stage-stepper" id="stageStepper">
+    <div class="stage-step active" data-stage="brief" onclick="window._setStage('brief')">
+      <div class="stage-step__dot">1</div>
+      <div class="stage-step__label">Brief</div>
     </div>
+    <div class="stage-connector" id="conn-1"></div>
+    <div class="stage-step" data-stage="drafts-refs" onclick="window._setStage('drafts-refs')">
+      <div class="stage-step__dot">2</div>
+      <div class="stage-step__label">Drafts &amp; Refs</div>
+    </div>
+    <div class="stage-connector" id="conn-2"></div>
+    <div class="stage-step" data-stage="assets" onclick="window._setStage('assets')">
+      <div class="stage-step__dot">3</div>
+      <div class="stage-step__label">Assets</div>
+    </div>
+    <div class="stage-connector" id="conn-3"></div>
+    <div class="stage-step" data-stage="scenes" onclick="window._setStage('scenes')">
+      <div class="stage-step__dot">4</div>
+      <div class="stage-step__label">Scenes</div>
+    </div>
+    <div class="stage-connector" id="conn-4"></div>
+    <div class="stage-step" data-stage="shots" onclick="window._setStage('shots')">
+      <div class="stage-step__dot">5</div>
+      <div class="stage-step__label">Shots</div>
+    </div>
+    <div class="stage-connector" id="conn-5"></div>
+    <div class="stage-step" data-stage="render" onclick="window._setStage('render')">
+      <div class="stage-step__dot">6</div>
+      <div class="stage-step__label">Render</div>
+    </div>
+    <div class="stage-connector" id="conn-6"></div>
+    <div class="stage-step" data-stage="output" onclick="window._setStage('output')">
+      <div class="stage-step__dot">7</div>
+      <div class="stage-step__label">Output</div>
+    </div>
+  </div>
+  <!-- Stage description line -->
+  <div class="stage-desc" id="stageDesc">
+    <strong>Step 1 of 7</strong> &mdash; What do you want to make?
   </div>
   <!-- Global Project Status Bar -->
   <div id="globalStatusBar" style="padding:2px 16px 6px;display:flex;gap:14px;flex-wrap:wrap;font-size:10px;color:var(--text-dim);">
@@ -3583,185 +3815,258 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
   window._workspaceInitialized = {};
 
   (function(){
-    var tabs = {
-      'project':'projectContainer',
-      'assets':'assetsContainer',
-      'shots':'shotsContainer',
-      'edit':'editContainer',
-      'audio':'audioContainer',
-      'output':'outputContainer'
+    /* ══════════════════════════════════════════════
+       STAGE-BASED NAVIGATION (v2 — replaces workspace tabs)
+       7 stages: brief, drafts-refs, assets, scenes, shots, render, output
+       ══════════════════════════════════════════════ */
+
+    // Stage → container ID mapping
+    var stageContainers = {
+      'brief':       'projectContainer',
+      'drafts-refs': 'stageDraftsRefs',
+      'assets':      'assetsContainer',
+      'scenes':      'stageScenes',
+      'shots':       'shotsContainer',
+      'render':      'stageRender',
+      'output':      'outputContainer'
     };
-    var btns = {
-      'project':'wsProjectBtn',
-      'assets':'wsAssetsBtn',
-      'shots':'wsShotsBtn',
-      'edit':'wsEditBtn',
-      'audio':'wsAudioBtn',
-      'output':'wsOutputBtn'
+    // Legacy containers still exist but are not directly in the stage flow
+    var legacyContainers = ['editContainer','audioContainer'];
+
+    var stageFlow = ['brief','drafts-refs','assets','scenes','shots','render','output'];
+    var stageDescs = {
+      'brief':       'What do you want to make?',
+      'drafts-refs': 'Review AI drafts and confirm visual references',
+      'assets':      'Review and approve generated stills',
+      'scenes':      'Compose scene boards from your assets',
+      'shots':       'Expand scenes into filmable shots',
+      'render':      'Configure settings and generate final clips',
+      'output':      'Assemble, mix audio, and export'
+    };
+    var stageCTAs = {
+      'brief':       { label:'Generate Project Draft',  style:'gold',  action:'generate-draft' },
+      'drafts-refs': { label:'Generate Stills',         style:'green', action:'generate-stills' },
+      'assets':      { label:'Build Scenes',            style:'',      action:'advance' },
+      'scenes':      { label:'Expand to Shots',         style:'',      action:'expand-shots' },
+      'shots':       { label:'Continue to Render',      style:'amber', action:'advance' },
+      'render':      { label:'Render Final Clips',      style:'gold',  action:'render-clips' },
+      'output':      { label:'Export Video',            style:'green', action:'export' }
     };
 
-    // Workspace flow (linear pipeline)
+    // Backward-compat: old workspace → new stage
+    var workspaceToStage = {
+      'project':'brief', 'assets':'assets', 'shots':'shots',
+      'edit':'output', 'audio':'output', 'output':'output'
+    };
+    // Legacy tab name mapping
+    var legacyTabMap = {
+      'director':'brief', 'manual':'brief',
+      'pos-characters':'assets', 'pos-costumes':'assets',
+      'pos-environments':'assets', 'pos-scenes':'scenes',
+      'pos-shots':'shots', 'generate':'render',
+      'pos-output':'output'
+    };
+
     window._appMode = 'auto'; // kept for backwards compat
-
-    var flow = ['project','assets','shots','edit','audio','output'];
-    var flowLabels = { 'project':'Project: Define your story','assets':'Assets: Build your cast & world','shots':'Shots: Generate scenes','edit':'Edit: Arrange your sequence','audio':'Audio: Add sound & music','output':'Output: Export your video' };
-
-    function _getCurrentFlow() { return flow; }
-    function _getCurrentLabels() { return flowLabels; }
-
-    // Update progress bar for current workspace step
-    window._updatePipelineNav = function() {
-      var currentMode = window._currentPipelineStep || 'project';
-      var stepIdx = flow.indexOf(currentMode);
-      var totalSteps = flow.length;
-      var lbl = document.getElementById('pipelineStepLabel');
-      var fill = document.getElementById('pipelineProgressFill');
-      if (stepIdx >= 0) {
-        if (lbl) lbl.textContent = 'Step ' + (stepIdx+1) + ' of ' + totalSteps + ' — ' + (flowLabels[currentMode] || currentMode);
-        if (fill) fill.style.width = ((stepIdx+1) / totalSteps * 100) + '%';
-      }
-    };
-
-    window._currentPipelineStep = 'project';
+    window._currentStage = 'brief';
+    window._currentPipelineStep = 'project'; // backward compat alias
     window._scrollPositions = {};
-    window._switchTab = function(mode) {
-      // Save scroll position of current workspace before switching
-      var currentWorkspace = window._currentPipelineStep || 'project';
-      var currentContainer = document.getElementById(tabs[currentWorkspace]);
-      if (currentContainer) {
-        window._scrollPositions[currentWorkspace] = currentContainer.scrollTop || 0;
+    window._stageCompleted = {}; // track completed stages
+
+    // ── Core stage switcher ──
+    window._setStage = function(stage) {
+      if (!stageContainers[stage]) {
+        // Try legacy/workspace mapping
+        stage = workspaceToStage[stage] || legacyTabMap[stage] || stage;
       }
+      if (!stageContainers[stage]) return;
+
+      // Save scroll position
+      var prev = window._currentStage;
+      var prevEl = document.getElementById(stageContainers[prev]);
+      if (prevEl) window._scrollPositions[prev] = prevEl.scrollTop || 0;
+
       window._clearAllTimers && window._clearAllTimers();
-      window._currentPipelineStep = mode;
-      for (var k in tabs) {
-        var el = document.getElementById(tabs[k]);
-        var btn = document.getElementById(btns[k]);
-        if (el) {
-          el.style.display = (k === mode) ? '' : 'none';
-          el.classList.remove('hidden');
-          // content-visibility removed — was causing Project tab to not re-render
-        }
-        if (btn) { btn.classList.toggle('active', k === mode); }
-      }
-      // Also hide legacy auto mode container
+      window._currentStage = stage;
+      // backward compat
+      var stageToWorkspace = { 'brief':'project','drafts-refs':'project','assets':'assets','scenes':'shots','shots':'shots','render':'output','output':'output' };
+      window._currentPipelineStep = stageToWorkspace[stage] || 'project';
+
+      // Hide all stage containers + legacy containers
+      var allContainerIds = [];
+      for (var s in stageContainers) allContainerIds.push(stageContainers[s]);
+      legacyContainers.forEach(function(id) { allContainerIds.push(id); });
+      // dedupe
+      var seen = {};
+      allContainerIds.forEach(function(id) {
+        if (seen[id]) return;
+        seen[id] = true;
+        var el = document.getElementById(id);
+        if (el) { el.style.display = 'none'; el.classList.remove('hidden'); }
+      });
+
+      // Show target container
+      var targetId = stageContainers[stage];
+      var targetEl = document.getElementById(targetId);
+      if (targetEl) { targetEl.style.display = ''; targetEl.classList.remove('hidden'); }
+
+      // Hide legacy auto mode container
       var ac = document.getElementById('autoModeContainer');
       if (ac) ac.style.display = 'none';
 
-      // Optimization 1: Lazy workspace initialization — only init on first visit
-      if (!window._workspaceInitialized[mode]) {
-        // Show skeleton while loading
-        var container = document.getElementById(tabs[mode]);
-        if (container) {
-          var skeleton = container.querySelector('.skeleton-overlay');
-          if (!skeleton) {
-            skeleton = document.createElement('div');
-            skeleton.className = 'skeleton-overlay';
-            skeleton.style.cssText = 'padding:16px;';
-            skeleton.innerHTML = '<div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line-short"></div>';
-            container.appendChild(skeleton);
-          }
-        }
-        if (mode === 'assets') {
+      // Lazy init (reuse existing workspace init logic)
+      if (!window._workspaceInitialized[stage]) {
+        if (stage === 'assets' || stage === 'brief') {
           window._posLoadChars && window._posLoadChars();
           window._posLoadCostumes && window._posLoadCostumes();
-        } else if (mode === 'shots') {
+        }
+        if (stage === 'shots') {
           window._initShotsWorkspace && window._initShotsWorkspace();
           window._refreshScenes && window._refreshScenes();
-        } else if (mode === 'edit') {
-          window._initEditWorkspace && window._initEditWorkspace();
-          window._refreshStoryboard && window._refreshStoryboard();
-          window._refreshAudioTimeline && window._refreshAudioTimeline();
-        } else if (mode === 'audio') {
-          if (typeof window._setAudioTab === 'function') window._setAudioTab('music');
-        } else if (mode === 'output') {
+        }
+        if (stage === 'output') {
           window._initOutputWorkspace && window._initOutputWorkspace();
         }
-        window._workspaceInitialized[mode] = true;
-        if (container) {
-          var skeletonEl = container.querySelector('.skeleton-overlay');
-          if (skeletonEl) skeletonEl.remove();
-        }
+        window._workspaceInitialized[stage] = true;
       } else {
-        // Already initialized — still refresh data for non-first visits
-        if (mode === 'shots' && window._initShotsWorkspace) {
-          window._initShotsWorkspace();
-        }
-        if (mode === 'edit' && window._initEditWorkspace) {
-          window._initEditWorkspace();
-          if (window._refreshStoryboard) window._refreshStoryboard();
-          window._refreshAudioTimeline && window._refreshAudioTimeline();
-        }
-        if (mode === 'output' && window._initOutputWorkspace) {
-          window._initOutputWorkspace();
-        }
-        if (mode === 'audio') {
-          if (typeof window._setAudioTab === 'function') window._setAudioTab('music');
-        }
+        if (stage === 'shots' && window._initShotsWorkspace) window._initShotsWorkspace();
+        if (stage === 'output' && window._initOutputWorkspace) window._initOutputWorkspace();
       }
 
-      // Update pipeline progress bar
-      var stepIdx = flow.indexOf(mode);
-      var totalSteps = flow.length;
-      var lbl = document.getElementById('pipelineStepLabel');
-      var fill = document.getElementById('pipelineProgressFill');
-      if (stepIdx >= 0) {
-        if (lbl) lbl.textContent = 'Step ' + (stepIdx+1) + ' of ' + totalSteps + ' — ' + (flowLabels[mode] || mode);
-        if (fill) fill.style.width = ((stepIdx+1) / totalSteps * 100) + '%';
-      }
-      // Restore scroll position for the new workspace
-      var newContainer = document.getElementById(tabs[mode]);
-      if (newContainer && window._scrollPositions && window._scrollPositions[mode]) {
-        setTimeout(function() {
-          newContainer.scrollTop = window._scrollPositions[mode];
-        }, 50);
-      }
-      // Update tab badges and global stats on every tab switch
+      // Update stepper UI
+      window._updateStepper(stage);
+      // Update bottom bar
+      window._updateBottomBar(stage);
+      // Update global stats
       if (window._updateTabBadges) window._updateTabBadges();
       if (window._updateGlobalStats) window._updateGlobalStats();
+      if (stage === 'brief' && window._updateDashboard) window._updateDashboard();
+      if (stage === 'output') {
+        if (window._updateRenderSummary) window._updateRenderSummary();
+        // Default to Export tab, reset sub-tab state
+        if (window._setOutputTab) window._setOutputTab(window._currentOutputTab || 'export');
+      }
 
-      // Update project dashboard when switching to project
-      if (mode === 'project' && window._updateDashboard) window._updateDashboard();
-      // Update render summary when switching to output
-      if (mode === 'output' && window._updateRenderSummary) window._updateRenderSummary();
-
-      // Call the main _setMode if it exists (for data loading)
-      if (window._setMode && window._setMode !== window._switchTab) {
-        try { window._setMode(mode); } catch(e) { console.warn('_setMode error:', e); }
+      // Restore scroll
+      if (targetEl && window._scrollPositions[stage]) {
+        setTimeout(function() { targetEl.scrollTop = window._scrollPositions[stage]; }, 50);
       }
     };
 
-    // Workspace switcher (replaces old _switchAppMode)
-    window._switchWorkspace = function(workspace) {
-      window._switchTab(workspace);
+    // ── Stepper visual update ──
+    window._updateStepper = function(active) {
+      var idx = stageFlow.indexOf(active);
+      var steps = document.querySelectorAll('.stage-step');
+      var connectors = document.querySelectorAll('.stage-connector');
+      steps.forEach(function(el, i) {
+        el.classList.remove('active','complete');
+        if (i === idx) el.classList.add('active');
+        else if (window._stageCompleted[stageFlow[i]] || i < idx) el.classList.add('complete');
+      });
+      connectors.forEach(function(el, i) {
+        el.classList.toggle('done', i < idx || !!window._stageCompleted[stageFlow[i]]);
+      });
+      // Update description
+      var desc = document.getElementById('stageDesc');
+      if (desc) desc.innerHTML = '<strong>Step ' + (idx+1) + ' of 7</strong> &mdash; ' + (stageDescs[active] || '');
     };
 
-    // Store _switchTab as the pipeline-aware tab handler
-    window._switchTabCore = window._switchTab;
-    window._switchTab = function(mode) {
-      // Map legacy tab names to new workspace names
-      var legacyMap = {
-        'director':'project', 'manual':'project',
-        'pos-characters':'assets', 'pos-costumes':'assets',
-        'pos-environments':'assets', 'pos-scenes':'shots',
-        'pos-shots':'shots', 'generate':'edit',
-        'pos-output':'output'
-      };
-      var mapped = legacyMap[mode] || mode;
-      window._switchTabCore(mapped);
-      // When switching to assets, init panels and load default sub-tab
-      if (mapped === 'assets') {
+    // ── Bottom bar update ──
+    window._updateBottomBar = function(active) {
+      var idx = stageFlow.indexOf(active);
+      var cta = stageCTAs[active] || {};
+      var btn = document.getElementById('barPrimary');
+      var back = document.getElementById('barBack');
+      var label = document.getElementById('barStageLabel');
+
+      if (btn) {
+        btn.textContent = cta.label || 'Continue';
+        btn.className = 'bar-btn bar-btn--primary' + (cta.style ? ' ' + cta.style : '');
+      }
+      if (back) back.style.display = idx > 0 ? '' : 'none';
+      if (label) label.textContent = 'Step ' + (idx+1) + ' of 7';
+    };
+
+    // ── Navigation helpers ──
+    window._stageNext = function() {
+      var idx = stageFlow.indexOf(window._currentStage);
+      if (idx < stageFlow.length - 1) window._setStage(stageFlow[idx + 1]);
+    };
+    window._stagePrev = function() {
+      var idx = stageFlow.indexOf(window._currentStage);
+      if (idx > 0) window._setStage(stageFlow[idx - 1]);
+    };
+
+    // ── Primary CTA action router ──
+    window._stagePrimaryAction = function() {
+      var cta = stageCTAs[window._currentStage];
+      if (!cta) return;
+      switch(cta.action) {
+        case 'generate-draft':
+          // Wire to pipeline start (existing V5 function)
+          var pBtn = document.getElementById('pipelineStartBtn');
+          if (pBtn) pBtn.click();
+          else window._stageNext();
+          break;
+        case 'generate-stills':
+          // Wire to sheet generation (existing V5 function)
+          var sBtn = document.getElementById('pipelineSheetsBtn');
+          if (sBtn) sBtn.click();
+          else window._stageNext();
+          break;
+        case 'expand-shots':
+          // Wire to shot expansion / plan_with_ai
+          if (window._planWithAI) window._planWithAI();
+          else window._stageNext();
+          break;
+        case 'render-clips':
+          // Wire to generate (existing auto director)
+          if (window._startAutoGeneration) window._startAutoGeneration();
+          break;
+        case 'export':
+          if (window._exportFinalVideo) window._exportFinalVideo();
+          break;
+        case 'advance':
+        default:
+          window._stageNext();
+          break;
+      }
+    };
+
+    // ── Mark stage complete ──
+    window._completeStage = function(stage) {
+      window._stageCompleted[stage] = true;
+      window._updateStepper(window._currentStage);
+    };
+
+    // ── Backward-compat wrappers ──
+    window._switchWorkspace = function(workspace) {
+      var stage = workspaceToStage[workspace] || workspace;
+      window._setStage(stage);
+      // Handle asset sub-tab routing
+      if (stage === 'assets') {
         if (typeof window._initAssetPanels === 'function') window._initAssetPanels();
-        // Map legacy mode to sub-tab, or default to characters
+        if (typeof window._setAssetTab === 'function') window._setAssetTab('characters');
+      }
+    };
+
+    window._switchTab = function(mode) {
+      var stage = legacyTabMap[mode] || workspaceToStage[mode] || mode;
+      window._setStage(stage);
+      if (stage === 'assets') {
+        if (typeof window._initAssetPanels === 'function') window._initAssetPanels();
         var subTabMap = { 'pos-characters':'characters', 'pos-costumes':'costumes', 'pos-environments':'environments' };
         var subTab = subTabMap[mode] || 'characters';
         if (typeof window._setAssetTab === 'function') window._setAssetTab(subTab);
       }
-      // Call the main _setMode for data loading if it's been defined by the main script
       if (window._mainSetMode) {
         try { window._mainSetMode(mode); } catch(e) { console.warn('_mainSetMode error:', e); }
       }
     };
+    window._switchTabCore = window._switchTab;
     window._setMode = window._switchTab;
+
+    window._updatePipelineNav = function() { window._updateStepper(window._currentStage); };
 
     // Asset sub-tab switcher
     window._setAssetTab = function(subTab) {
@@ -3826,8 +4131,134 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
       });
     };
 
-    // Initialize to Project workspace
-    window._switchTab('project');
+    // ── Output sub-tab switcher (Assembly | Audio | Export) ──
+    window._currentOutputTab = 'export';
+    window._setOutputTab = function(tab) {
+      window._currentOutputTab = tab;
+      // Tab button active state
+      ['assembly','audio','export'].forEach(function(t) {
+        var btn = document.getElementById('outputTab' + t.charAt(0).toUpperCase() + t.slice(1));
+        if (btn) btn.classList.toggle('active', t === tab);
+      });
+      // Hide all three panels
+      var exportPanel = document.getElementById('outputPanelExport');
+      var editPanel = document.getElementById('editContainer');
+      var audioPanel = document.getElementById('audioContainer');
+      if (exportPanel) exportPanel.style.display = 'none';
+      if (editPanel) editPanel.style.display = 'none';
+      if (audioPanel) audioPanel.style.display = 'none';
+      // Show selected
+      if (tab === 'assembly' && editPanel) { editPanel.style.display = ''; }
+      else if (tab === 'audio' && audioPanel) { audioPanel.style.display = ''; }
+      else if (exportPanel) { exportPanel.style.display = ''; }
+    };
+
+    // Initialize to Brief stage
+    window._setStage('brief');
+  })();
+
+  // ══ INSPECTOR PANEL (P9) ══
+  (function(){
+    window._inspectorData = null; // {type, id, name, data}
+
+    window._openInspector = function(type, id, name, data) {
+      var panel = document.getElementById('inspectorPanel');
+      if (!panel) return;
+      window._inspectorData = {type:type, id:id, name:name, data:data||{}};
+      // Header
+      var typeEl = document.getElementById('inspectorType');
+      var nameEl = document.getElementById('inspectorName');
+      if (typeEl) typeEl.textContent = type.toUpperCase();
+      if (nameEl) nameEl.textContent = name || id || '—';
+      // Body — build fields from data
+      var body = document.getElementById('inspectorBody');
+      if (body) {
+        var html = '';
+        var d = data || {};
+        // Always show image if present
+        var img = d.image_path || d.thumbnail || d.hero_image_path || d.scene_image_path || '';
+        if (img) {
+          html += '<div style="margin-bottom:12px;text-align:center;"><img src="' + img + '" style="max-width:100%;max-height:200px;border-radius:var(--radius);border:1px solid var(--border);" onerror="this.style.display=\'none\'"></div>';
+        }
+        // Show key fields
+        var fields = Object.keys(d);
+        var skip = ['image_path','thumbnail','hero_image_path','scene_image_path'];
+        fields.forEach(function(k) {
+          if (skip.indexOf(k) >= 0) return;
+          var v = d[k];
+          if (v === null || v === undefined || v === '') return;
+          if (typeof v === 'object') v = JSON.stringify(v, null, 1);
+          var label = k.replace(/_/g,' ').replace(/\b\w/g, function(c){return c.toUpperCase();});
+          html += '<div class="inspector-field"><label>' + label + '</label><div class="val">' + String(v).substring(0,500) + '</div></div>';
+        });
+        if (!html) html = '<div style="text-align:center;padding:20px;color:var(--text-dim);font-size:11px;">No details available.</div>';
+        body.innerHTML = html;
+      }
+      // Show save button for editable types
+      var saveBtn = document.getElementById('inspectorSave');
+      if (saveBtn) saveBtn.style.display = (type === 'character' || type === 'environment' || type === 'costume' || type === 'shot') ? '' : 'none';
+      panel.classList.add('open');
+    };
+
+    window._closeInspector = function() {
+      var panel = document.getElementById('inspectorPanel');
+      if (panel) panel.classList.remove('open');
+      window._inspectorData = null;
+    };
+
+    window._inspectorSave = function() {
+      // Placeholder — wire to entity-specific save functions
+      if (window._toast) window._toast('Inspector save — wire to entity API', 'info');
+    };
+
+    // Close on Escape
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') window._closeInspector();
+    });
+    // Close on click outside (on overlay area)
+    document.addEventListener('click', function(e) {
+      var panel = document.getElementById('inspectorPanel');
+      if (panel && panel.classList.contains('open') && !panel.contains(e.target)) {
+        // Only close if click is on the main content area, not on cards
+        if (e.target.closest && !e.target.closest('.pos-card, .entity-card, .scene-card, [data-scene-id]')) {
+          // Don't auto-close — let user close explicitly
+        }
+      }
+    });
+  })();
+
+  // ══ POWER MODE (P10) ══
+  (function(){
+    window._powerMode = false;
+
+    window._togglePowerMode = function() {
+      window._powerMode = !window._powerMode;
+      document.body.setAttribute('data-power', window._powerMode ? 'true' : 'false');
+      var btn = document.getElementById('powerModeBtn');
+      if (btn) btn.classList.toggle('active', window._powerMode);
+      // Auto-expand all details in power mode
+      if (window._powerMode) {
+        document.querySelectorAll('details').forEach(function(d) { d.open = true; });
+        // Pin inspector open
+        var panel = document.getElementById('inspectorPanel');
+        if (panel && !panel.classList.contains('open')) {
+          panel.classList.add('open');
+        }
+      } else {
+        // Close inspector if nothing selected
+        if (!window._inspectorData) window._closeInspector();
+      }
+      if (window._toast) window._toast('Power Mode ' + (window._powerMode ? 'ON' : 'OFF'), 'info', 1500);
+    };
+
+    // Keyboard shortcuts in power mode
+    document.addEventListener('keydown', function(e) {
+      if (!window._powerMode) return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+      var stageKeys = {'1':'brief','2':'drafts-refs','3':'assets','4':'scenes','5':'shots','6':'render','7':'output'};
+      if (stageKeys[e.key]) { e.preventDefault(); window._setStage(stageKeys[e.key]); return; }
+      if (e.key === 'g' || e.key === 'G') { e.preventDefault(); window._stagePrimaryAction(); return; }
+    });
   })();
   </script>
 
@@ -3860,167 +4291,100 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
       </div>
     </div>
 
-    <!-- One-Click Movie -->
-    <div style="margin-bottom:20px;padding:20px;background:linear-gradient(135deg,rgba(124,92,255,0.1),rgba(255,94,0,0.08));border:1px solid rgba(124,92,255,0.25);border-radius:var(--radius-lg);">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-        <span style="font-size:28px;">&#127916;</span>
-        <div style="flex:1;">
-          <div style="font-size:15px;font-weight:700;color:var(--text);">Make My Movie</div>
-          <div style="font-size:10px;color:var(--text-dim);">Describe your idea, upload character photos, and LUMN handles everything — shots, scenes, frames, clips, music sync, and final render.</div>
-        </div>
-      </div>
-
-      <!-- Step 1: Idea -->
-      <div style="margin-bottom:12px;">
-        <label style="font-size:10px;font-weight:600;color:var(--cyan);text-transform:uppercase;letter-spacing:1px;">1. Your Idea</label>
-        <textarea id="oneClickIdea" class="styled-input" rows="3" style="font-size:11px;margin-top:4px;" aria-label="Describe your movie idea" placeholder="A 1950s corporate dystopia. Identical men in suits sit in a boardroom. One man slowly becomes aware he's in a loop. Eerie, Kubrick-style symmetry. 60 seconds."></textarea>
-      </div>
-
-      <!-- Step 2: Quick Settings -->
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
+    <!-- ──── PRODUCTION SETTINGS (hidden — relocates to Render stage in P4) ──── -->
+    <div style="display:none;" id="productionSettingsLegacy">
+      <div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div>
-          <label style="font-size:9px;color:var(--text-dim);">Style</label>
-          <select class="styled-select" id="oneClickStyle" style="font-size:10px;">
-            <option value="cinematic">Cinematic</option>
-            <option value="music_video">Music Video</option>
-            <option value="noir">Film Noir</option>
-            <option value="horror">Horror</option>
-            <option value="surreal">Surreal</option>
-            <option value="anime">Anime</option>
-            <option value="documentary">Documentary</option>
+          <label style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Video Engine</label>
+          <select class="styled-select" id="adEngineSelect" style="width:100%;font-size:10px;margin-top:4px;" title="AI video generation model — affects quality, speed, cost, and input options">
+            <optgroup label="Runway">
+              <option value="gen4_5" selected>Gen 4.5 — Multi-Photo+Keyframes | 12 cr/s</option>
+              <option value="gen4_turbo">Gen 4 Turbo — Image-to-Video | 5 cr/s</option>
+              <option value="gen4_aleph">Gen 4 Aleph — Video Transform</option>
+            </optgroup>
+            <optgroup label="Veo (via Runway)">
+              <option value="veo3">Veo 3 — Multi-Photo+Keyframes | 40 cr/s</option>
+              <option value="veo3_1">Veo 3.1 — Multi-Photo+Keyframes | 40 cr/s</option>
+              <option value="veo3_1_fast">Veo 3.1 Fast — Multi-Photo+Keyframes | 15 cr/s</option>
+            </optgroup>
+            <optgroup label="Other">
+              <option value="luma">Luma Ray2 — 1 Photo | $0.50/5s</option>
+              <option value="grok">Grok Video — Text Only | $0.10/5s</option>
+            </optgroup>
           </select>
         </div>
         <div>
-          <label style="font-size:9px;color:var(--text-dim);">Duration</label>
-          <select class="styled-select" id="oneClickDuration" style="font-size:10px;">
-            <option value="30">~30 seconds (5 shots)</option>
-            <option value="60" selected>~60 seconds (8 shots)</option>
-            <option value="90">~90 seconds (12 shots)</option>
-            <option value="120">~2 minutes (16 shots)</option>
+          <label style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Story AI Model</label>
+          <select class="styled-select" id="adStoryModelSelect" style="width:100%;font-size:10px;margin-top:4px;" title="LLM used for AI story planning">
+            <option value="claude-sonnet-4-6" selected>Claude Sonnet 4.6 (premium)</option>
           </select>
-        </div>
-        <div>
-          <label style="font-size:9px;color:var(--text-dim);">Quality</label>
-          <select class="styled-select" id="oneClickQuality" style="font-size:10px;">
-            <option value="draft">Draft (fast, cheap)</option>
-            <option value="standard" selected>Standard</option>
-            <option value="premium">Premium (best quality)</option>
-          </select>
+          <div style="font-size:8px;color:var(--text-dim);margin-top:2px;">Loaded from server on startup</div>
         </div>
       </div>
+    </div></div>
 
-      <!-- Step 3: Optional inputs -->
-      <details style="margin-bottom:12px;">
-        <summary style="font-size:10px;color:var(--text-dim);cursor:pointer;display:flex;align-items:center;gap:6px;">
-          <span style="font-size:8px;">&#9654;</span> Optional: Character photos, song, or reference images
-        </summary>
-        <div style="margin-top:8px;display:flex;flex-direction:column;gap:8px;">
-          <div style="font-size:9px;color:var(--text-dim);">Drop character photos here and they'll be auto-detected and used in generation.</div>
-          <div id="oneClickDropZone" style="border:2px dashed var(--border);border-radius:var(--radius);padding:20px;text-align:center;cursor:pointer;transition:border-color 0.2s;" ondragover="event.preventDefault();this.style.borderColor='var(--cyan)'" ondragleave="this.style.borderColor='var(--border)'" ondrop="event.preventDefault();this.style.borderColor='var(--border)';window._oneClickAddFiles(event.dataTransfer.files)">
-            <div style="font-size:12px;margin-bottom:4px;">&#128247;</div>
-            <div style="font-size:10px;color:var(--text-dim);">Drop photos here or <span style="color:var(--cyan);cursor:pointer;" onclick="document.getElementById('oneClickFileInput').click()">browse</span></div>
-            <input type="file" id="oneClickFileInput" multiple accept="image/*,audio/*" style="display:none;" onchange="window._oneClickAddFiles(this.files)">
-          </div>
-          <div id="oneClickFiles" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
-        </div>
-      </details>
-
-      <!-- The Button -->
-      <div style="text-align:center;">
-        <button id="oneClickBtn" style="background:linear-gradient(135deg,#7c5cff,#FF5E00);border:none;color:#fff;font-family:'Inter Tight',sans-serif;font-size:14px;font-weight:800;letter-spacing:3px;text-transform:uppercase;padding:14px 48px;border-radius:var(--radius-lg);cursor:pointer;transition:all 0.3s;box-shadow:0 4px 20px rgba(124,92,255,0.3);" onclick="window._oneClickMovie(this)" onmouseover="this.style.transform='scale(1.03)';this.style.boxShadow='0 6px 30px rgba(124,92,255,0.5)'" onmouseout="this.style.transform='';this.style.boxShadow='0 4px 20px rgba(124,92,255,0.3)'">
-          &#127916; MAKE MY MOVIE
-        </button>
-        <div id="oneClickCost" style="font-size:9px;color:var(--text-dim);margin-top:8px;">Estimated cost: ~$2-5 depending on scene count and quality</div>
+    <!-- ══ BRIEF: Master Creative Prompt ══ -->
+    <div style="margin-bottom:20px;">
+      <div style="margin-bottom:6px;display:flex;align-items:center;gap:8px;">
+        <span style="font-size:11px;font-weight:700;color:var(--text);letter-spacing:1px;text-transform:uppercase;">Your Idea</span>
+        <span id="pipelineStateBadge" style="font-size:9px;padding:3px 8px;border-radius:10px;background:rgba(100,100,100,0.3);color:var(--text-dim);">IDLE</span>
       </div>
-
-      <!-- Progress -->
-      <div id="oneClickProgress" style="display:none;margin-top:16px;"></div>
+      <textarea id="pipelineMasterPrompt" class="styled-input" rows="6" style="font-size:12px;line-height:1.7;padding:16px;border-radius:var(--radius-lg);border:1px solid rgba(0,229,255,0.15);background:rgba(0,229,255,0.02);" placeholder="Describe your video idea in as much detail as you want. Characters, settings, mood, story beats, visual style — the AI will extract everything it needs.&#10;&#10;Example: A lost golden retriever searching through a sprawling city park at sunset. The dog wanders past empty benches, sniffs near a stone fountain, and finally spots its owner. Cinematic, warm golden hour, shallow depth of field."></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap;">
+        <select id="pipelineMode" class="styled-input" style="min-width:140px;font-size:10px;">
+          <option value="fast">Fast (3 views per asset)</option>
+          <option value="production">Production (8+ views)</option>
+        </select>
+        <label style="font-size:9px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+          <input type="checkbox" id="pipelineAutoAdvance" style="width:12px;height:12px;"> Auto-advance stages
+        </label>
+      </div>
     </div>
 
-    <!-- ──── PREPRODUCTION SECTION ──── -->
-    <div id="preproductionSection" style="margin-bottom:20px;padding:20px;background:linear-gradient(135deg,rgba(0,210,180,0.08),rgba(124,92,255,0.06));border:1px solid rgba(0,210,180,0.2);border-radius:var(--radius-lg);">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-        <span style="font-size:24px;">&#127912;</span>
-        <div style="flex:1;">
-          <div style="font-size:15px;font-weight:700;color:var(--text);">Preproduction</div>
-          <div style="font-size:10px;color:var(--text-dim);">Generate visual reference sheets for characters, costumes, environments, and props before final video generation.</div>
+    <!-- Pipeline Progress (shown after Generate Project Draft) -->
+    <div id="pipelineProgress" style="display:none;margin-bottom:16px;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <div style="flex:1;height:6px;background:rgba(100,100,100,0.3);border-radius:3px;overflow:hidden;">
+          <div id="pipelineProgressBar" style="width:0%;height:100%;background:linear-gradient(90deg,gold,var(--cyan));transition:width 0.3s;"></div>
         </div>
-        <div style="display:flex;gap:6px;align-items:center;">
-          <label style="font-size:9px;color:var(--text-dim);">Mode:</label>
-          <select id="preprodMode" class="styled-select" style="font-size:10px;width:100px;" onchange="window._preprodSetMode(this.value)">
-            <option value="fast">Fast</option>
-            <option value="production">Production</option>
-          </select>
-        </div>
+        <span id="pipelineProgressPct" style="font-size:10px;color:var(--text-dim);">0%</span>
       </div>
-
-      <!-- Package Type Tabs -->
-      <div style="display:flex;gap:0;margin-bottom:12px;">
-        <button class="mode-btn active" id="ppTabChar" onclick="window._preprodShowTab('characters')" style="border-radius:var(--radius) 0 0 var(--radius);padding:6px 12px;font-size:10px;flex:1;">&#128100; Characters</button>
-        <button class="mode-btn" id="ppTabCostume" onclick="window._preprodShowTab('costumes')" style="padding:6px 12px;font-size:10px;flex:1;">&#128085; Costumes</button>
-        <button class="mode-btn" id="ppTabEnv" onclick="window._preprodShowTab('environments')" style="padding:6px 12px;font-size:10px;flex:1;">&#127748; Environments</button>
-        <button class="mode-btn" id="ppTabProp" onclick="window._preprodShowTab('props')" style="border-radius:0 var(--radius) var(--radius) 0;padding:6px 12px;font-size:10px;flex:1;">&#128295; Props</button>
-      </div>
-
-      <!-- Package List -->
-      <div id="preprodPackageList" style="min-height:60px;"></div>
-
-      <!-- Actions -->
-      <div style="display:flex;gap:8px;margin-top:12px;">
-        <button class="btn-secondary" style="font-size:10px;padding:6px 14px;" onclick="window._preprodPlanPackages()">Auto-Plan Packages</button>
-        <button class="btn-secondary" style="font-size:10px;padding:6px 14px;" onclick="window._preprodCreatePackage()">+ Add Package</button>
-        <button class="btn-secondary" style="font-size:10px;padding:6px 14px;" onclick="window._preprodBindShots()">Bind to Shots</button>
-        <button class="btn-secondary" style="font-size:10px;padding:6px 14px;" onclick="window._preprodValidate()">Validate</button>
-      </div>
-
-      <!-- Validation Status -->
-      <div id="preprodValidation" style="margin-top:10px;display:none;"></div>
+      <div id="pipelineStepList" style="font-size:10px;color:var(--text-dim);"></div>
     </div>
 
-    <!-- ──── TASTE PROFILE SECTION ──── -->
-    <details id="tasteProfileSection" style="margin-bottom:16px;">
-      <summary style="padding:12px 16px;background:linear-gradient(135deg,rgba(255,165,0,0.08),rgba(124,92,255,0.06));border:1px solid rgba(255,165,0,0.15);border-radius:var(--radius-lg);cursor:pointer;display:flex;align-items:center;gap:10px;">
-        <span style="font-size:18px;">&#127912;</span>
-        <div style="flex:1;">
-          <div style="font-size:12px;font-weight:700;color:var(--text);">Style Profile <span style="font-size:9px;font-weight:400;color:var(--text-dim);margin-left:4px;">(optional)</span></div>
-          <div style="font-size:10px;color:var(--text-dim);">Teach LUMN your visual taste — warm or cool, polished or raw, intimate or epic.</div>
-        </div>
-      </summary>
-      <div style="padding:16px;background:rgba(255,165,0,0.03);border:1px solid rgba(255,165,0,0.1);border-top:none;border-radius:0 0 var(--radius-lg) var(--radius-lg);">
+    <!-- Extraction Results (shown after extraction) -->
+    <div id="pipelineExtraction" style="display:none;margin-bottom:16px;padding:12px;background:rgba(0,0,0,0.2);border:1px solid var(--border);border-radius:var(--radius-lg);">
+      <div style="font-size:11px;font-weight:600;color:var(--cyan);margin-bottom:8px;">Extracted Assets</div>
+      <div id="pipelineExtractionContent" style="font-size:10px;color:var(--text-dim);"></div>
+    </div>
 
-        <div id="tasteSummaryBox" style="padding:10px;background:rgba(124,92,255,0.06);border-radius:var(--radius);margin-bottom:12px;display:none;">
-          <div style="font-size:10px;font-weight:600;color:var(--cyan);margin-bottom:4px;">YOUR STYLE</div>
-          <div id="tasteSummaryText" style="font-size:11px;color:var(--text);font-style:italic;"></div>
-        </div>
+    <!-- Hidden pipeline action buttons (triggered by bottom bar CTA) -->
+    <div style="display:none;">
+      <button id="pipelineStartBtn" onclick="window._pipelineStart(this)">Start</button>
+      <button id="pipelineSheetsBtn" onclick="window._pipelineSheetsGenerate(this)">Sheets</button>
+      <button id="pipelineApproveBtn" onclick="window._pipelineSheetsApproveAll(this)">Approve</button>
+      <button id="pipelineAnchorsBtn" onclick="window._pipelineAnchorsGenerate(this)">Anchors</button>
+      <button id="pipelineGenerateBtn" onclick="window._pipelineGenerate(this)">Generate</button>
+      <div id="pipelineActions"></div>
+      <div id="pipelineAnchorGallery"><div id="pipelineAnchorGrid"></div></div>
+      <!-- Legacy Make My Movie elements -->
+      <textarea id="oneClickIdea"></textarea>
+      <select id="oneClickStyle"><option value="cinematic">Cinematic</option></select>
+      <select id="oneClickDuration"><option value="60">60</option></select>
+      <select id="oneClickQuality"><option value="standard">Standard</option></select>
+      <button id="oneClickBtn" onclick="window._oneClickMovie(this)">Make</button>
+      <div id="oneClickProgress"></div>
+      <div id="oneClickCost"></div>
+      <div id="oneClickDropZone"></div>
+      <input type="file" id="oneClickFileInput" multiple accept="image/*,audio/*">
+      <div id="oneClickFiles"></div>
+    </div>
 
-        <!-- Quick Taste Quiz -->
-        <div style="margin-bottom:12px;">
-          <button class="btn-secondary" style="font-size:10px;padding:6px 14px;" onclick="window._tasteStartQuiz()">Take Style Quiz (2 min)</button>
-          <button class="btn-secondary" style="font-size:10px;padding:6px 14px;margin-left:6px;" onclick="window._tasteResetOverall()">Reset Profile</button>
-        </div>
+    <!-- Taste Profile + Preproduction moved to Assets workspace -->
 
-        <div id="tasteQuizContainer" style="display:none;margin-bottom:12px;"></div>
-
-        <!-- Style Sliders -->
-        <div id="tasteSliders" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-          <div><label style="font-size:9px;color:var(--text-dim);">Warm &#8596; Cool</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="lighting" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
-          <div><label style="font-size:9px;color:var(--text-dim);">Clean &#8596; Gritty</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="texture" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
-          <div><label style="font-size:9px;color:var(--text-dim);">Polished &#8596; Raw</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="realism" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
-          <div><label style="font-size:9px;color:var(--text-dim);">Calm &#8596; Aggressive</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="pacing" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
-          <div><label style="font-size:9px;color:var(--text-dim);">Minimal &#8596; Dense</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="density" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
-          <div><label style="font-size:9px;color:var(--text-dim);">Intimate &#8596; Epic</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="framing" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
-          <div><label style="font-size:9px;color:var(--text-dim);">Cinematic &#8596; Documentary</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="tone" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
-          <div><label style="font-size:9px;color:var(--text-dim);">Symmetrical &#8596; Handheld</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="composition" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
-        </div>
-
-        <div style="text-align:right;margin-top:10px;">
-          <button class="btn-secondary" style="font-size:10px;padding:6px 14px;" onclick="window._tasteSaveSliders()">Save Style Profile</button>
-        </div>
-      </div>
-    </details>
-
-    <!-- Director Mode (Advanced) — nested under Make My Movie -->
-    <details style="margin-bottom:16px;">
+    <!-- Director Mode (hidden — relocates to Shots stage in P7) -->
+    <details style="display:none;margin-bottom:16px;">
       <summary style="padding:12px 16px;background:linear-gradient(135deg,rgba(255,94,0,0.06),rgba(124,92,255,0.06));border:1px solid rgba(255,94,0,0.15);border-radius:var(--radius-lg);cursor:pointer;display:flex;align-items:center;gap:10px;">
         <span style="font-size:16px;">&#128221;</span>
         <div style="flex:1;">
@@ -4264,8 +4628,8 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
       </div>
     </div>
 
-    <!-- Continuity Rules -->
-    <div style="margin-top:16px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);">
+    <!-- Continuity Rules (hidden — relocates to Render stage in P4) -->
+    <div style="display:none;margin-top:16px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);">
       <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:12px;" title="Rules that keep your scenes visually consistent">Continuity Rules</div>
       <div id="continuityRulesList" style="margin-bottom:8px;"></div>
       <div style="display:flex;gap:8px;">
@@ -4287,23 +4651,16 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
       <select id="dirEnvLibrarySelect"><option value="">Select from library...</option></select>
     </div>
 
-    <!-- SECTION 3: GENERATION SETTINGS -->
-    <div class="panel collapsed" id="autoSettingsPanel">
+    <!-- SECTION 3: ADVANCED CONTROLS (hidden — relocates to Render stage in P4) -->
+    <div class="panel collapsed" id="autoSettingsPanel" style="display:none;">
       <div class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">
         <span class="dot"></span>
-        <span class="panel-title">Settings</span>
+        <span class="panel-title">Advanced Controls</span>
         <span class="collapse-icon">&#9660;</span>
       </div>
       <div class="panel-body">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div>
           <div>
-            <label class="section-label section-label-dim">Story AI Model</label>
-            <select class="styled-select" id="adStoryModelSelect" style="width:100%;" title="LLM used for AI story planning — writes your scene-by-scene storyline">
-              <option value="claude-sonnet-4-6" selected>Claude Sonnet 4.6 (premium)</option>
-            </select>
-            <div class="hint" style="margin-top:4px;font-size:9px;color:var(--text-dim);">AI that writes your storyline. Loaded from server on startup.</div>
-          </div>
-          <div style="padding:8px 0;border-top:1px solid var(--border);">
             <label class="section-label section-label-dim" style="margin-bottom:6px;display:block;">V4 Lock Controls</label>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
               <div>
@@ -4323,25 +4680,6 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
                 <input type="number" id="adSeedLock" placeholder="Random" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--text);font-size:10px;" title="Set a seed for reproducible generations (leave empty for random)">
               </div>
             </div>
-          </div>
-          <div>
-            <label class="section-label section-label-dim">Default Engine (can override per shot)</label>
-            <select class="styled-select" id="adEngineSelect" style="width:100%;" title="AI video generation model — affects quality, speed, cost, and input options">
-              <optgroup label="─── Runway ───">
-                <option value="gen4_5" selected title="Best quality, supports multiple photo references + keyframes. 12 credits/second (~$0.05/s). Best for hero shots.">Gen 4.5 — 📸📸 Multi-Photo+Keyframes | 12 cr/s | ~90s</option>
-                <option value="gen4_turbo" title="Fast generation from a single image. 5 credits/second (~$0.02/s). Good for iterating quickly.">Gen 4 Turbo — 📸 Image-to-Video Only | 5 cr/s | ~45s</option>
-                <option value="gen4_aleph" title="Video-to-video transform. Requires an existing clip to restyle. Experimental.">Gen 4 Aleph — Video Transform (requires existing clip)</option>
-              </optgroup>
-              <optgroup label="─── Veo (via Runway) ───">
-                <option value="veo3" title="Google's highest quality model. 40 credits/second (~$0.16/s). Slow but cinematic.">Veo 3 — 📸📸 Multi-Photo+Keyframes | 40 cr/s | ~2m</option>
-                <option value="veo3_1" title="Updated Veo with improved motion. 40 credits/second. Better movement.">Veo 3.1 — 📸📸 Multi-Photo+Keyframes | 40 cr/s | ~2m</option>
-                <option value="veo3_1_fast" title="Faster Veo inference, slightly lower quality. 15 credits/second. Good for drafts.">Veo 3.1 Fast — 📸📸 Multi-Photo+Keyframes | 15 cr/s | ~45s</option>
-              </optgroup>
-              <optgroup label="─── Other ───">
-                <option value="luma" title="Luma Labs model. $0.50 per 5 seconds. Single photo input. Simple and affordable.">Luma Ray2 — 📸 1 Photo+Keyframes | ~45s | $0.50/5s</option>
-                <option value="grok" title="xAI Grok video. Text-only prompt, no photo input. 8 second clips. Alternative engine.">Grok Video — ❌ Text Only | ~30s | $0.10/5s</option>
-              </optgroup>
-            </select>
           </div>
           <div style="display:none !important;">
             <label class="section-label section-label-dim">Budget</label>
@@ -4491,6 +4829,71 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
     </div>
   </div><!-- /projectContainer -->
 
+  <!-- ============ DRAFTS & REFS STAGE ============ -->
+  <div id="stageDraftsRefs" class="workspace-panel hidden" style="display:none;">
+
+    <!-- ── Phase Indicator ── -->
+    <div id="draftsPhaseIndicator" style="display:flex;align-items:center;gap:0;margin-bottom:20px;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);">
+      <button onclick="window._draftsSetPhase(1)" data-phase="1" class="drafts-phase-btn drafts-phase-btn--active" style="display:flex;align-items:center;gap:8px;background:none;border:none;cursor:pointer;padding:6px 12px;border-radius:var(--radius);transition:all 0.2s;">
+        <span style="width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;background:var(--cyan);color:#000;transition:all 0.2s;" class="drafts-phase-dot">1</span>
+        <span style="font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--text);transition:color 0.2s;" class="drafts-phase-label">Review Drafts</span>
+      </button>
+      <div style="flex:1;height:2px;background:var(--border);margin:0 8px;position:relative;">
+        <div id="draftsPhaseBar" style="height:100%;width:0%;background:var(--cyan);border-radius:1px;transition:width 0.3s ease;"></div>
+      </div>
+      <button onclick="window._draftsSetPhase(2)" data-phase="2" class="drafts-phase-btn" style="display:flex;align-items:center;gap:8px;background:none;border:none;cursor:pointer;padding:6px 12px;border-radius:var(--radius);transition:all 0.2s;">
+        <span style="width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;background:var(--border);color:var(--text-dim);transition:all 0.2s;" class="drafts-phase-dot">2</span>
+        <span style="font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--text-dim);transition:color 0.2s;" class="drafts-phase-label">Confirm References</span>
+      </button>
+    </div>
+
+    <!-- ── Asset-Light Empty State ── -->
+    <div id="draftsEmptyState" style="display:none;padding:48px 24px;text-align:center;border:2px dashed var(--border);border-radius:var(--radius-lg);margin-bottom:20px;">
+      <div style="font-size:28px;opacity:0.3;margin-bottom:12px;">&#128196;</div>
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px;">No entity assets drafted</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:16px;max-width:360px;margin-left:auto;margin-right:auto;line-height:1.6;">Your project uses style-driven generation.</div>
+      <button class="btn btn-cyan" style="font-size:10px;padding:8px 20px;" onclick="window._draftsProceedToScenes()">Proceed to Scenes</button>
+    </div>
+
+    <!-- ── Tab Bar ── -->
+    <div id="draftsAssetTabs" style="display:flex;gap:0;margin-bottom:16px;">
+      <button class="mode-btn active" data-drafts-tab="characters" onclick="window._draftsSetTab('characters')" style="font-size:10px;padding:8px 16px;flex:1;">&#128100; Characters</button>
+      <button class="mode-btn" data-drafts-tab="costumes" onclick="window._draftsSetTab('costumes')" style="font-size:10px;padding:8px 16px;flex:1;">&#128084; Costumes</button>
+      <button class="mode-btn" data-drafts-tab="environments" onclick="window._draftsSetTab('environments')" style="font-size:10px;padding:8px 16px;flex:1;">&#127750; Environments</button>
+      <button class="mode-btn" data-drafts-tab="props" onclick="window._draftsSetTab('props')" style="font-size:10px;padding:8px 16px;flex:1;">&#127919; Props</button>
+    </div>
+
+    <!-- ── Bulk Actions ── -->
+    <div id="draftsBulkActions" style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+      <button class="btn btn-small btn-cyan" onclick="window._draftsSetAllAiOnly()" style="font-size:10px;">Set All AI Only</button>
+      <button class="btn btn-small btn-green" onclick="window._draftsLockAllReferences()" style="font-size:10px;">Lock All References</button>
+      <label class="btn btn-small btn-amber" style="font-size:10px;cursor:pointer;">
+        Upload Batch
+        <input type="file" multiple accept="image/*" style="display:none;" onchange="window._draftsBatchUpload(this.files)">
+      </label>
+      <div style="flex:1;"></div>
+      <span id="draftsReadinessIndicator" style="font-size:10px;color:var(--text-dim);letter-spacing:1px;">0 / 0 sources set</span>
+    </div>
+
+    <!-- ── Card Grid ── -->
+    <div id="draftsCardGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-bottom:24px;min-height:80px;">
+      <!-- Cards populated by JS -->
+    </div>
+
+    <!-- ── Scene Draft Preview ── -->
+    <div id="draftsScenePreview" style="margin-top:8px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+        <span style="font-size:14px;">&#127916;</span>
+        <span style="font-size:12px;font-weight:700;color:var(--text);letter-spacing:1px;text-transform:uppercase;">Scene Draft Preview</span>
+        <span style="font-size:9px;color:var(--text-dim);margin-left:4px;">(read-only from AI extraction)</span>
+      </div>
+      <div id="draftsSceneList" style="display:flex;flex-direction:column;gap:8px;max-height:300px;overflow-y:auto;">
+        <div style="font-size:11px;color:var(--text-dim);padding:12px;text-align:center;">No scenes extracted yet.</div>
+      </div>
+    </div>
+
+  </div>
+
   <!-- ============ ASSETS WORKSPACE ============ -->
   <div id="assetsContainer" class="workspace-panel hidden" style="display:none;">
     <!-- Sub-tab navigation -->
@@ -4508,6 +4911,75 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
       </button>
       <span id="batchSheetStatus" style="font-size:9px;color:var(--text-dim);"></span>
     </div>
+
+    <!-- ──── STYLE PROFILE ──── -->
+    <details id="tasteProfileSection" style="margin-bottom:16px;">
+      <summary style="padding:12px 16px;background:linear-gradient(135deg,rgba(255,165,0,0.08),rgba(124,92,255,0.06));border:1px solid rgba(255,165,0,0.15);border-radius:var(--radius-lg);cursor:pointer;display:flex;align-items:center;gap:10px;">
+        <span style="font-size:18px;">&#127912;</span>
+        <div style="flex:1;">
+          <div style="font-size:12px;font-weight:700;color:var(--text);">Style Profile <span style="font-size:9px;font-weight:400;color:var(--text-dim);margin-left:4px;">(optional)</span></div>
+          <div style="font-size:10px;color:var(--text-dim);">Teach LUMN your visual taste — warm or cool, polished or raw, intimate or epic.</div>
+        </div>
+      </summary>
+      <div style="padding:16px;background:rgba(255,165,0,0.03);border:1px solid rgba(255,165,0,0.1);border-top:none;border-radius:0 0 var(--radius-lg) var(--radius-lg);">
+        <div id="tasteSummaryBox" style="padding:10px;background:rgba(124,92,255,0.06);border-radius:var(--radius);margin-bottom:12px;display:none;">
+          <div style="font-size:10px;font-weight:600;color:var(--cyan);margin-bottom:4px;">YOUR STYLE</div>
+          <div id="tasteSummaryText" style="font-size:11px;color:var(--text);font-style:italic;"></div>
+        </div>
+        <div style="margin-bottom:12px;">
+          <button class="btn-secondary" style="font-size:10px;padding:6px 14px;" onclick="window._tasteStartQuiz()">Take Style Quiz (2 min)</button>
+          <button class="btn-secondary" style="font-size:10px;padding:6px 14px;margin-left:6px;" onclick="window._tasteResetOverall()">Reset Profile</button>
+        </div>
+        <div id="tasteQuizContainer" style="display:none;margin-bottom:12px;"></div>
+        <div id="tasteSliders" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div><label style="font-size:9px;color:var(--text-dim);">Warm &#8596; Cool</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="lighting" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
+          <div><label style="font-size:9px;color:var(--text-dim);">Clean &#8596; Gritty</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="texture" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
+          <div><label style="font-size:9px;color:var(--text-dim);">Polished &#8596; Raw</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="realism" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
+          <div><label style="font-size:9px;color:var(--text-dim);">Calm &#8596; Aggressive</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="pacing" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
+          <div><label style="font-size:9px;color:var(--text-dim);">Minimal &#8596; Dense</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="density" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
+          <div><label style="font-size:9px;color:var(--text-dim);">Intimate &#8596; Epic</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="framing" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
+          <div><label style="font-size:9px;color:var(--text-dim);">Cinematic &#8596; Documentary</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="tone" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
+          <div><label style="font-size:9px;color:var(--text-dim);">Symmetrical &#8596; Handheld</label><input type="range" min="-100" max="100" value="0" class="styled-range" data-taste="composition" onchange="window._tasteSliderChange(this)" style="width:100%;"><span class="taste-val" style="font-size:8px;color:var(--text-dim);">0</span></div>
+        </div>
+        <div style="text-align:right;margin-top:10px;">
+          <button class="btn-secondary" style="font-size:10px;padding:6px 14px;" onclick="window._tasteSaveSliders()">Save Style Profile</button>
+        </div>
+      </div>
+    </details>
+
+    <!-- ──── PREPRODUCTION ──── -->
+    <details style="margin-bottom:16px;">
+      <summary style="padding:12px 16px;background:linear-gradient(135deg,rgba(0,210,180,0.08),rgba(124,92,255,0.06));border:1px solid rgba(0,210,180,0.2);border-radius:var(--radius-lg);cursor:pointer;display:flex;align-items:center;gap:10px;">
+        <span style="font-size:18px;">&#127912;</span>
+        <div style="flex:1;">
+          <div style="font-size:12px;font-weight:700;color:var(--text);">Preproduction Packages</div>
+          <div style="font-size:10px;color:var(--text-dim);">Manage reference sheet packages for characters, costumes, environments, and props.</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <label style="font-size:9px;color:var(--text-dim);">Mode:</label>
+          <select id="preprodMode" class="styled-select" style="font-size:10px;width:100px;" onchange="window._preprodSetMode(this.value)" onclick="event.stopPropagation()">
+            <option value="fast">Fast</option>
+            <option value="production">Production</option>
+          </select>
+        </div>
+      </summary>
+      <div id="preproductionSection" style="padding:16px;background:rgba(0,210,180,0.03);border:1px solid rgba(0,210,180,0.1);border-top:none;border-radius:0 0 var(--radius-lg) var(--radius-lg);">
+        <div style="display:flex;gap:0;margin-bottom:12px;">
+          <button class="mode-btn active" id="ppTabChar" onclick="window._preprodShowTab('characters')" style="border-radius:var(--radius) 0 0 var(--radius);padding:6px 12px;font-size:10px;flex:1;">&#128100; Characters</button>
+          <button class="mode-btn" id="ppTabCostume" onclick="window._preprodShowTab('costumes')" style="padding:6px 12px;font-size:10px;flex:1;">&#128085; Costumes</button>
+          <button class="mode-btn" id="ppTabEnv" onclick="window._preprodShowTab('environments')" style="padding:6px 12px;font-size:10px;flex:1;">&#127748; Environments</button>
+          <button class="mode-btn" id="ppTabProp" onclick="window._preprodShowTab('props')" style="border-radius:0 var(--radius) var(--radius) 0;padding:6px 12px;font-size:10px;flex:1;">&#128295; Props</button>
+        </div>
+        <div id="preprodPackageList" style="min-height:60px;"></div>
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          <button class="btn-secondary" style="font-size:10px;padding:6px 14px;" onclick="window._preprodPlanPackages()">Auto-Plan Packages</button>
+          <button class="btn-secondary" style="font-size:10px;padding:6px 14px;" onclick="window._preprodCreatePackage()">+ Add Package</button>
+          <button class="btn-secondary" style="font-size:10px;padding:6px 14px;" onclick="window._preprodBindShots()">Bind to Shots</button>
+          <button class="btn-secondary" style="font-size:10px;padding:6px 14px;" onclick="window._preprodValidate()">Validate</button>
+        </div>
+        <div id="preprodValidation" style="margin-top:10px;display:none;"></div>
+      </div>
+    </details>
 
     <!-- Sub-panels -->
     <div id="assetPanelCharacters">
@@ -4718,11 +5190,51 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
         </div>
       </div>
 
-    <!-- Next Step CTA -->
-    <div style="margin:16px 0;padding:16px;background:linear-gradient(135deg,rgba(0,229,255,0.06),rgba(124,92,255,0.06));border:1px solid rgba(0,229,255,0.2);border-radius:var(--radius-lg);text-align:center;">
-      <div style="font-size:12px;color:var(--text);font-weight:600;margin-bottom:6px;">Assets ready?</div>
-      <div style="font-size:10px;color:var(--text-dim);margin-bottom:10px;">Generate AI scenes using your characters and environments.</div>
-      <button class="btn btn-cyan" onclick="window._switchWorkspace('shots')" style="font-size:11px;padding:8px 20px;">Next: Shots &#8594;</button>
+    <!-- Asset status summary + advance CTA -->
+    <div id="assetReadinessBanner" style="margin:16px 0;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--text);">Asset Readiness</div>
+          <div id="assetReadinessDetail" style="font-size:10px;color:var(--text-dim);margin-top:2px;">
+            Review and approve your assets, then proceed to scene composition.
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <span id="assetApprovedCount" style="font-size:10px;color:var(--green);font-weight:600;"></span>
+          <button class="btn btn-cyan" onclick="window._stageNext()" style="font-size:11px;padding:8px 20px;">Build Scenes &#8594;</button>
+        </div>
+      </div>
+    </div>
+    </div>
+  </div>
+
+  <!-- ============ SCENES STAGE (P6 placeholder) ============ -->
+  <div id="stageScenes" class="workspace-panel hidden" style="display:none;">
+    <div style="max-width:740px;margin:0 auto;padding:16px;">
+    <!-- Storyboard Strip -->
+    <div style="margin-bottom:16px;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow-x:auto;">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+        <span style="font-size:11px;font-weight:700;color:var(--text);letter-spacing:0.5px;text-transform:uppercase;">Storyboard</span>
+        <span id="scenesCount" style="font-size:9px;color:var(--text-dim);">0 scenes</span>
+      </div>
+      <div id="scenesStripThumbs" style="display:flex;gap:8px;min-height:60px;padding:4px 0;">
+        <div style="font-size:10px;color:var(--text-dim);display:flex;align-items:center;">No scenes yet. Generate a project draft first.</div>
+      </div>
+    </div>
+    <!-- Provisional Asset Banner -->
+    <div id="scenesProvisionalBanner" style="display:none;margin-bottom:12px;padding:10px 14px;background:rgba(255,180,60,0.08);border:1px solid rgba(255,180,60,0.2);border-radius:var(--radius);font-size:10px;color:var(--amber);">
+      Some scenes use unapproved assets. Approve assets to lock in visual consistency.
+    </div>
+    <!-- Scene Cards -->
+    <div id="scenesCardList" style="display:flex;flex-direction:column;gap:12px;">
+      <div style="text-align:center;padding:40px;color:var(--text-dim);">
+        <div style="font-size:32px;margin-bottom:8px;opacity:0.4;">&#127916;</div>
+        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px;">No scenes yet</div>
+        <div style="font-size:11px;">Scenes are auto-generated from the AI extraction in the Brief stage.</div>
+      </div>
+    </div>
+    <div style="margin-top:12px;text-align:center;">
+      <button class="btn btn-small" onclick="window._addManualScene && window._addManualScene()" style="font-size:10px;border-color:var(--cyan);color:var(--cyan);">+ Add Scene</button>
     </div>
     </div>
   </div>
@@ -4867,6 +5379,70 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
             </div>
             <div id="analyticsContent" style="font-size:9px;color:var(--text-dim);">Generate scenes to see analytics.</div>
             <button class="btn btn-small" onclick="window._refreshAnalytics()" style="margin-top:4px;font-size:7px;padding:2px 6px;">Refresh</button>
+          </div>
+        </div>
+      </details>
+
+      <!-- Director Controls (relocated from Brief/project for shot-level tuning) -->
+      <details style="margin-bottom:12px;">
+        <summary style="font-size:10px;font-weight:600;color:var(--text-dim);cursor:pointer;display:flex;align-items:center;gap:6px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);">
+          <span style="font-size:8px;transition:transform 0.2s;">&#9654;</span> Director Controls
+          <span style="font-size:8px;color:var(--text-dim);font-weight:400;margin-left:4px;">— Pacing, Intensity, Arc</span>
+        </summary>
+        <div style="padding:12px;background:var(--surface);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-lg) var(--radius-lg);display:flex;flex-direction:column;gap:10px;">
+          <div class="scene-row" style="display:flex;align-items:center;gap:8px;">
+            <label style="font-size:10px;color:var(--text-dim);min-width:60px;" title="Controls shot duration and how frequently cuts happen">Pacing</label>
+            <select class="styled-select" id="dirPacingStyleShots" style="flex:1;font-size:10px;" onchange="var s=document.getElementById('dirPacingStyle');if(s)s.value=this.value;" title="Controls shot duration and cut frequency">
+              <option value="contemplative">Contemplative</option><option value="balanced" selected>Balanced</option><option value="energetic">Energetic</option><option value="hypercut">Hypercut</option>
+            </select>
+          </div>
+          <div class="scene-row" style="display:flex;align-items:center;gap:8px;">
+            <label style="font-size:10px;color:var(--text-dim);min-width:60px;" title="1 = calm, 10 = max intensity">Intensity</label>
+            <input type="range" class="styled-slider" id="dirIntensityShots" min="1" max="10" value="7" style="flex:1;" oninput="document.getElementById('dirIntensityShotsVal').textContent=this.value;var s=document.getElementById('dirIntensity');if(s)s.value=this.value"><span id="dirIntensityShotsVal" style="font-size:9px;color:var(--text-dim);min-width:12px;">7</span>
+          </div>
+          <div class="scene-row" style="display:flex;align-items:center;gap:8px;">
+            <label style="font-size:10px;color:var(--text-dim);min-width:60px;" title="1 = photorealistic, 10 = surreal">Abstract</label>
+            <input type="range" class="styled-slider amber-slider" id="dirAbstractShots" min="1" max="10" value="3" style="flex:1;" oninput="document.getElementById('dirAbstractShotsVal').textContent=this.value;var s=document.getElementById('dirAbstract');if(s)s.value=this.value"><span id="dirAbstractShotsVal" style="font-size:9px;color:var(--text-dim);min-width:12px;">3</span>
+          </div>
+          <div class="scene-row" style="display:flex;align-items:center;gap:8px;">
+            <label style="font-size:10px;color:var(--text-dim);min-width:60px;" title="Narrative structure">Arc</label>
+            <select class="styled-select" id="adArcTypeShots" style="flex:1;font-size:10px;" onchange="var s=document.getElementById('adArcType');if(s)s.value=this.value;">
+              <option value="heroes_journey">Hero's Journey</option><option value="rise_fall_rise">Rise-Fall-Rise</option><option value="descent">Descent</option><option value="transformation">Transformation</option><option value="parallel_worlds">Parallel Worlds</option><option value="memory_montage">Memory Montage</option><option value="day_in_life">Day in the Life</option><option value="surreal_dream">Surreal Dream</option><option value="love_story">Love Story</option><option value="rebellion">Rebellion</option><option value="homecoming">Homecoming</option><option value="ritual">Ritual / Ceremony</option>
+            </select>
+          </div>
+        </div>
+      </details>
+
+      <!-- Import Shots (shot sheet / AI describe — made visible) -->
+      <details style="margin-bottom:12px;">
+        <summary style="font-size:10px;font-weight:600;color:var(--text-dim);cursor:pointer;display:flex;align-items:center;gap:6px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);">
+          <span style="font-size:8px;transition:transform 0.2s;">&#9654;</span> Import Shots
+          <span style="font-size:8px;color:var(--text-dim);font-weight:400;margin-left:4px;">— Paste shot sheet or describe idea</span>
+        </summary>
+        <div style="padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-lg) var(--radius-lg);">
+          <div style="font-size:9px;color:var(--text-dim);line-height:1.5;margin-bottom:8px;">
+            Paste shot descriptions or describe your idea. Each shot: <strong style="color:var(--text);">Shot 1.1 — Wide Room</strong> followed by a prompt.
+          </div>
+          <div style="display:flex;gap:0;margin-bottom:8px;">
+            <button class="mode-btn active" id="shotsImportTabManual" onclick="document.getElementById('shotsImportManual').style.display='';document.getElementById('shotsImportAI').style.display='none';this.classList.add('active');document.getElementById('shotsImportTabAI').classList.remove('active')" style="border-radius:var(--radius) 0 0 var(--radius);padding:6px 14px;font-size:10px;flex:1;">Paste Shots</button>
+            <button class="mode-btn" id="shotsImportTabAI" onclick="document.getElementById('shotsImportAI').style.display='';document.getElementById('shotsImportManual').style.display='none';this.classList.add('active');document.getElementById('shotsImportTabManual').classList.remove('active')" style="border-radius:0 var(--radius) var(--radius) 0;padding:6px 14px;font-size:10px;flex:1;">AI Describe</button>
+          </div>
+          <div id="shotsImportManual">
+            <textarea id="shotsImportTextarea" class="styled-input" rows="5" style="font-size:10px;font-family:'JetBrains Mono',monospace;line-height:1.6;" placeholder="Shot 1.1 — Wide Room&#10;A symmetrical 1950s boardroom, soft overhead lighting, cinematic push-in&#10;&#10;Shot 1.2 — Close-Up Face&#10;Extreme close-up, eyes opening, warm golden light"></textarea>
+            <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap;">
+              <button class="btn btn-small btn-amber" style="font-size:10px;padding:8px 20px;font-weight:600;" onclick="var ta=document.getElementById('shotsImportTextarea');document.getElementById('shotSheetInput').value=ta.value;window._importShotSheet(this);">Import Shots</button>
+              <label style="display:flex;align-items:center;gap:4px;font-size:9px;color:var(--text-dim);"><input type="checkbox" checked> Auto-detect camera</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:9px;color:var(--text-dim);"><input type="checkbox" checked> Link characters</label>
+            </div>
+          </div>
+          <div id="shotsImportAI" style="display:none;">
+            <textarea id="shotsImportAIText" class="styled-input" rows="3" style="font-size:11px;line-height:1.6;" placeholder="Describe your idea... e.g. &quot;A 1950s corporate dystopia. Identical men in suits. One man becomes aware he's in a loop. Kubrick-style. 8 shots.&quot;"></textarea>
+            <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+              <select class="styled-select" id="shotsImportAICount" style="font-size:10px;width:100px;">
+                <option value="5">5 shots</option><option value="8" selected>8 shots</option><option value="12">12 shots</option><option value="16">16 shots</option>
+              </select>
+              <button class="btn btn-small" style="background:linear-gradient(135deg,#7c5cff,#ff5ca0);border:none;color:#fff;font-size:10px;padding:6px 16px;font-weight:600;" onclick="document.getElementById('ssAiIdeaInput').value=document.getElementById('shotsImportAIText').value;document.getElementById('ssAiShotCount').value=document.getElementById('shotsImportAICount').value;window._aiGenerateShotSheet(this);">AI Generate</button>
+            </div>
           </div>
         </div>
       </details>
@@ -5661,9 +6237,207 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
     <div style="margin:16px 0;padding:16px;background:linear-gradient(135deg,rgba(0,229,255,0.06),rgba(124,92,255,0.06));border:1px solid rgba(0,229,255,0.2);border-radius:var(--radius-lg);text-align:center;">
       <div style="font-size:12px;color:var(--text);font-weight:600;margin-bottom:6px;">Clips generated?</div>
       <div style="font-size:10px;color:var(--text-dim);margin-bottom:10px;">Arrange them on the timeline with transitions and text overlays.</div>
-      <button class="btn btn-cyan" onclick="window._switchWorkspace('edit')" style="font-size:11px;padding:8px 20px;">Next: Edit &#8594;</button>
+      <button class="btn btn-cyan" onclick="window._setStage('render')" style="font-size:11px;padding:8px 20px;">Next: Render &#8594;</button>
     </div>
     </div>
+  </div>
+
+  <!-- ============ RENDER STAGE (P4 placeholder) ============ -->
+  <div id="stageRender" class="workspace-panel hidden" style="display:none;">
+    <div style="max-width:740px;margin:0 auto;padding:16px;">
+
+    <!-- Render Summary -->
+    <div id="renderSummary" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px;">
+      <div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);text-align:center;">
+        <div style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Shots Queued</div>
+        <div id="renderShotCount" style="font-size:28px;font-weight:700;color:var(--cyan);margin-top:4px;">0</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:2px;"><span id="renderApprovedCount">0</span> approved &middot; <span id="renderProvisionalCount">0</span> provisional</div>
+      </div>
+      <div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);text-align:center;">
+        <div style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Est. Cost</div>
+        <div id="renderEstCost" style="font-size:28px;font-weight:700;color:var(--amber);margin-top:4px;">$0</div>
+      </div>
+      <div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);text-align:center;">
+        <div style="font-size:9px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">Est. Time</div>
+        <div id="renderEstTime" style="font-size:28px;font-weight:700;color:var(--green);margin-top:4px;">--</div>
+      </div>
+    </div>
+
+    <!-- Engine & Quality -->
+    <div style="margin-bottom:16px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);">
+      <div style="font-size:11px;font-weight:700;color:var(--text);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:12px;">Engine &amp; Quality</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Video Engine</label>
+          <select class="styled-select" id="renderEngine" style="width:100%;font-size:10px;margin-top:4px;">
+            <optgroup label="Runway">
+              <option value="gen4_5" selected>Gen 4.5 — Multi-Photo+Keyframes | 12 cr/s</option>
+              <option value="gen4_turbo">Gen 4 Turbo — Image-to-Video | 5 cr/s</option>
+              <option value="gen4_aleph">Gen 4 Aleph — Video Transform</option>
+            </optgroup>
+            <optgroup label="Veo (via Runway)">
+              <option value="veo3">Veo 3 — 40 cr/s</option>
+              <option value="veo3_1">Veo 3.1 — 40 cr/s</option>
+              <option value="veo3_1_fast">Veo 3.1 Fast — 15 cr/s</option>
+            </optgroup>
+            <optgroup label="Other">
+              <option value="luma">Luma Ray2 — $0.50/5s</option>
+              <option value="grok">Grok Video — $0.10/5s</option>
+            </optgroup>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Story AI Model</label>
+          <select class="styled-select" id="renderStoryModel" style="width:100%;font-size:10px;margin-top:4px;">
+            <option value="claude-sonnet-4-6" selected>Claude Sonnet 4.6</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:12px;">
+        <label style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Quality Preset</label>
+        <div style="display:flex;gap:0;margin-top:4px;">
+          <button class="mode-btn" onclick="window._setRenderQuality('draft')" id="renderQDraft" style="border-radius:var(--radius) 0 0 var(--radius);padding:6px 16px;font-size:10px;flex:1;">Draft</button>
+          <button class="mode-btn active" onclick="window._setRenderQuality('standard')" id="renderQStandard" style="border-radius:0;padding:6px 16px;font-size:10px;flex:1;">Standard</button>
+          <button class="mode-btn" onclick="window._setRenderQuality('premium')" id="renderQPremium" style="border-radius:0 var(--radius) var(--radius) 0;padding:6px 16px;font-size:10px;flex:1;">Premium</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Consistency Controls (collapsible) -->
+    <details style="margin-bottom:16px;">
+      <summary style="padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);cursor:pointer;display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;color:var(--text);">
+        Consistency Controls
+      </summary>
+      <div style="padding:16px;background:var(--surface);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-lg) var(--radius-lg);">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <label style="font-size:9px;color:var(--text-dim);display:block;margin-bottom:2px;">Character Lock <span id="renderCharLockVal" style="color:var(--cyan);">0.8</span></label>
+            <input type="range" id="renderCharLock" min="0" max="1" step="0.1" value="0.8" style="width:100%;" oninput="document.getElementById('renderCharLockVal').textContent=this.value">
+          </div>
+          <div>
+            <label style="font-size:9px;color:var(--text-dim);display:block;margin-bottom:2px;">Environment Lock <span id="renderEnvLockVal" style="color:var(--amber);">0.7</span></label>
+            <input type="range" id="renderEnvLock" min="0" max="1" step="0.1" value="0.7" style="width:100%;" oninput="document.getElementById('renderEnvLockVal').textContent=this.value">
+          </div>
+          <div>
+            <label style="font-size:9px;color:var(--text-dim);display:block;margin-bottom:2px;">Style Lock <span id="renderStyleLockVal" style="color:var(--magenta);">0.9</span></label>
+            <input type="range" id="renderStyleLock" min="0" max="1" step="0.1" value="0.9" style="width:100%;" oninput="document.getElementById('renderStyleLockVal').textContent=this.value">
+          </div>
+          <div>
+            <label style="font-size:9px;color:var(--text-dim);display:block;margin-bottom:2px;">Seed</label>
+            <input type="number" id="renderSeed" placeholder="Random" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 8px;color:var(--text);font-size:10px;">
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <!-- Continuity Rules (collapsible) -->
+    <details style="margin-bottom:16px;">
+      <summary style="padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);cursor:pointer;display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;color:var(--text);">
+        Continuity Rules
+      </summary>
+      <div style="padding:16px;background:var(--surface);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-lg) var(--radius-lg);">
+        <div id="renderContinuityList" style="margin-bottom:8px;font-size:10px;color:var(--text-dim);">No rules added yet.</div>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="renderContinuityInput" class="styled-input" placeholder="e.g. Character always wears red jacket in outdoor scenes" style="flex:1;font-size:10px;">
+          <button class="btn btn-small btn-green" onclick="window._addRenderContinuityRule()">+ Add</button>
+        </div>
+      </div>
+    </details>
+
+    <!-- Advanced (collapsible) -->
+    <details style="margin-bottom:16px;">
+      <summary style="padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);cursor:pointer;display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;color:var(--text);">
+        Advanced
+      </summary>
+      <div style="padding:16px;background:var(--surface);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-lg) var(--radius-lg);">
+        <div style="margin-bottom:12px;">
+          <label style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Universal Prompt Suffix</label>
+          <textarea class="styled-input" id="renderUniversalPrompt" rows="2" style="font-size:10px;margin-top:4px;" placeholder="Appended to every shot prompt (e.g. cinematic 4K, film grain)"></textarea>
+        </div>
+        <div>
+          <label style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Budget Cap ($)</label>
+          <input type="number" id="renderBudgetCap" min="0" step="1" value="" placeholder="No limit" style="width:120px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 8px;color:var(--green);font-size:10px;margin-top:4px;">
+        </div>
+      </div>
+    </details>
+
+    <!-- Render Queue -->
+    <div style="padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div style="font-size:11px;font-weight:700;color:var(--text);letter-spacing:0.5px;text-transform:uppercase;">Render Queue</div>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-small" onclick="window._renderSelectedOnly()" style="font-size:9px;">Render Selected Only</button>
+          <button class="btn btn-small" onclick="window._renderPause()" id="renderPauseBtn" style="font-size:9px;">Pause</button>
+        </div>
+      </div>
+      <div id="renderQueue" style="font-size:10px;color:var(--text-dim);">
+        No shots queued. Go to Shots stage to create shots, then return here to render.
+      </div>
+      <!-- Progress -->
+      <div id="renderProgressBar" style="display:none;margin-top:12px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+          <div style="flex:1;height:6px;background:rgba(100,100,100,0.3);border-radius:3px;overflow:hidden;">
+            <div id="renderProgressFill" style="width:0%;height:100%;background:linear-gradient(90deg,gold,var(--cyan));transition:width 0.3s;border-radius:3px;"></div>
+          </div>
+          <span id="renderProgressPct" style="font-size:10px;color:var(--text-dim);">0%</span>
+        </div>
+        <div id="renderProgressStatus" style="font-size:9px;color:var(--text-dim);"></div>
+      </div>
+    </div>
+
+    </div>
+
+    <script>
+    // ── Render stage helpers ──
+    window._renderQuality = 'standard';
+    window._setRenderQuality = function(q) {
+      window._renderQuality = q;
+      ['draft','standard','premium'].forEach(function(v) {
+        var btn = document.getElementById('renderQ' + v.charAt(0).toUpperCase() + v.slice(1));
+        if (btn) btn.classList.toggle('active', v === q);
+      });
+    };
+    // Sync render engine with legacy adEngineSelect
+    window._syncRenderEngine = function() {
+      var re = document.getElementById('renderEngine');
+      var ae = document.getElementById('adEngineSelect');
+      if (re && ae) { ae.value = re.value; }
+    };
+    var reEl = document.getElementById('renderEngine');
+    if (reEl) reEl.addEventListener('change', window._syncRenderEngine);
+    // Sync render model with legacy adStoryModelSelect
+    window._syncRenderModel = function() {
+      var rm = document.getElementById('renderStoryModel');
+      var am = document.getElementById('adStoryModelSelect');
+      if (rm && am) { am.value = rm.value; }
+    };
+    var rmEl = document.getElementById('renderStoryModel');
+    if (rmEl) rmEl.addEventListener('change', window._syncRenderModel);
+    // Continuity rules for render stage
+    window._renderContinuityRules = [];
+    window._addRenderContinuityRule = function() {
+      var input = document.getElementById('renderContinuityInput');
+      if (!input || !input.value.trim()) return;
+      window._renderContinuityRules.push(input.value.trim());
+      // Also add to legacy system
+      if (window._addContinuityRule) {
+        var legacyInput = document.getElementById('continuityRuleInput');
+        if (legacyInput) { legacyInput.value = input.value.trim(); window._addContinuityRule(); }
+      }
+      input.value = '';
+      var list = document.getElementById('renderContinuityList');
+      if (list) {
+        list.innerHTML = window._renderContinuityRules.map(function(r, i) {
+          return '<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--border);">' +
+            '<span style="flex:1;">' + r + '</span>' +
+            '<button style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:12px;" onclick="window._renderContinuityRules.splice('+i+',1);window._addRenderContinuityRule.refresh&&window._addRenderContinuityRule.refresh();">&times;</button></div>';
+        }).join('');
+      }
+    };
+    // Placeholder render actions
+    window._renderSelectedOnly = function() { console.log('[Render] Selected only — not yet wired'); };
+    window._renderPause = function() { console.log('[Render] Pause — not yet wired'); };
+    </script>
   </div>
 
   <!-- ============ EDIT WORKSPACE ============ -->
@@ -5831,15 +6605,15 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
     <div id="editNextStep" style="margin-top:16px;padding:12px;background:linear-gradient(135deg,rgba(0,229,255,0.05),rgba(124,92,255,0.05));border:1px solid var(--border);border-radius:var(--radius-lg);text-align:center;">
       <div style="font-size:11px;color:var(--text);margin-bottom:8px;">Sequence looks good?</div>
       <div style="display:flex;gap:8px;justify-content:center;">
-        <button class="btn btn-small btn-amber" onclick="window._switchTab('audio')" title="Add music, voice, and sound effects">Next: Add Audio &#8594;</button>
-        <button class="btn btn-small btn-green" onclick="window._switchTab('output')" title="Skip audio and go straight to export">Skip to Export &#8594;</button>
+        <button class="btn btn-small btn-amber" onclick="window._setOutputTab('audio')" title="Add music, voice, and sound effects">Next: Add Audio &#8594;</button>
+        <button class="btn btn-small btn-green" onclick="window._setOutputTab('export')" title="Skip audio and go straight to export">Skip to Export &#8594;</button>
       </div>
     </div>
     <!-- Next Step CTA -->
     <div style="margin:16px 0;padding:16px;background:linear-gradient(135deg,rgba(0,229,255,0.06),rgba(124,92,255,0.06));border:1px solid rgba(0,229,255,0.2);border-radius:var(--radius-lg);text-align:center;">
       <div style="font-size:12px;color:var(--text);font-weight:600;margin-bottom:6px;">Sequence looking good?</div>
       <div style="font-size:10px;color:var(--text-dim);margin-bottom:10px;">Add music, voiceover, and sound effects to bring it to life.</div>
-      <button class="btn btn-cyan" onclick="window._switchWorkspace('audio')" style="font-size:11px;padding:8px 20px;">Next: Audio &#8594;</button>
+      <button class="btn btn-cyan" onclick="window._setOutputTab('audio')" style="font-size:11px;padding:8px 20px;">Next: Audio &#8594;</button>
     </div>
   </div>
 
@@ -6161,8 +6935,18 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
 
   <!-- ============ OUTPUT WORKSPACE ============ -->
   <div id="outputContainer" class="workspace-panel hidden">
+
+  <!-- Output sub-tab bar (Assembly | Audio | Export) -->
+  <div style="display:flex;gap:4px;margin-bottom:16px;padding:4px;background:var(--surface);border-radius:var(--radius-lg);border:1px solid var(--border);">
+    <button class="mode-btn" onclick="window._setOutputTab('assembly')" id="outputTabAssembly" style="font-size:11px;padding:8px 16px;flex:1;">&#9986;&#65039; Assembly</button>
+    <button class="mode-btn" onclick="window._setOutputTab('audio')" id="outputTabAudio" style="font-size:11px;padding:8px 16px;flex:1;">&#127925; Audio</button>
+    <button class="mode-btn active" onclick="window._setOutputTab('export')" id="outputTabExport" style="font-size:11px;padding:8px 16px;flex:1;">&#128230; Export</button>
+  </div>
+
+  <!-- Export tab content wrapper -->
+  <div id="outputPanelExport">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-    <span style="font-size:16px;font-weight:700;color:var(--text);letter-spacing:1px;">OUTPUT</span>
+    <span style="font-size:16px;font-weight:700;color:var(--text);letter-spacing:1px;">EXPORT</span>
   </div>
 
   <!-- Project Summary -->
@@ -6372,9 +7156,9 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
   <div id="outputWhatsNext" style="display:none;margin-top:16px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);text-align:center;">
     <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:12px;">What's Next?</div>
     <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
-      <button class="btn btn-small" onclick="window._switchTab('edit')" style="border-color:var(--cyan);color:var(--cyan);">&#9986;&#65039; Re-Edit Sequence</button>
-      <button class="btn btn-small" onclick="window._switchTab('audio')" style="border-color:var(--amber);color:var(--amber);">&#127925; Add Audio</button>
-      <button class="btn btn-small" onclick="window._switchTab('shots')" style="border-color:var(--green);color:var(--green);">&#128248; Generate More Shots</button>
+      <button class="btn btn-small" onclick="window._setOutputTab('assembly')" style="border-color:var(--cyan);color:var(--cyan);">&#9986;&#65039; Re-Edit Sequence</button>
+      <button class="btn btn-small" onclick="window._setOutputTab('audio')" style="border-color:var(--amber);color:var(--amber);">&#127925; Add Audio</button>
+      <button class="btn btn-small" onclick="window._setStage('shots')" style="border-color:var(--green);color:var(--green);">&#128248; Generate More Shots</button>
     </div>
   </div>
 
@@ -6387,7 +7171,38 @@ window._checklistTimer = setInterval(function(){ window._updateChecklist(); }, 3
     <span style="font-size:10px;color:var(--text-dim);letter-spacing:1px;">Estimated Cost: </span>
     <span id="outputCostEstimate" style="font-size:12px;color:var(--amber);font-weight:600;">$0.00</span>
   </div>
+  </div><!-- /outputPanelExport -->
 </div>
+
+  <!-- ══ INSPECTOR PANEL (P9) ══ -->
+  <div id="inspectorPanel">
+    <div class="inspector-header">
+      <div>
+        <div class="inspector-header__type" id="inspectorType">—</div>
+        <div class="inspector-header__name" id="inspectorName">Select an item</div>
+      </div>
+      <button class="inspector-header__close" onclick="window._closeInspector()" title="Close inspector">&times;</button>
+    </div>
+    <div class="inspector-body" id="inspectorBody">
+      <div style="text-align:center;padding:40px;color:var(--text-dim);font-size:11px;">
+        Click any asset, scene, or shot card to inspect it.
+      </div>
+    </div>
+    <div class="inspector-footer" id="inspectorFooter">
+      <button class="btn btn-small btn-cyan" id="inspectorSave" onclick="window._inspectorSave()" style="display:none;font-size:10px;">Save</button>
+      <button class="btn btn-small" onclick="window._closeInspector()" style="font-size:10px;">Close</button>
+    </div>
+  </div>
+
+  <!-- ══ BOTTOM ACTION BAR ══ -->
+  <div class="bottom-action-bar" id="bottomActionBar">
+    <div class="bottom-action-bar__secondary" id="barSecondary"></div>
+    <span class="bar-stage-label" id="barStageLabel">Step 1 of 7</span>
+    <div class="bottom-action-bar__primary">
+      <button class="bar-btn bar-btn--back" id="barBack" onclick="window._stagePrev()" style="display:none;">&#8592; Back</button>
+      <button class="bar-btn bar-btn--primary gold" id="barPrimary" onclick="window._stagePrimaryAction()">Generate Project Draft</button>
+    </div>
+  </div>
 
   <!-- ============ PROMPT OS: PROMPTS TAB ============ -->
   <div id="posPromptsContainer" class="hidden">
@@ -10668,6 +11483,31 @@ window._fetchWithTimeout = function(url, opts, timeoutMs) {
   if (window._refreshCostTimer) clearInterval(window._refreshCostTimer);
   window._refreshCostTimer = setInterval(refreshCost, 10000);
 
+  // Runway credits balance
+  window._refreshRunwayCredits = async function() {
+    try {
+      var data = await apiGet('/api/runway/credits');
+      var el = $('headerCreditsValue');
+      if (!el) return;
+      if (data.credits != null && data.credits !== false) {
+        var c = parseFloat(data.credits);
+        if (!isNaN(c)) {
+          el.textContent = c.toLocaleString(undefined, {maximumFractionDigits: 0});
+          el.style.color = c <= 50 ? 'var(--red)' : c <= 200 ? 'var(--amber)' : 'var(--cyan)';
+        } else {
+          el.textContent = '—';
+          console.warn('[LUMN] Runway credits not a number:', data);
+        }
+      } else {
+        el.textContent = '—';
+        el.style.color = 'var(--text-dim)';
+        if (data.error) console.warn('[LUMN] Runway credits error:', data.error);
+      }
+    } catch(e) { console.warn('[LUMN] Runway credits fetch failed:', e); }
+  };
+  window._refreshRunwayCredits();
+  setInterval(window._refreshRunwayCredits, 60000); // refresh every 60s
+
   // ===================== LYRICS SYNC =====================
 
   let lyricsMode = { auto: 'auto', manual: 'auto' };
@@ -11297,24 +12137,6 @@ window._fetchWithTimeout = function(url, opts, timeoutMs) {
   window._showShortcuts = function() {
     window._openModal('shortcutsModal');
   };
-
-  // ---- Runway Credits Display ----
-  window._refreshCredits = function() {
-    fetch('/api/runway/credits').then(function(r) { return r.json(); }).then(function(data) {
-      var el = document.getElementById('creditsDisplay');
-      if (el && data.credits !== undefined) {
-        el.textContent = 'Credits: ' + data.credits;
-        el.style.color = data.credits < 100 ? 'var(--red)' : data.credits < 500 ? 'var(--amber)' : 'var(--green)';
-      } else if (el && data.creditBalance !== undefined) {
-        el.textContent = 'Credits: ' + data.creditBalance;
-        el.style.color = data.creditBalance < 100 ? 'var(--red)' : data.creditBalance < 500 ? 'var(--amber)' : 'var(--green)';
-      }
-    }).catch(function() {});
-  };
-  // Auto-refresh credits on load and every 5 minutes
-  window._refreshCredits();
-  if (window._refreshCreditsTimer) clearInterval(window._refreshCreditsTimer);
-  window._refreshCreditsTimer = setInterval(window._refreshCredits, 300000);
 
   // ---- Analytics ----
   window._showAnalytics = function() {
@@ -13454,6 +14276,15 @@ window._fetchWithTimeout = function(url, opts, timeoutMs) {
     }
     window._sceneCosts = data.scene_costs || {};
 
+    // Update header inline cost display
+    var hCost = $('headerCostValue');
+    var hBudget = $('headerBudgetValue');
+    if (hCost) {
+      hCost.textContent = '$' + total.toFixed(2);
+      hCost.style.color = total >= budget ? 'var(--red)' : total >= budget * 0.8 ? 'var(--amber)' : 'var(--green)';
+    }
+    if (hBudget) hBudget.textContent = '$' + budget.toFixed(2);
+
     // Update status bar spent display
     var spentEl = $('gStatSpent');
     if (spentEl) {
@@ -14908,6 +15739,351 @@ window._fetchWithTimeout = function(url, opts, timeoutMs) {
     }
   };
 
+  // ──── Drafts & Refs Stage Handlers ────
+  var _draftsAssets = [];
+  var _draftsScenes = [];
+  var _draftsCurrentTab = 'characters';
+  var _draftsCurrentPhase = 1;
+
+  // Phase switching
+  window._draftsSetPhase = function(phase) {
+    _draftsCurrentPhase = phase;
+    var indicator = $('draftsPhaseIndicator');
+    if (!indicator) return;
+    var btns = indicator.querySelectorAll('.drafts-phase-btn');
+    var bar = $('draftsPhaseBar');
+    btns.forEach(function(btn) {
+      var p = parseInt(btn.getAttribute('data-phase'));
+      var dot = btn.querySelector('.drafts-phase-dot');
+      var label = btn.querySelector('.drafts-phase-label');
+      if (p <= phase) {
+        dot.style.background = 'var(--cyan)';
+        dot.style.color = '#000';
+        label.style.color = 'var(--text)';
+      } else {
+        dot.style.background = 'var(--border)';
+        dot.style.color = 'var(--text-dim)';
+        label.style.color = 'var(--text-dim)';
+      }
+    });
+    if (bar) bar.style.width = phase >= 2 ? '100%' : '0%';
+    _draftsRenderCards();
+  };
+
+  // Tab switching
+  window._draftsSetTab = function(tab) {
+    _draftsCurrentTab = tab;
+    var tabBar = $('draftsAssetTabs');
+    if (tabBar) {
+      tabBar.querySelectorAll('.mode-btn').forEach(function(btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-drafts-tab') === tab);
+      });
+    }
+    _draftsRenderCards();
+  };
+
+  // Load from extraction
+  window._draftsLoadFromExtraction = function(extraction) {
+    _draftsAssets = [];
+    _draftsScenes = [];
+    if (!extraction) { _draftsRenderCards(); _draftsRenderScenes(); return; }
+
+    var types = ['characters','costumes','environments','props'];
+    types.forEach(function(type) {
+      var items = extraction[type] || extraction[type.slice(0,-1)] || [];
+      if (!Array.isArray(items)) items = [];
+      items.forEach(function(item, idx) {
+        _draftsAssets.push({
+          id: item.id || (type + '_' + idx),
+          name: item.name || item.label || ('Unnamed ' + type.slice(0,-1)),
+          type: type,
+          description: item.description || item.visual_description || '',
+          status: 'drafted',
+          sourceMode: null,
+          uploadedFile: null,
+          uploadedUrl: null,
+          locked: false
+        });
+      });
+    });
+
+    if (extraction.scenes && Array.isArray(extraction.scenes)) {
+      _draftsScenes = extraction.scenes.map(function(s, i) {
+        return {
+          index: i + 1,
+          title: s.title || s.heading || ('Scene ' + (i + 1)),
+          description: s.description || s.content || '',
+          characters: s.characters || [],
+          environment: s.environment || s.location || ''
+        };
+      });
+    }
+
+    // Show/hide empty state
+    var isEmpty = _draftsAssets.length === 0;
+    if ($('draftsEmptyState')) $('draftsEmptyState').style.display = isEmpty ? '' : 'none';
+    if ($('draftsAssetTabs')) $('draftsAssetTabs').style.display = isEmpty ? 'none' : '';
+    if ($('draftsBulkActions')) $('draftsBulkActions').style.display = isEmpty ? 'none' : '';
+    if ($('draftsCardGrid')) $('draftsCardGrid').style.display = isEmpty ? 'none' : '';
+
+    _draftsRenderCards();
+    _draftsRenderScenes();
+    _draftsUpdateReadiness();
+  };
+
+  // Render asset cards
+  function _draftsRenderCards() {
+    var grid = $('draftsCardGrid');
+    if (!grid) return;
+
+    var filtered = _draftsAssets.filter(function(a) { return a.type === _draftsCurrentTab; });
+    if (filtered.length === 0) {
+      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:32px;color:var(--text-dim);font-size:11px;">No ' + _draftsCurrentTab + ' drafted yet.</div>';
+      return;
+    }
+
+    var html = '';
+    filtered.forEach(function(asset) {
+      var typeBadgeColor = asset.type === 'characters' ? 'var(--cyan)' : asset.type === 'costumes' ? 'var(--violet)' : asset.type === 'environments' ? 'var(--green)' : 'var(--amber)';
+      var statusColor = asset.locked ? 'var(--green)' : asset.sourceMode ? 'var(--cyan)' : 'var(--text-dim)';
+      var statusText = asset.locked ? 'LOCKED' : asset.sourceMode ? asset.sourceMode.toUpperCase().replace('_',' ') : 'PENDING';
+
+      html += '<div data-asset-id="' + asset.id + '" style="background:var(--surface);border:1px solid ' + (asset.locked ? 'rgba(0,229,160,0.3)' : 'var(--border)') + ';border-radius:var(--radius-lg);padding:16px;transition:border-color 0.2s;">';
+
+      // Header: name + badges
+      html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">';
+      html += '<div style="flex:1;font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + _escHtml(asset.name) + '</div>';
+      html += '<span style="font-size:8px;letter-spacing:1px;text-transform:uppercase;padding:2px 6px;border-radius:3px;background:' + typeBadgeColor + ';color:#000;font-weight:700;">' + asset.type.slice(0,-1) + '</span>';
+      html += '<span style="font-size:8px;letter-spacing:1px;text-transform:uppercase;padding:2px 6px;border-radius:3px;border:1px solid ' + statusColor + ';color:' + statusColor + ';font-weight:600;">' + statusText + '</span>';
+      html += '</div>';
+
+      // Description (editable)
+      html += '<textarea data-desc-for="' + asset.id + '" oninput="window._draftsUpdateDesc(\'' + asset.id + '\',this.value)" style="width:100%;min-height:60px;max-height:120px;resize:vertical;font-size:11px;line-height:1.5;color:var(--text);background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);padding:8px;font-family:inherit;transition:border-color 0.2s;" ' + (asset.locked ? 'disabled' : '') + '>' + _escHtml(asset.description) + '</textarea>';
+
+      // Phase 2: Visual Source section
+      if (_draftsCurrentPhase >= 2) {
+        html += '<div style="margin-top:12px;padding:12px;background:rgba(0,229,255,0.03);border:1px solid rgba(0,229,255,0.1);border-radius:var(--radius);">';
+        html += '<div style="font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--cyan);margin-bottom:10px;">Visual Source</div>';
+
+        // Radio options
+        var modes = [
+          {value: 'ai_only', label: 'AI Only', desc: 'Generate from description'},
+          {value: 'upload', label: 'Upload Photo', desc: 'Becomes source of truth'},
+          {value: 'hybrid', label: 'Hybrid', desc: 'Photo + AI description'}
+        ];
+        modes.forEach(function(m) {
+          var isChecked = asset.sourceMode === m.value;
+          var radioId = 'radio_' + asset.id + '_' + m.value;
+          html += '<label for="' + radioId + '" style="display:flex;align-items:flex-start;gap:8px;padding:6px 8px;margin-bottom:4px;border-radius:var(--radius);cursor:' + (asset.locked ? 'default' : 'pointer') + ';transition:background 0.15s;' + (isChecked ? 'background:rgba(0,229,255,0.06);' : '') + '">';
+          html += '<input type="radio" id="' + radioId + '" name="source_' + asset.id + '" value="' + m.value + '" ' + (isChecked ? 'checked' : '') + ' ' + (asset.locked ? 'disabled' : '') + ' onchange="window._draftsSetSourceMode(\'' + asset.id + '\',\'' + m.value + '\')" style="margin-top:2px;accent-color:var(--cyan);">';
+          html += '<div>';
+          html += '<div style="font-size:11px;font-weight:600;color:var(--text);">' + m.label + '</div>';
+          html += '<div style="font-size:9px;color:var(--text-dim);">' + m.desc + '</div>';
+          html += '</div></label>';
+        });
+
+        // Upload drop zone (visible if upload or hybrid selected)
+        if (asset.sourceMode === 'upload' || asset.sourceMode === 'hybrid') {
+          html += '<div style="margin-top:10px;">';
+          if (asset.uploadedUrl) {
+            html += '<div style="display:flex;align-items:center;gap:8px;padding:8px;background:rgba(0,229,160,0.06);border:1px solid rgba(0,229,160,0.2);border-radius:var(--radius);">';
+            html += '<img src="' + _escHtml(asset.uploadedUrl) + '" style="width:48px;height:48px;object-fit:cover;border-radius:var(--radius);border:1px solid var(--border);">';
+            html += '<div style="flex:1;font-size:10px;color:var(--green);">Reference uploaded</div>';
+            if (!asset.locked) html += '<button onclick="window._draftsRemoveUpload(\'' + asset.id + '\')" style="background:none;border:1px solid var(--red);color:var(--red);font-size:9px;padding:3px 8px;border-radius:var(--radius);cursor:pointer;font-family:inherit;">Remove</button>';
+            html += '</div>';
+          } else if (!asset.locked) {
+            html += '<div ondragover="event.preventDefault();this.style.borderColor=\'var(--cyan)\'" ondragleave="this.style.borderColor=\'var(--border)\'" ondrop="event.preventDefault();this.style.borderColor=\'var(--border)\';window._draftsUploadReference(\'' + asset.id + '\',event.dataTransfer.files[0])" style="border:2px dashed var(--border);border-radius:var(--radius);padding:16px;text-align:center;transition:border-color 0.2s;cursor:pointer;" onclick="this.querySelector(\'input\').click()">';
+            html += '<div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">Drop image here or click to upload</div>';
+            html += '<div style="font-size:9px;color:var(--text-dim);opacity:0.6;">PNG, JPG, WEBP</div>';
+            html += '<input type="file" accept="image/*" style="display:none;" onchange="window._draftsUploadReference(\'' + asset.id + '\',this.files[0])">';
+            html += '</div>';
+          }
+          html += '</div>';
+        }
+
+        // Lock Reference button
+        if (!asset.locked && asset.sourceMode) {
+          html += '<button onclick="window._draftsLockReference(\'' + asset.id + '\')" style="margin-top:10px;width:100%;padding:6px;font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;background:rgba(0,229,160,0.08);border:1px solid rgba(0,229,160,0.3);color:var(--green);border-radius:var(--radius);cursor:pointer;transition:all 0.2s;font-family:inherit;">Lock Reference</button>';
+        } else if (asset.locked) {
+          html += '<div style="margin-top:10px;text-align:center;font-size:10px;color:var(--green);font-weight:600;letter-spacing:1px;">&#9989; REFERENCE LOCKED</div>';
+        }
+
+        html += '</div>'; // close visual source section
+      }
+
+      html += '</div>'; // close card
+    });
+
+    grid.innerHTML = html;
+  }
+
+  // Render scene draft preview
+  function _draftsRenderScenes() {
+    var list = $('draftsSceneList');
+    if (!list) return;
+    if (_draftsScenes.length === 0) {
+      list.innerHTML = '<div style="font-size:11px;color:var(--text-dim);padding:12px;text-align:center;">No scenes extracted yet.</div>';
+      return;
+    }
+    var html = '';
+    _draftsScenes.forEach(function(scene) {
+      html += '<div style="display:flex;gap:12px;padding:10px 12px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:var(--radius);transition:border-color 0.2s;">';
+      html += '<div style="font-size:18px;font-weight:800;color:var(--text-dim);min-width:28px;text-align:center;line-height:1;">' + scene.index + '</div>';
+      html += '<div style="flex:1;min-width:0;">';
+      html += '<div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + _escHtml(scene.title) + '</div>';
+      html += '<div style="font-size:10px;color:var(--text-dim);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + _escHtml(scene.description) + '</div>';
+      if (scene.environment) {
+        html += '<div style="font-size:9px;color:var(--amber);margin-top:4px;">&#127750; ' + _escHtml(scene.environment) + '</div>';
+      }
+      if (scene.characters && scene.characters.length) {
+        html += '<div style="font-size:9px;color:var(--cyan);margin-top:2px;">&#128100; ' + scene.characters.map(function(c){return _escHtml(typeof c === 'string' ? c : c.name||'');}).join(', ') + '</div>';
+      }
+      html += '</div></div>';
+    });
+    list.innerHTML = html;
+  }
+
+  // Set source mode for one asset
+  window._draftsSetSourceMode = function(assetId, mode) {
+    var asset = _draftsAssets.find(function(a) { return a.id === assetId; });
+    if (!asset || asset.locked) return;
+    if (mode !== 'ai_only' && mode !== 'upload' && mode !== 'hybrid') return;
+    asset.sourceMode = mode;
+    if (mode === 'ai_only') { asset.uploadedFile = null; asset.uploadedUrl = null; }
+    _draftsRenderCards();
+    _draftsUpdateReadiness();
+  };
+
+  // Bulk set all to ai_only
+  window._draftsSetAllAiOnly = function() {
+    _draftsAssets.forEach(function(a) {
+      if (!a.locked) {
+        a.sourceMode = 'ai_only';
+        a.uploadedFile = null;
+        a.uploadedUrl = null;
+      }
+    });
+    _draftsRenderCards();
+    _draftsUpdateReadiness();
+    if (window._toast) window._toast('All unlocked assets set to AI Only', 'success');
+  };
+
+  // Lock all references
+  window._draftsLockAllReferences = function() {
+    var count = 0;
+    _draftsAssets.forEach(function(a) {
+      if (!a.locked && a.sourceMode) {
+        if (a.sourceMode === 'upload' || a.sourceMode === 'hybrid') {
+          if (a.uploadedFile || a.uploadedUrl) { a.locked = true; count++; }
+        } else {
+          a.locked = true; count++;
+        }
+      }
+    });
+    _draftsRenderCards();
+    _draftsUpdateReadiness();
+    if (window._toast) window._toast('Locked ' + count + ' references', 'success');
+  };
+
+  // Lock single reference
+  window._draftsLockReference = function(assetId) {
+    var asset = _draftsAssets.find(function(a) { return a.id === assetId; });
+    if (!asset || asset.locked || !asset.sourceMode) return;
+    if ((asset.sourceMode === 'upload' || asset.sourceMode === 'hybrid') && !asset.uploadedFile && !asset.uploadedUrl) {
+      if (window._toast) window._toast('Upload a reference image before locking', 'warning');
+      return;
+    }
+    asset.locked = true;
+    _draftsRenderCards();
+    _draftsUpdateReadiness();
+  };
+
+  // Upload reference for asset
+  window._draftsUploadReference = function(assetId, file) {
+    if (!file) return;
+    var asset = _draftsAssets.find(function(a) { return a.id === assetId; });
+    if (!asset || asset.locked) return;
+    asset.uploadedFile = file;
+    asset.uploadedUrl = URL.createObjectURL(file);
+    _draftsRenderCards();
+    _draftsUpdateReadiness();
+  };
+
+  // Remove uploaded reference
+  window._draftsRemoveUpload = function(assetId) {
+    var asset = _draftsAssets.find(function(a) { return a.id === assetId; });
+    if (!asset || asset.locked) return;
+    if (asset.uploadedUrl) URL.revokeObjectURL(asset.uploadedUrl);
+    asset.uploadedFile = null;
+    asset.uploadedUrl = null;
+    _draftsRenderCards();
+  };
+
+  // Batch upload
+  window._draftsBatchUpload = function(files) {
+    if (!files || !files.length) return;
+    var unset = _draftsAssets.filter(function(a) { return !a.locked && (!a.sourceMode || a.sourceMode === 'upload' || a.sourceMode === 'hybrid'); });
+    var count = Math.min(files.length, unset.length);
+    for (var i = 0; i < count; i++) {
+      unset[i].sourceMode = unset[i].sourceMode || 'upload';
+      unset[i].uploadedFile = files[i];
+      unset[i].uploadedUrl = URL.createObjectURL(files[i]);
+    }
+    _draftsRenderCards();
+    _draftsUpdateReadiness();
+    if (window._toast) window._toast('Uploaded ' + count + ' reference(s)', 'success');
+  };
+
+  // Update description
+  window._draftsUpdateDesc = function(assetId, value) {
+    var asset = _draftsAssets.find(function(a) { return a.id === assetId; });
+    if (asset && !asset.locked) asset.description = value;
+  };
+
+  // Check readiness: returns true if every asset has a source mode set
+  window._draftsCheckReadiness = function() {
+    if (_draftsAssets.length === 0) return true;
+    return _draftsAssets.every(function(a) { return a.sourceMode !== null; });
+  };
+
+  // Return current asset state
+  window._draftsGetAssets = function() {
+    return _draftsAssets.map(function(a) {
+      return {
+        id: a.id,
+        name: a.name,
+        type: a.type,
+        description: a.description,
+        sourceMode: a.sourceMode,
+        locked: a.locked,
+        hasUpload: !!(a.uploadedFile || a.uploadedUrl)
+      };
+    });
+  };
+
+  // Proceed to Scenes (empty state CTA)
+  window._draftsProceedToScenes = function() {
+    if (window._switchTab) window._switchTab('scenes');
+  };
+
+  // Update readiness indicator
+  function _draftsUpdateReadiness() {
+    var el = $('draftsReadinessIndicator');
+    if (!el) return;
+    var total = _draftsAssets.length;
+    var set = _draftsAssets.filter(function(a) { return a.sourceMode !== null; }).length;
+    el.textContent = set + ' / ' + total + ' sources set';
+    el.style.color = (set === total && total > 0) ? 'var(--green)' : 'var(--text-dim)';
+  }
+
+  // HTML escape helper
+  function _escHtml(s) {
+    if (!s) return '';
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
   // ──── Preproduction Handlers ────
   var _preprodCurrentTab = 'characters';
   var _preprodPackages = [];
@@ -15151,6 +16327,197 @@ window._fetchWithTimeout = function(url, opts, timeoutMs) {
   (function() {
     _apiFetch('/api/taste/overall').then(function(r){return r.json();}).then(function(d){
       if(d && d.dimensions) _tasteUpdateUI(d);
+    }).catch(function(){});
+  })();
+
+  // ──── V5 Pipeline Handlers ────
+
+  window._pipelineStart = async function(btn) {
+    var prompt = ($('pipelineMasterPrompt') || {}).value || '';
+    if (!prompt.trim()) { window._toast('Enter a creative prompt', 'error'); return; }
+    btn.disabled = true; btn.textContent = 'Extracting assets...';
+    $('pipelineProgress').style.display = '';
+
+    var engine = ($('adEngineSelect') || {}).value || 'gen4_turbo';
+    var mode = ($('pipelineMode') || {}).value || 'fast';
+    var autoAdv = ($('pipelineAutoAdvance') || {}).checked || false;
+
+    try {
+      var resp = await _apiFetch('/api/pipeline/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': _csrf()},
+        body: JSON.stringify({master_prompt: prompt, engine: engine, mode: mode, auto_advance: autoAdv})
+      });
+      var data = await resp.json();
+      if (data.error) { window._toast(data.error, 'error'); btn.disabled = false; btn.textContent = 'Start Production Pipeline'; return; }
+
+      // Show extraction results
+      if (data.extraction) {
+        $('pipelineExtraction').style.display = '';
+        var ext = data.extraction;
+        var html = '';
+        if (ext.characters && ext.characters.length) html += '<div style="color:var(--cyan);">Characters: ' + ext.characters.map(function(c){return c.name;}).join(', ') + '</div>';
+        if (ext.costumes && ext.costumes.length) html += '<div style="color:orange;">Costumes: ' + ext.costumes.map(function(c){return c.name;}).join(', ') + '</div>';
+        if (ext.environments && ext.environments.length) html += '<div style="color:#7c5;;">Environments: ' + ext.environments.map(function(e){return e.name;}).join(', ') + '</div>';
+        if (ext.props && ext.props.length) html += '<div style="color:#fa0;">Props: ' + ext.props.map(function(p){return p.name;}).join(', ') + '</div>';
+        if (data.packages) html += '<div style="margin-top:6px;color:gold;">' + data.packages.length + ' packages created</div>';
+        if (data.plan_summary) html += '<div style="color:var(--text-dim);">' + data.plan_summary.num_shots + ' shots in ' + data.plan_summary.num_beats + ' beats</div>';
+        $('pipelineExtractionContent').innerHTML = html;
+      }
+
+      _pipelineUpdateProgress(data.pipeline);
+      _pipelineUpdateActions(data.pipeline);
+      window._toast('Pipeline started — assets extracted', 'success');
+    } catch(e) {
+      window._toast('Pipeline error: ' + e.message, 'error');
+    }
+    btn.disabled = false; btn.textContent = 'Start Production Pipeline';
+  };
+
+  window._pipelineSheetsGenerate = async function(btn) {
+    btn.disabled = true; btn.textContent = 'Generating...';
+    try {
+      var resp = await _apiFetch('/api/pipeline/sheets/generate', {
+        method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': _csrf()}, body: '{}'
+      });
+      var data = await resp.json();
+      _pipelineUpdateProgress(data.pipeline);
+      _pipelineUpdateActions(data.pipeline);
+      window._toast('Canonical sheets generated', 'success');
+    } catch(e) { window._toast('Sheet generation error: ' + e.message, 'error'); }
+    btn.disabled = false; btn.textContent = 'Generate Sheets';
+  };
+
+  window._pipelineSheetsApproveAll = async function(btn) {
+    btn.disabled = true;
+    try {
+      var resp = await _apiFetch('/api/pipeline/sheets/approve-all', {
+        method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': _csrf()}, body: '{}'
+      });
+      var data = await resp.json();
+      _pipelineUpdateProgress(data.pipeline);
+      _pipelineUpdateActions(data.pipeline);
+      window._toast(data.approved + ' sheets approved', 'success');
+    } catch(e) { window._toast('Error: ' + e.message, 'error'); }
+    btn.disabled = false;
+  };
+
+  window._pipelineAnchorsGenerate = async function(btn) {
+    btn.disabled = true; btn.textContent = 'Composing...';
+    try {
+      var resp = await _apiFetch('/api/pipeline/anchors/generate', {
+        method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': _csrf()}, body: '{}'
+      });
+      var data = await resp.json();
+      if (data.error) { window._toast(data.error, 'error'); btn.disabled = false; btn.textContent = 'Compose Anchors'; return; }
+      _pipelineUpdateProgress(data.pipeline);
+      _pipelineUpdateActions(data.pipeline);
+      window._toast(data.generated + '/' + data.total + ' anchors composed', 'success');
+      _pipelineLoadAnchors();
+    } catch(e) { window._toast('Error: ' + e.message, 'error'); }
+    btn.disabled = false; btn.textContent = 'Compose Anchors';
+  };
+
+  window._pipelineGenerate = async function(btn) {
+    btn.disabled = true; btn.textContent = 'Generating video...';
+    try {
+      var resp = await _apiFetch('/api/pipeline/generate', {
+        method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': _csrf()}, body: '{}'
+      });
+      var data = await resp.json();
+      if (data.error) { window._toast(data.error, 'error'); }
+      else { window._toast('Video generation started', 'success'); }
+    } catch(e) { window._toast('Error: ' + e.message, 'error'); }
+    btn.disabled = false; btn.textContent = 'Generate Video';
+  };
+
+  function _pipelineUpdateProgress(prog) {
+    if (!prog) return;
+    $('pipelineStateBadge').textContent = prog.state;
+    $('pipelineProgressBar').style.width = prog.progress_percent + '%';
+    $('pipelineProgressPct').textContent = prog.progress_percent + '%';
+    var steps = [
+      {s:'PROMPT_RECEIVED',l:'Prompt received'},
+      {s:'ASSETS_EXTRACTED',l:'Assets extracted'},
+      {s:'PACKAGES_CREATED',l:'Packages created'},
+      {s:'SHEETS_GENERATING',l:'Generating sheets...'},
+      {s:'SHEETS_REVIEW',l:'Sheets ready for review'},
+      {s:'PLAN_READY',l:'Shot plan ready'},
+      {s:'ANCHORS_GENERATING',l:'Composing anchors...'},
+      {s:'ANCHORS_REVIEW',l:'Anchors ready for review'},
+      {s:'SHOTS_GENERATING',l:'Generating video...'},
+      {s:'CONFORM',l:'Editing...'},
+      {s:'COMPLETE',l:'Complete!'}
+    ];
+    var stateIdx = steps.findIndex(function(x){return x.s===prog.state;});
+    var html = steps.map(function(step, i) {
+      var color = i < stateIdx ? 'var(--cyan)' : i === stateIdx ? 'gold' : 'var(--text-dim)';
+      var icon = i < stateIdx ? '&#10003;' : i === stateIdx ? '&#9679;' : '&#9675;';
+      return '<div style="color:'+color+';padding:2px 0;">'+icon+' '+step.l+'</div>';
+    }).join('');
+    $('pipelineStepList').innerHTML = html;
+  }
+
+  function _pipelineUpdateActions(prog) {
+    if (!prog) return;
+    var state = prog.state;
+    $('pipelineActions').style.display = 'flex';
+    var sheets = $('pipelineSheetsBtn'), approve = $('pipelineApproveBtn');
+    var anchors = $('pipelineAnchorsBtn'), gen = $('pipelineGenerateBtn');
+    sheets.style.display = (state === 'PACKAGES_CREATED' || state === 'SHEETS_REVIEW') ? '' : 'none';
+    approve.style.display = (state === 'SHEETS_GENERATING' || state === 'SHEETS_REVIEW') ? '' : 'none';
+    anchors.style.display = (state === 'PLAN_READY' || state === 'SHEETS_REVIEW' || state === 'ANCHORS_REVIEW') ? '' : 'none';
+    gen.style.display = (state === 'ANCHORS_REVIEW' || state === 'PLAN_READY') ? '' : 'none';
+  }
+
+  async function _pipelineLoadAnchors() {
+    try {
+      var resp = await _apiFetch('/api/pipeline/anchors');
+      var data = await resp.json();
+      var grid = $('pipelineAnchorGrid');
+      if (!data.anchors || !Object.keys(data.anchors).length) return;
+      $('pipelineAnchorGallery').style.display = '';
+      var html = '';
+      Object.keys(data.anchors).forEach(function(sid) {
+        var a = data.anchors[sid];
+        var statusColor = a.status === 'approved' ? 'var(--cyan)' : a.status === 'rejected' ? '#f44' : a.status === 'generated' ? 'gold' : '#888';
+        html += '<div style="border:1px solid rgba(100,100,100,0.3);border-radius:6px;padding:6px;text-align:center;">';
+        if (a.image_path) {
+          html += '<img src="/output/pipeline/anchors/' + sid.replace(/[^a-zA-Z0-9_]/g,'') + '.png" style="width:100%;border-radius:4px;margin-bottom:4px;" onerror="this.style.display=\'none\'">';
+        }
+        html += '<div style="font-size:9px;color:var(--text-dim);">' + sid + '</div>';
+        html += '<div style="font-size:8px;color:' + statusColor + ';">' + (a.shot_family || '') + ' | ' + a.status + '</div>';
+        if (a.status === 'generated') {
+          html += '<div style="margin-top:4px;display:flex;gap:4px;justify-content:center;">';
+          html += '<button class="btn-sm" style="font-size:8px;padding:2px 6px;" onclick="window._pipelineAnchorAction(\'' + sid + '\',\'approve\')">&#10003;</button>';
+          html += '<button class="btn-sm" style="font-size:8px;padding:2px 6px;" onclick="window._pipelineAnchorAction(\'' + sid + '\',\'reject\')">&#10007;</button>';
+          html += '</div>';
+        }
+        html += '</div>';
+      });
+      grid.innerHTML = html;
+    } catch(e) { /* silent */ }
+  }
+
+  window._pipelineAnchorAction = async function(shotId, action) {
+    try {
+      await _apiFetch('/api/pipeline/anchors/' + shotId + '/' + action, {
+        method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': _csrf()}, body: '{}'
+      });
+      _pipelineLoadAnchors();
+      window._toast(shotId + ' ' + action + 'd', 'success');
+    } catch(e) { window._toast('Error: ' + e.message, 'error'); }
+  };
+
+  // Load pipeline state on page load
+  (function() {
+    _apiFetch('/api/pipeline/state').then(function(r){return r.json();}).then(function(d){
+      if (d && d.state && d.state !== 'IDLE') {
+        _pipelineUpdateProgress(d);
+        _pipelineUpdateActions(d);
+        $('pipelineProgress').style.display = '';
+        if (d.state === 'ANCHORS_REVIEW' || d.state === 'COMPLETE') _pipelineLoadAnchors();
+      }
     }).catch(function(){});
   })();
 

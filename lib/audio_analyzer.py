@@ -59,6 +59,10 @@ def _analyze_librosa(path: str) -> dict:
     # Build sections from energy
     sections = _build_sections(frame_times, rms, duration)
 
+    # Validate BPM
+    if tempo <= 0 or tempo > 300:
+        tempo = 120.0  # Safe default
+
     return {
         "bpm": round(tempo, 1),
         "beats": [round(b, 3) for b in beats],
@@ -99,6 +103,15 @@ def _analyze_basic(path: str) -> dict:
         sr = 22050
         samples = np.zeros(int(duration * sr))
 
+    # Guard against empty samples
+    if len(samples) == 0:
+        return {
+            "bpm": 120.0,
+            "beats": [],
+            "sections": [{"start": 0, "end": duration, "type": "verse", "energy": 0.5}],
+            "duration": round(duration, 3),
+        }
+
     # Very rough tempo estimation via zero-crossing rate peaks
     bpm = 120.0  # default guess
     beats = []
@@ -138,6 +151,10 @@ def _analyze_basic(path: str) -> dict:
         frame_times = np.array([0.0])
 
     sections = _build_sections(frame_times, energy, duration)
+
+    # Validate BPM
+    if bpm <= 0 or bpm > 300:
+        bpm = 120.0  # Safe default
 
     return {
         "bpm": round(bpm, 1),

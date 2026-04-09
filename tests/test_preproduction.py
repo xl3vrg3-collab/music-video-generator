@@ -86,59 +86,59 @@ class TestPreproductionPackages:
         assert char_pkg["package_type"] == "character"
         assert char_pkg["name"] == "Luna"
         assert char_pkg["status"] == "draft"
-        assert len(char_pkg["sheet_images"]) == 9  # production mode
+        assert len(char_pkg["sheet_images"]) == 1  # single composite sheet
+        assert char_pkg["sheet_images"][0]["view"] == "sheet"
         assert "violet eyes" in char_pkg["must_keep"]
         assert "hat" in char_pkg["avoid"]
 
     def test_create_fast_vs_production(self):
         fast = create_package("character", "Test", mode="fast")
         prod = create_package("character", "Test", mode="production")
-        assert len(fast["sheet_images"]) < len(prod["sheet_images"])
-        assert len(fast["sheet_images"]) == 3  # fast: hero + face + 3/4
+        # Both have 1 sheet now (composite image)
+        assert len(fast["sheet_images"]) == 1
+        assert len(prod["sheet_images"]) == 1
 
     def test_all_package_types(self):
         for t in ("character", "costume", "environment", "prop"):
             pkg = create_package(t, f"Test {t}", mode="fast")
             assert pkg["package_type"] == t
-            assert len(pkg["sheet_images"]) >= 2
+            assert len(pkg["sheet_images"]) >= 1
 
     def test_invalid_type_raises(self):
         with pytest.raises(ValueError):
             create_package("invalid_type", "Test")
 
     def test_sheet_prompt_under_1000(self, char_pkg):
-        views = get_sheet_plan(char_pkg)
-        for v in views:
-            prompt = build_sheet_prompt(char_pkg, v)
-            assert len(prompt) <= 1000, f"Prompt for {v['view']} is {len(prompt)} chars"
+        prompt = build_sheet_prompt(char_pkg)
+        assert len(prompt) <= 1000, f"Prompt is {len(prompt)} chars"
+
+    def test_sheet_prompt_contains_description(self, char_pkg):
+        prompt = build_sheet_prompt(char_pkg)
+        assert "violet eyes" in prompt.lower() or "dark-haired" in prompt.lower()
+        assert "portrait" in prompt.lower() or "reference" in prompt.lower()
 
     def test_update_sheet_image(self, char_pkg):
-        pkg = update_sheet_image(char_pkg, "hero_front", "/fake/path.png",
+        pkg = update_sheet_image(char_pkg, "sheet", "/fake/sheet.png",
                                  seed=42, prompt_used="test prompt")
-        img = next(i for i in pkg["sheet_images"] if i["view"] == "hero_front")
-        assert img["image_path"] == "/fake/path.png"
+        img = next(i for i in pkg["sheet_images"] if i["view"] == "sheet")
+        assert img["image_path"] == "/fake/sheet.png"
         assert img["status"] == "generated"
         assert img["seed"] == 42
-        # Auto hero selection for default hero view
-        assert pkg["hero_image_path"] == "/fake/path.png"
-        assert pkg["hero_view"] == "hero_front"
+        # Auto hero selection
+        assert pkg["hero_image_path"] == "/fake/sheet.png"
+        assert pkg["hero_view"] == "sheet"
 
     def test_select_hero_ref(self, char_pkg):
-        # Generate two views
-        pkg = update_sheet_image(char_pkg, "hero_front", "/a.png")
-        pkg = update_sheet_image(pkg, "face_closeup", "/b.png")
-        # Switch hero to face_closeup
-        pkg = select_hero_ref(pkg, "face_closeup")
-        assert pkg["hero_image_path"] == "/b.png"
-        assert pkg["hero_view"] == "face_closeup"
-        assert "/a.png" in pkg["alternate_image_paths"]
+        pkg = update_sheet_image(char_pkg, "sheet", "/a.png")
+        assert pkg["hero_image_path"] == "/a.png"
+        assert pkg["hero_view"] == "sheet"
 
     def test_approve_requires_hero(self, char_pkg):
         with pytest.raises(ValueError, match="no hero ref"):
             approve_package(char_pkg)
 
     def test_approve_with_hero(self, char_pkg):
-        pkg = update_sheet_image(char_pkg, "hero_front", "/a.png")
+        pkg = update_sheet_image(char_pkg, "sheet", "/a.png")
         pkg = approve_package(pkg)
         assert pkg["status"] == "approved"
 
@@ -153,8 +153,7 @@ class TestPreproductionValidation:
     def test_package_completeness_missing_views(self, char_pkg):
         result = validate_package_completeness(char_pkg)
         assert not result["complete"]
-        assert "hero_front" in result["missing_views"]
-        assert "face_closeup" in result["missing_views"]
+        assert "sheet" in result["missing_views"]
 
     def test_package_completeness_all_generated(self, char_pkg):
         for view in REQUIRED_VIEWS["character"]:
@@ -192,7 +191,7 @@ class TestShotBinding:
         assert all(s["environment_package_id"] == env_pkg["package_id"] for s in alley_shots)
 
     def test_package_notes_collected(self, char_pkg):
-        pkg = update_sheet_image(char_pkg, "hero_front", "/a.png")
+        pkg = update_sheet_image(char_pkg, "sheet", "/a.png")
         pkg = approve_package(pkg)
         shot = {"character_package_id": pkg["package_id"]}
         notes = get_shot_package_notes(shot, [pkg])

@@ -153,6 +153,53 @@ def _get_energy_words(energy: float) -> str:
         return ENERGY_WORDS["high"]
 
 
+_STYLE_KEYWORDS = {
+    "cinematic", "dramatic", "moody", "warm", "cool", "neon", "noir",
+    "golden hour", "shallow depth of field", "anamorphic", "film grain",
+    "high contrast", "low key", "high key", "desaturated", "vibrant",
+    "ethereal", "gritty", "dreamlike", "retro", "vintage", "futuristic",
+    "minimalist", "surreal", "documentary", "editorial", "4k", "8k",
+    "soft lighting", "harsh lighting", "backlit", "silhouette",
+    "slow motion", "timelapse", "handheld", "steadicam",
+    "emotional", "intimate", "epic", "melancholic", "joyful",
+    "teal and orange", "pastel", "monochrome", "color grading",
+    "professional color grading", "detailed", "photorealistic",
+}
+
+
+def _extract_style_from_direction(creative_direction: str) -> str:
+    """Extract visual style keywords from a creative direction string.
+
+    Keeps only style-related phrases so the full narrative concept
+    isn't repeated on every shot prompt (the AI actions carry the story).
+    """
+    if not creative_direction:
+        return DEFAULT_GLOBAL_STYLE
+    text_lower = creative_direction.lower()
+    found = []
+    # Check for multi-word style phrases first
+    for kw in sorted(_STYLE_KEYWORDS, key=len, reverse=True):
+        if kw in text_lower:
+            found.append(kw)
+    if found:
+        # Deduplicate while preserving order
+        seen = set()
+        unique = []
+        for f in found:
+            if f not in seen:
+                seen.add(f)
+                unique.append(f)
+        result = ", ".join(unique[:8])  # Cap at 8 style keywords
+        return result
+    # Fallback: take the last clause (often has style modifiers)
+    parts = creative_direction.split(".")
+    for p in reversed(parts):
+        stripped = p.strip()
+        if stripped and len(stripped) < 120:
+            return stripped
+    return creative_direction[:100]
+
+
 class AutoDirector:
     """Plans and executes full music video generation."""
 
@@ -605,8 +652,12 @@ class AutoDirector:
         for e in environments:
             env_by_name[e.get("name", "").lower()] = e
 
+        # Extract style keywords from creative_direction, not the full narrative.
+        # The AI planner already generates per-shot narrative — global_style should
+        # only carry visual style, not repeat story content on every prompt.
+        style_keywords = _extract_style_from_direction(creative_direction) if creative_direction else DEFAULT_GLOBAL_STYLE
         style_bible = {
-            "global_style": creative_direction or DEFAULT_GLOBAL_STYLE,
+            "global_style": style_keywords,
             "negative": "no text, no watermark, no blurry, no distorted faces",
         }
 
@@ -895,6 +946,305 @@ class AutoDirector:
 
         return plan
 
+    # ---- V5 Unified Production Pipeline ----
+
+    def run_pipeline(self, master_prompt: str, song_path: str = None,
+                     engine: str = "gen4_5", mode: str = "fast",
+                     auto_advance: bool = False, story_model: str = None) -> dict:
+        """
+        V5 unified pipeline: master prompt -> assets -> plan -> anchors -> video.
+
+        Orchestrates the entire production from a single creative prompt.
+        Each stage saves state so the pipeline is resumable.
+
+        Args:
+            master_prompt: The user's creative vision in one prompt
+            song_path: Optional audio file path
+            engine: Video generation engine (gen4_5, gen4_turbo, etc.)
+            mode: "fast" or "production" — controls asset sheet detail
+            auto_advance: If True, skip approval gates
+            story_model: LLM model for story planning
+
+        Returns:
+            dict with pipeline state, extraction, packages, plan
+        """
+        from lib.pipeline_state import PipelineState
+        from lib.master_prompt import (
+            extract_production_data, extraction_to_packages,
+            extraction_to_pos_entities, extraction_to_style_bible,
+        )
+        from lib.preproduction_assets import PreproductionStore
+        from lib.scene_compositor import compose_all_anchors
+
+        # Initialize pipeline state
+        pipeline = PipelineState(self.output_dir)
+        pipeline.master_prompt = master_prompt
+        pipeline.song_path = song_path or ""
+        pipeline.engine = engine
+        pipeline.mode = mode
+        pipeline.auto_advance = auto_advance
+        pipeline.story_model = story_model
+        pipeline.advance("PROMPT_RECEIVED")
+
+        # ── Stage 1: Extract production data from master prompt ──
+        try:
+            extraction = extract_production_data(master_prompt, model=story_model)
+            pipeline.extraction = extraction
+            pipeline.advance("ASSETS_EXTRACTED")
+        except Exception as e:
+            pipeline.set_error(f"Asset extraction failed: {e}")
+            return {"ok": False, "error": str(e), "pipeline": pipeline.get_progress()}
+
+        # ── Stage 2: Create preproduction packages ──
+        try:
+            packages = extraction_to_packages(extraction, mode=mode)
+            preprod_store = PreproductionStore(self.output_dir)
+            for pkg in packages:
+                preprod_store.save_package(pkg)
+            pipeline.packages = [p["package_id"] for p in packages]
+            pipeline.advance("PACKAGES_CREATED")
+            print(f"[PIPELINE] Created {len(packages)} preproduction packages")
+        except Exception as e:
+            pipeline.set_error(f"Package creation failed: {e}")
+            return {"ok": False, "error": str(e), "pipeline": pipeline.get_progress()}
+
+        # ── Stage 3: Create PromptOS entities for planning ──
+        try:
+            pos_entities = extraction_to_pos_entities(extraction)
+            characters = []
+            for c_data in pos_entities["characters"]:
+                existing = self.pos.get_character_by_name(c_data["name"]) if hasattr(self.pos, 'get_character_by_name') else None
+                if not existing:
+                    cid = self.pos.add_character(c_data)
+                    c_data["id"] = cid
+                else:
+                    c_data["id"] = existing.get("id", "")
+                characters.append(c_data)
+
+            environments = []
+            for e_data in pos_entities["environments"]:
+                existing = self.pos.get_environment_by_name(e_data["name"]) if hasattr(self.pos, 'get_environment_by_name') else None
+                if not existing:
+                    eid = self.pos.add_environment(e_data)
+                    e_data["id"] = eid
+                else:
+                    e_data["id"] = existing.get("id", "")
+                environments.append(e_data)
+        except Exception as e:
+            print(f"[PIPELINE] Warning: PromptOS entity creation: {e}")
+            characters = []
+            environments = []
+
+        # ── Stage 4: Generate story plan (V4 beat/shot expansion) ──
+        style_bible = extraction_to_style_bible(extraction)
+
+        # Find song if not provided
+        if not song_path:
+            uploads_dir = os.path.join(os.path.dirname(self.output_dir), "uploads")
+            if os.path.isdir(uploads_dir):
+                audio_files = []
+                for f in os.listdir(uploads_dir):
+                    if f.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac')):
+                        fp = os.path.join(uploads_dir, f)
+                        audio_files.append((os.path.getmtime(fp), fp))
+                if audio_files:
+                    audio_files.sort(reverse=True)
+                    song_path = audio_files[0][1]
+                    pipeline.song_path = song_path
+                    print(f"[PIPELINE] Auto-selected song: {os.path.basename(song_path)}")
+
+        if song_path and os.path.isfile(song_path):
+            try:
+                plan = self.plan_with_ai(
+                    song_path=song_path,
+                    creative_direction=master_prompt,
+                    characters=characters,
+                    environments=environments,
+                    engine=engine,
+                    story_model=story_model,
+                )
+                # Bind shots to packages using extraction scene_breakdown
+                self._bind_shots_to_packages(plan, extraction, packages)
+                pipeline.plan = plan
+                pipeline.advance("PLAN_READY")
+                print(f"[PIPELINE] Plan ready: {len(plan.get('scenes', []))} shots in {len(plan.get('beats', []))} beats")
+            except Exception as e:
+                pipeline.set_error(f"Story planning failed: {e}")
+                return {"ok": False, "error": str(e), "pipeline": pipeline.get_progress()}
+        else:
+            pipeline.advance("PLAN_READY")
+            print("[PIPELINE] No audio file — plan deferred until song upload")
+
+        return {
+            "ok": True,
+            "pipeline": pipeline.get_progress(),
+            "extraction": extraction,
+            "packages": [{"package_id": p["package_id"], "name": p["name"],
+                          "type": p["package_type"]} for p in packages],
+            "plan_summary": {
+                "num_beats": len(pipeline.plan.get("beats", [])),
+                "num_shots": len(pipeline.plan.get("scenes", [])),
+            },
+            "style_bible": style_bible,
+        }
+
+    def _bind_shots_to_packages(self, plan: dict, extraction: dict, packages: list):
+        """Bind shots to preproduction packages using extraction scene_breakdown."""
+        scenes = plan.get("scenes", [])
+        scene_breakdown = extraction.get("scene_breakdown", [])
+        if not scenes or not scene_breakdown:
+            return
+
+        # Build package lookups by name (case-insensitive)
+        pkg_by_type_name = {}
+        for p in packages:
+            key = (p["package_type"], p["name"].lower())
+            pkg_by_type_name[key] = p["package_id"]
+
+        # Map beat_index → scene_breakdown entry
+        # Beats correspond to scene_breakdown entries by order
+        beat_to_scene = {}
+        beats = plan.get("beats", [])
+        for i, sb in enumerate(scene_breakdown):
+            if i < len(beats):
+                beat_to_scene[beats[i].get("beat_id", f"beat_{i}")] = sb
+
+        # Also distribute by shot index ranges if no beat mapping
+        shots_per_scene = max(1, len(scenes) // max(1, len(scene_breakdown)))
+
+        for si, shot in enumerate(scenes):
+            # Find which scene_breakdown this shot belongs to
+            beat_id = shot.get("beat_id", "")
+            sb = beat_to_scene.get(beat_id)
+            if not sb:
+                sb_idx = min(si // shots_per_scene, len(scene_breakdown) - 1)
+                sb = scene_breakdown[sb_idx] if scene_breakdown else {}
+
+            # Bind character — pick first character in scene
+            chars_present = sb.get("characters_present", [])
+            if chars_present and not shot.get("character_package_id"):
+                for cname in chars_present:
+                    pid = pkg_by_type_name.get(("character", cname.lower()))
+                    if pid:
+                        shot["character_package_id"] = pid
+                        shot["characterName"] = cname
+                        break
+
+            # Bind environment
+            loc = sb.get("location", "")
+            if loc and not shot.get("environment_package_id"):
+                pid = pkg_by_type_name.get(("environment", loc.lower()))
+                if pid:
+                    shot["environment_package_id"] = pid
+                    shot["environmentName"] = loc
+
+            # Bind costume for the character
+            if shot.get("characterName") and not shot.get("costume_package_id"):
+                for co in extraction.get("costumes", []):
+                    if co.get("character_name", "").lower() == shot["characterName"].lower():
+                        pid = pkg_by_type_name.get(("costume", co["name"].lower()))
+                        if pid:
+                            shot["costume_package_id"] = pid
+                            break
+
+            # Bind props
+            if not shot.get("prop_package_ids"):
+                prop_ids = []
+                for pname in sb.get("key_props", []):
+                    pid = pkg_by_type_name.get(("prop", pname.lower()))
+                    if pid:
+                        prop_ids.append(pid)
+                shot["prop_package_ids"] = prop_ids
+
+        bound = sum(1 for s in scenes if s.get("character_package_id") or s.get("environment_package_id"))
+        print(f"[PIPELINE] Bound {bound}/{len(scenes)} shots to packages")
+
+    def pipeline_generate_anchors(self, progress_cb=None) -> dict:
+        """Generate anchor images for all shots using the scene compositor."""
+        from lib.pipeline_state import PipelineState
+        from lib.preproduction_assets import PreproductionStore
+        from lib.scene_compositor import compose_all_anchors
+        from lib.taste_profile import TasteStore, taste_to_prompt_modifiers
+        from lib.master_prompt import extraction_to_style_bible
+
+        pipeline = PipelineState(self.output_dir)
+        if not pipeline.plan or not pipeline.plan.get("scenes"):
+            return {"ok": False, "error": "No plan available — run pipeline first"}
+
+        # Load approved packages
+        preprod_store = PreproductionStore(self.output_dir)
+        packages = [p for p in preprod_store.get_all() if p.get("status") == "approved"]
+
+        if not packages:
+            return {"ok": False, "error": "No approved packages — approve canonical sheets first"}
+
+        # Get style bible from extraction
+        style_bible = extraction_to_style_bible(pipeline.extraction) if pipeline.extraction else {
+            "global_style": "cinematic",
+            "negative": "no text, no watermark",
+        }
+
+        # Get taste modifiers
+        taste_mods = None
+        try:
+            taste_store = TasteStore(os.path.join(self.output_dir, "taste"))
+            blended = taste_store.get_blended()
+            if blended.get("dimensions"):
+                taste_mods = taste_to_prompt_modifiers(blended)
+        except Exception:
+            pass
+
+        pipeline.advance("ANCHORS_GENERATING")
+
+        shots = pipeline.plan["scenes"]
+        anchors = compose_all_anchors(
+            shots=shots,
+            packages=packages,
+            style_bible=style_bible,
+            output_dir=self.output_dir,
+            taste_mods=taste_mods,
+            progress_cb=progress_cb,
+        )
+
+        # Save anchors to pipeline state
+        for anchor in anchors:
+            pipeline.set_anchor(anchor["shot_id"], anchor)
+
+        # Auto-approve if auto_advance
+        if pipeline.auto_advance:
+            for anchor in anchors:
+                if anchor.get("status") == "generated":
+                    pipeline.approve_anchor(anchor["shot_id"])
+            pipeline.advance("ANCHORS_REVIEW")
+            pipeline.advance("SHOTS_GENERATING")
+        else:
+            pipeline.advance("ANCHORS_REVIEW")
+
+        # Update plan scenes with anchor paths
+        plan_path = os.path.join(self.output_dir, "auto_director_plan.json")
+        if os.path.isfile(plan_path):
+            import json as _json
+            with open(plan_path) as f:
+                saved_plan = _json.load(f)
+            for scene in saved_plan.get("scenes", []):
+                sid = scene.get("shot_id", scene.get("id", ""))
+                anchor = pipeline.get_anchor(sid)
+                if anchor and anchor.get("image_path"):
+                    scene["anchor_image_path"] = anchor["image_path"]
+                    scene["anchor_status"] = anchor.get("status", "generated")
+            with open(plan_path, "w") as f:
+                _json.dump(saved_plan, f, indent=2)
+
+        generated = sum(1 for a in anchors if a.get("status") == "generated")
+        return {
+            "ok": True,
+            "total": len(anchors),
+            "generated": generated,
+            "failed": sum(1 for a in anchors if a.get("status") == "failed"),
+            "skipped": sum(1 for a in anchors if a.get("status") == "skipped"),
+            "pipeline": pipeline.get_progress(),
+        }
+
     # ---- Full Video Planning ----
 
     def plan_full_video(self, song_path: str, style: str,
@@ -1162,6 +1512,7 @@ class AutoDirector:
 
             # Build consistent character description from stored fields
             char_description = ""
+            char_data = None
             char_id = scene.get("characterId")
             if char_id:
                 char_data = self.pos.get_character(char_id)
@@ -1182,6 +1533,7 @@ class AutoDirector:
 
             # Build environment description from stored fields
             env_description = ""
+            env_data = None
             env_id = scene.get("environmentId")
             if env_id:
                 env_data = self.pos.get_environment(env_id)
@@ -1203,6 +1555,7 @@ class AutoDirector:
 
             # Build costume description from stored fields
             costume_description = ""
+            costume_data = None
             costume_id = scene.get("costumeId")
             if costume_id:
                 costume_data = self.pos.get_costume(costume_id)
@@ -1251,6 +1604,7 @@ class AutoDirector:
                                 break
 
             # Override photo paths from preproduction packages if bound
+            _prop_photo_paths = []
             if scene.get("character_package_id") and hasattr(self, "_preprod_packages"):
                 pkg = self._preprod_pkg_index.get(scene["character_package_id"])
                 if pkg and pkg.get("hero_image_path") and os.path.isfile(pkg["hero_image_path"]):
@@ -1263,6 +1617,12 @@ class AutoDirector:
                 pkg = self._preprod_pkg_index.get(scene["costume_package_id"])
                 if pkg and pkg.get("hero_image_path") and os.path.isfile(pkg["hero_image_path"]):
                     _cos_photo_path = pkg["hero_image_path"]
+            # Resolve prop photo paths from bound packages
+            for prop_pkg_id in (scene.get("prop_package_ids") or []):
+                if hasattr(self, "_preprod_pkg_index"):
+                    pkg = self._preprod_pkg_index.get(prop_pkg_id)
+                    if pkg and pkg.get("hero_image_path") and os.path.isfile(pkg["hero_image_path"]):
+                        _prop_photo_paths.append(pkg["hero_image_path"])
 
             gen_scene = {
                 "prompt": scene["prompt"],
@@ -1276,10 +1636,12 @@ class AutoDirector:
                 "costume_description": costume_description,
                 "environment_photo_path": _env_photo_path,
                 "costume_photo_path": _cos_photo_path,
-                # Frame chaining + continuity (set by sequential loop)
-                "first_frame_path": scene.get("first_frame_path", ""),
+                "prop_photo_paths": _prop_photo_paths,
+                # Always regenerate first frame from @Tag refs — don't chain
+                # Frame chaining loses character/environment consistency
+                "first_frame_path": "",
                 "continuity_context": scene.get("continuity_context", {}),
-                "continuity_mode": True,
+                "continuity_mode": False,
             }
 
             photo_path = scene.get("character_photo_path")

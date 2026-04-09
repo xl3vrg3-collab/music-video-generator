@@ -8,6 +8,7 @@ All data is stored as JSON files in output/prompt_os/.
 import json
 import os
 import re
+import threading
 import time
 import uuid
 
@@ -38,7 +39,7 @@ def _now():
 
 
 def _gen_id():
-    return str(uuid.uuid4())[:8]
+    return str(uuid.uuid4())[:12]  # 12 chars = much lower collision risk
 
 
 def _load_json(path, default=None):
@@ -53,9 +54,13 @@ def _load_json(path, default=None):
     return default
 
 
+_pos_file_lock = threading.Lock()
+
+
 def _save_json(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    with _pos_file_lock:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
 
 
 # ─────────────────────────── Variable handling ───────────────────────────
@@ -186,6 +191,9 @@ class PromptOS:
     # ───── Characters ─────
 
     def create_character(self, data):
+        name = data.get("name", "").strip()
+        if not name:
+            return {"error": "Name is required"}
         chars = _load_json(CHARACTERS_PATH)
         # Accept both field name formats
         desc = data.get("description", data.get("physicalDescription", data.get("physical", "")))
@@ -267,15 +275,22 @@ class PromptOS:
 
     def delete_character(self, cid):
         chars = _load_json(CHARACTERS_PATH)
-        new = [c for c in chars if c["id"] != cid]
+        new = [c for c in chars if c.get("id") != cid]
         if len(new) == len(chars):
             return False
         _save_json(CHARACTERS_PATH, new)
+        # Cascade: remove costumes linked to this character
+        costumes = _load_json(COSTUMES_PATH)
+        costumes = [c for c in costumes if c.get("characterId") != cid]
+        _save_json(COSTUMES_PATH, costumes)
         return True
 
     # ───── Costumes ─────
 
     def create_costume(self, data):
+        name = data.get("name", "").strip()
+        if not name:
+            return {"error": "Name is required"}
         costumes = _load_json(COSTUMES_PATH)
         record = {
             "id": _gen_id(),
@@ -304,6 +319,7 @@ class PromptOS:
             "versionHistory": data.get("versionHistory", []),
             "sourceResolution": data.get("sourceResolution", {}),
         }
+        record["referencePhoto"] = record.get("referenceImagePath", "")
         costumes.append(record)
         _save_json(COSTUMES_PATH, costumes)
         return record
@@ -350,6 +366,9 @@ class PromptOS:
     # ───── Environments ─────
 
     def create_environment(self, data):
+        name = data.get("name", "").strip()
+        if not name:
+            return {"error": "Name is required"}
         envs = _load_json(ENVIRONMENTS_PATH)
         record = {
             "id": _gen_id(),
@@ -381,6 +400,7 @@ class PromptOS:
             "versionHistory": data.get("versionHistory", []),
             "sourceResolution": data.get("sourceResolution", {}),
         }
+        record["referencePhoto"] = record.get("referenceImagePath", "")
         envs.append(record)
         _save_json(ENVIRONMENTS_PATH, envs)
         return record

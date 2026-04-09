@@ -6,166 +6,914 @@
 <title>LUMN</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@900&display=swap');
+
+/* ─── Studio-aligned palette ─── */
+:root{
+  --bg:#07070a;
+  --surface:rgba(16,16,20,0.8);
+  --surface2:rgba(22,22,28,0.7);
+  --border:rgba(255,255,255,0.07);
+  --border-hover:rgba(255,255,255,0.14);
+  --text:#E4E4EA;
+  --text-mid:#aaaabb;
+  --text-dim:#8888A0;
+  --text-mute:#5a5a6e;
+  --accent:#FF5E00;
+  --accent-glow:rgba(255,94,0,0.15);
+  --cyan:#00E5FF;
+  --cyan-dim:rgba(0,229,255,0.15);
+  --green:#00E5A0;
+  --amber:#FFD600;
+}
+
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:auto}
-body{background:#000;color:#fff;font-family:'Inter Tight',Helvetica,Arial,sans-serif;overflow:hidden;cursor:crosshair;-webkit-font-smoothing:antialiased}
-body.scrollable{overflow-y:auto;overflow-x:hidden}
+body{background:var(--bg);color:var(--text);font-family:'Inter Tight',Helvetica,Arial,sans-serif;overflow:hidden;cursor:crosshair;-webkit-font-smoothing:antialiased}
+body.scrollable{overflow-y:auto;overflow-x:hidden;cursor:default}
 
 /* grain */
 body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");pointer-events:none;z-index:9999;opacity:0.5}
 
-/* gate */
-#gate{position:fixed;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:1000;background:#000;transition:opacity 0.8s ease,visibility 0.8s}
-#gate.gone{opacity:0;visibility:hidden;pointer-events:none}
-#gate h1{font-size:clamp(48px,14vw,160px);font-weight:900;letter-spacing:clamp(8px,3vw,40px);text-transform:uppercase;line-height:1;margin-bottom:40px;opacity:0;animation:fadein 1.5s ease 0.3s forwards}
-#gate .enter{font-size:11px;letter-spacing:8px;text-transform:uppercase;color:#555;cursor:pointer;padding:12px 20px;transition:all 0.4s;opacity:0;animation:fadein 1.2s ease 1.2s forwards}
-#gate .enter:hover{color:#FF5E00;letter-spacing:12px}
-@keyframes fadein{to{opacity:1}}
+/* ─── TITLE SEQUENCE (cinema overlay) ─── */
+#cinema{position:fixed;top:0;left:0;width:100%;height:100%;z-index:2000;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 1.2s ease}
+#cinema.done{opacity:0;pointer-events:none}
 
-/* sections */
-.s{min-height:100vh;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
-.s-inner{padding:28px;max-width:100%}
+/* slides */
+.seq-slide{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:none}
+.seq-slide .seq-inner{padding:28px;max-width:90vw}
+.seq-slide.s-left{justify-content:flex-start;padding-left:clamp(40px,10vw,180px)}
+.seq-slide.s-right{justify-content:flex-end;padding-right:clamp(40px,10vw,180px);text-align:right}
+.seq-slide.s-center{justify-content:center;text-align:center}
 
 /* text styles */
 .t-huge{font-size:clamp(40px,11vw,130px);font-weight:900;line-height:0.92;text-transform:uppercase;letter-spacing:-2px}
 .t-mid{font-size:clamp(28px,6vw,64px);font-weight:900;line-height:1.0;text-transform:uppercase;letter-spacing:-1px}
-.t-sm{font-size:11px;letter-spacing:6px;text-transform:uppercase;color:#444}
-.t-dim{color:#333}
-.t-o{color:#FF5E00}
+.t-sm{font-size:11px;letter-spacing:6px;text-transform:uppercase;color:var(--text-mute)}
+.t-dim{color:#2a2a3a}
+.t-o{color:var(--accent)}
 .t-blur{filter:blur(1.5px);opacity:0.5}
-.t-right{text-align:right}
-.t-off{margin-left:clamp(20px,8vw,120px)}
-.t-off-r{margin-right:clamp(20px,8vw,120px)}
+
+/* skip button */
+#skip{position:fixed;bottom:28px;right:28px;z-index:2001;font-size:10px;letter-spacing:5px;text-transform:uppercase;color:var(--text-mute);cursor:pointer;padding:8px 16px;border:1px solid var(--border);border-radius:3px;transition:all 0.3s;opacity:0}
+#skip.show{opacity:1}
+#skip:hover{color:var(--accent);border-color:var(--accent)}
+
+/* progress bar at bottom of cinema */
+#seq-progress{position:fixed;bottom:0;left:0;height:2px;background:var(--accent);z-index:2002;width:0;transition:width 0.3s linear}
 
 /* scroll reveal */
 .reveal{opacity:0;transform:translateY(20px);transition:opacity 0.9s ease,transform 0.9s ease}
 .reveal.visible{opacity:1;transform:translateY(0)}
 
-/* section specific */
-.s1{justify-content:flex-start;padding-left:clamp(40px,10vw,180px)}
-.s2{justify-content:center;text-align:center}
-.s3{justify-content:flex-end;padding-right:clamp(40px,10vw,180px);text-align:right}
-.s4{justify-content:center;text-align:left;padding-left:clamp(40px,12vw,200px)}
-
-/* stagger lines */
-.stagger>*{opacity:0;transform:translateY(30px);transition:opacity 0.6s ease,transform 0.6s ease}
-.stagger.visible>*:nth-child(1){opacity:1;transform:translateY(0);transition-delay:0s}
-.stagger.visible>*:nth-child(2){opacity:1;transform:translateY(0);transition-delay:0.15s}
-.stagger.visible>*:nth-child(3){opacity:1;transform:translateY(0);transition-delay:0.3s}
-.stagger.visible>*:nth-child(4){opacity:1;transform:translateY(0);transition-delay:0.45s}
-
-/* divider */
-.slash{height:100vh;display:flex;align-items:center;justify-content:center}
-.slash-line{width:1px;height:30vh;background:linear-gradient(180deg,transparent,#222,transparent)}
-
-/* cta section */
-.cta-s{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;position:relative}
-.cta-s::before{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:400px;height:400px;background:radial-gradient(circle,rgba(255,94,0,0.06) 0%,transparent 70%);pointer-events:none}
-.cta-enter{margin-top:48px;font-size:12px;letter-spacing:10px;text-transform:uppercase;color:#444;border:1px solid #222;padding:16px 40px;cursor:pointer;transition:all 0.4s;text-decoration:none;display:inline-block}
-.cta-enter:hover{color:#FF5E00;border-color:#FF5E00;letter-spacing:14px;box-shadow:0 0 40px rgba(255,94,0,0.15)}
+/* cta */
+.cta-enter{font-size:12px;letter-spacing:10px;text-transform:uppercase;color:var(--text-mute);border:1px solid var(--border-hover);padding:16px 40px;cursor:pointer;transition:all 0.4s;text-decoration:none;display:inline-block}
+.cta-enter:hover{color:var(--accent);border-color:var(--accent);letter-spacing:14px;box-shadow:0 0 40px var(--accent-glow)}
 
 /* bottom mark */
-.mark{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);font-size:9px;letter-spacing:5px;text-transform:uppercase;color:#222;z-index:10;pointer-events:none;transition:opacity 0.5s}
+.mark{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);font-size:9px;letter-spacing:5px;text-transform:uppercase;color:var(--border-hover);z-index:10;pointer-events:none;transition:opacity 0.5s}
 body:not(.scrollable) .mark{opacity:0}
-
-@media(max-width:600px){
-  .s1{padding-left:24px}
-  .s3{padding-right:24px}
-  .s4{padding-left:24px}
-}
 </style>
 </head>
 <body>
 
-<!-- GATE -->
-<div id="gate">
-  <h1>LUMN</h1>
-  <div class="enter" onclick="document.getElementById('gate').classList.add('gone');document.body.classList.add('scrollable');setTimeout(function(){document.getElementById('gate').style.display='none'},900);">ENTER</div>
+<!-- ═══ TITLE SEQUENCE CINEMA ═══ -->
+<div id="cinema">
+
+  <!-- Slide 0: LUMN title card -->
+  <div class="seq-slide s-center" data-dur="1800">
+    <div class="seq-inner">
+      <div class="t-huge" style="letter-spacing:clamp(8px,3vw,40px)">LUMN</div>
+    </div>
+  </div>
+
+  <!-- Slide 1: Identity -->
+  <div class="seq-slide s-left" data-dur="2600" data-stagger="1">
+    <div class="seq-inner">
+      <div class="t-sm" style="margin-bottom:24px;">STATEMENT</div>
+      <div class="t-huge">YOU ARE</div>
+      <div class="t-huge">NOT A <span class="t-dim">USER</span>.</div>
+      <div class="t-huge" style="margin-top:8px;">YOU ARE THE<br><span class="t-o">DIRECTOR</span>.</div>
+    </div>
+  </div>
+
+  <!-- Slide 2: Mantra -->
+  <div class="seq-slide s-center" data-dur="1800" data-stagger="1">
+    <div class="seq-inner">
+      <div class="t-huge t-blur">CREATE.</div>
+      <div class="t-huge">CREATE.</div>
+      <div class="t-huge t-o">CREATE.</div>
+    </div>
+  </div>
+
+  <!-- Slide 3: Pipeline -->
+  <div class="seq-slide s-right" data-dur="2000" data-stagger="1">
+    <div class="seq-inner">
+      <div class="t-mid">ONE PROMPT.</div>
+      <div class="t-mid t-dim">SEVEN STAGES.</div>
+      <div class="t-mid t-o">FINISHED FILM.</div>
+    </div>
+  </div>
+
+  <!-- Slide 4: Function -->
+  <div class="seq-slide s-left" data-dur="2000" data-stagger="1">
+    <div class="seq-inner">
+      <div class="t-mid t-dim">BRIEF.</div>
+      <div class="t-mid">DRAFT.</div>
+      <div class="t-mid t-o">BUILD.</div>
+      <div class="t-mid">RENDER.</div>
+      <div class="t-mid t-dim">EXPORT.</div>
+    </div>
+  </div>
+
+  <!-- Slide 5: Absence -->
+  <div class="seq-slide s-center" data-dur="2200">
+    <div class="seq-inner">
+      <div class="t-sm" style="margin-bottom:20px;color:#2a2a3a;">NO CREW. NO BUDGET. NO APPROVAL.</div>
+      <div class="t-mid">JUST <span class="t-o">VISION</span><br>AND <span class="t-dim">EXECUTION</span>.</div>
+    </div>
+  </div>
+
+  <!-- Slide 6: CTA -->
+  <div class="seq-slide s-center" data-dur="2400" data-stagger="1">
+    <div class="seq-inner">
+      <div class="t-huge">BUILD WHAT</div>
+      <div class="t-huge">YOU SEE</div>
+      <div class="t-huge t-o">IN YOUR</div>
+      <div class="t-huge t-o">HEAD.</div>
+    </div>
+  </div>
+
 </div>
+
+<div id="skip">SKIP</div>
+<div id="seq-progress"></div>
 
 <!-- MARK -->
 <div class="mark">LUMN STUDIO</div>
 
-<!-- S1: IDENTITY -->
-<section class="s s1">
-  <div class="s-inner reveal stagger">
-    <div class="t-sm" style="margin-bottom:24px;">STATEMENT</div>
-    <div class="t-huge">YOU ARE</div>
-    <div class="t-huge">NOT A <span class="t-dim">USER</span>.</div>
-    <div class="t-huge" style="margin-top:8px;">YOU ARE THE<br><span class="t-o">DIRECTOR</span>.</div>
+<!-- ═══════════════════════════════════════════════════ -->
+<!-- INTERACTIVE WHITEPAPER                              -->
+<!-- ═══════════════════════════════════════════════════ -->
+
+<style>
+/* whitepaper global — studio-aligned palette */
+.wp{padding:0 clamp(24px,6vw,120px);max-width:1200px;margin:0 auto}
+.wp-hero{min-height:60vh;display:flex;align-items:center;justify-content:center;text-align:center}
+.wp-hero-inner{max-width:700px}
+.wp-hero .t-sm{margin-bottom:20px;color:var(--accent)}
+.wp-hero p{font-family:'Inter Tight',sans-serif;font-weight:400;font-size:15px;line-height:1.8;color:var(--text-dim);margin-top:20px;letter-spacing:0.3px}
+
+/* nav — matches studio header treatment */
+.wp-nav{position:sticky;top:0;z-index:500;background:linear-gradient(180deg,rgba(12,12,16,0.95),rgba(10,10,14,0.88));backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:12px 0;margin-bottom:40px}
+.wp-nav-inner{display:flex;gap:4px;overflow-x:auto;max-width:1200px;margin:0 auto;padding:0 clamp(24px,6vw,120px);scrollbar-width:none}
+.wp-nav-inner::-webkit-scrollbar{display:none}
+.wp-nav a{font-size:10px;letter-spacing:4px;text-transform:uppercase;color:var(--text-mute);text-decoration:none;padding:8px 14px;white-space:nowrap;border:1px solid transparent;border-radius:4px;transition:all 0.3s}
+.wp-nav a:hover,.wp-nav a.active{color:var(--cyan);border-color:rgba(0,229,255,0.2)}
+
+/* sections */
+.wp-section{margin-bottom:100px;scroll-margin-top:60px}
+.wp-section-header{margin-bottom:40px}
+.wp-section-header .wp-num{font-size:11px;letter-spacing:6px;color:var(--accent);margin-bottom:12px;font-weight:900}
+.wp-section-header h2{font-size:clamp(28px,5vw,48px);font-weight:900;text-transform:uppercase;letter-spacing:-1px;line-height:1.0}
+.wp-section-header p{font-size:14px;line-height:1.7;color:var(--text-dim);margin-top:12px;max-width:600px}
+
+/* content blocks — matches studio surface treatment */
+.wp-block{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:28px;margin-bottom:16px;transition:border-color 0.3s}
+.wp-block:hover{border-color:var(--border-hover)}
+.wp-block h3{font-size:16px;font-weight:900;text-transform:uppercase;letter-spacing:2px;margin-bottom:12px;color:var(--text)}
+.wp-block p,.wp-block li{font-size:13px;line-height:1.7;color:var(--text-dim)}
+.wp-block ul{list-style:none;padding:0}
+.wp-block li{padding:4px 0 4px 16px;position:relative}
+.wp-block li::before{content:'';position:absolute;left:0;top:11px;width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.wp-block .tag{display:inline-block;font-size:10px;letter-spacing:2px;text-transform:uppercase;padding:3px 10px;border:1px solid var(--border-hover);border-radius:20px;color:var(--text-mute);margin:2px 4px 2px 0}
+.wp-block .tag-o{border-color:var(--accent);color:var(--accent)}
+
+/* grid */
+.wp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.wp-grid-3{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px}
+
+/* flow diagram */
+.wp-flow{display:flex;align-items:center;gap:0;flex-wrap:wrap;justify-content:center;margin:24px 0}
+.wp-flow-step{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px 20px;text-align:center;min-width:100px;transition:all 0.3s}
+.wp-flow-step:hover{border-color:var(--accent);transform:translateY(-2px)}
+.wp-flow-step .icon{font-size:24px;margin-bottom:8px}
+.wp-flow-step .label{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:var(--text-mid);font-weight:900}
+.wp-flow-step .sub{font-size:10px;color:var(--text-mute);margin-top:4px}
+.wp-flow-arrow{color:var(--text-mute);font-size:20px;padding:0 6px;flex-shrink:0}
+
+/* bars / stats */
+.wp-bar{margin:8px 0}
+.wp-bar-label{display:flex;justify-content:space-between;font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px}
+.wp-bar-label span:first-child{color:var(--text-mid)}
+.wp-bar-label span:last-child{color:var(--accent);font-weight:900}
+.wp-bar-track{height:4px;background:rgba(255,255,255,0.06);border-radius:2px;overflow:hidden}
+.wp-bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),#ff8844);border-radius:2px;transition:width 1s ease}
+
+/* accordion */
+.wp-acc{border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden}
+.wp-acc-head{padding:16px 20px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;transition:background 0.3s}
+.wp-acc-head:hover{background:var(--surface2)}
+.wp-acc-head h4{font-size:13px;font-weight:900;text-transform:uppercase;letter-spacing:2px;color:var(--text-mid)}
+.wp-acc-head .arrow{color:var(--text-mute);transition:transform 0.3s;font-size:14px}
+.wp-acc.open .arrow{transform:rotate(180deg);color:var(--accent)}
+.wp-acc-body{max-height:0;overflow:hidden;transition:max-height 0.4s ease}
+.wp-acc.open .wp-acc-body{max-height:2000px}
+.wp-acc-content{padding:0 20px 20px;font-size:13px;line-height:1.7;color:var(--text-dim)}
+.wp-acc-content code{background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:3px;font-size:12px;color:var(--cyan)}
+.wp-acc-content .example{background:rgba(7,7,10,0.6);border-left:2px solid var(--accent);padding:12px 16px;margin:12px 0;border-radius:0 4px 4px 0;font-size:12px;color:var(--text-dim);line-height:1.6}
+
+/* stat cards */
+.wp-stat{text-align:center;padding:24px 16px}
+.wp-stat .num{font-size:clamp(32px,6vw,56px);font-weight:900;color:var(--accent);line-height:1}
+.wp-stat .unit{font-size:11px;letter-spacing:4px;text-transform:uppercase;color:var(--text-mute);margin-top:8px}
+
+/* comparison table */
+.wp-table{width:100%;border-collapse:collapse;margin:16px 0}
+.wp-table th,.wp-table td{padding:10px 14px;text-align:left;font-size:12px;border-bottom:1px solid var(--border)}
+.wp-table th{color:var(--cyan);letter-spacing:3px;text-transform:uppercase;font-size:10px;font-weight:900}
+.wp-table td{color:var(--text-dim)}
+.wp-table td code{background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:3px;font-size:11px;color:var(--cyan)}
+.wp-table tr:hover td{color:var(--text-mid)}
+
+@media(max-width:600px){
+  .wp-flow{flex-direction:column}
+  .wp-flow-arrow{transform:rotate(90deg)}
+}
+</style>
+
+<!-- WP HERO -->
+<section class="wp-hero">
+  <div class="wp-hero-inner reveal">
+    <div class="t-sm">WHITEPAPER</div>
+    <div class="t-mid">HOW <span class="t-o">LUMN</span> WORKS</div>
+    <p>A complete technical overview of the AI film studio. One prompt becomes a finished film &mdash; through seven stages, canonical assets, composed anchors, and intelligent automation. Every system explained.</p>
   </div>
 </section>
 
-<div class="slash"><div class="slash-line"></div></div>
+<!-- WP NAV -->
+<nav class="wp-nav" id="wpnav">
+  <div class="wp-nav-inner">
+    <a href="#wp-overview">Overview</a>
+    <a href="#wp-pipeline">Pipeline</a>
+    <a href="#wp-workspace">Workspace</a>
+    <a href="#wp-engines">AI Engines</a>
+    <a href="#wp-assets">Assets</a>
+    <a href="#wp-cinematic">Cinematic</a>
+    <a href="#wp-production">Production</a>
+    <a href="#wp-brain">Director Brain</a>
+    <a href="#wp-audio">Audio</a>
+    <a href="#wp-export">Export</a>
+  </div>
+</nav>
 
-<!-- S2: MANTRA -->
-<section class="s s2">
-  <div class="s-inner reveal stagger">
-    <div class="t-huge t-blur">CREATE.</div>
-    <div class="t-huge">CREATE.</div>
-    <div class="t-huge t-o">CREATE.</div>
+<div class="wp">
+
+<!-- ─── 01 OVERVIEW ─── -->
+<section class="wp-section reveal" id="wp-overview">
+  <div class="wp-section-header">
+    <div class="wp-num">01</div>
+    <h2>Overview</h2>
+    <p>LUMN Studio turns one creative prompt into a finished cinematic film. No crew, no budget, no render farm. Write what you see in your head, and the system builds it.</p>
+  </div>
+  <div class="wp-grid">
+    <div class="wp-block">
+      <h3>What It Is</h3>
+      <p>A unified AI film studio running locally in your browser. Describe a movie &mdash; LUMN extracts every character, costume, environment, and prop, generates canonical reference sheets, composes shot-specific anchor images, renders video clips, and assembles them into a complete film with transitions, audio, and export.</p>
+      <p style="margin-top:8px">One master prompt drives everything. The system acts as your AI director, production designer, and editor.</p>
+    </div>
+    <div class="wp-block">
+      <h3>Who It's For</h3>
+      <ul>
+        <li>Independent filmmakers with a vision but no budget</li>
+        <li>Content creators who want cinematic quality</li>
+        <li>Musicians producing visual albums and music videos</li>
+        <li>Brands building narrative-driven campaigns</li>
+        <li>Anyone who sees movies in their head</li>
+      </ul>
+    </div>
+  </div>
+  <div class="wp-grid" style="margin-top:16px">
+    <div class="wp-block wp-stat"><div class="num">7</div><div class="unit">Pipeline Stages</div></div>
+    <div class="wp-block wp-stat"><div class="num">4</div><div class="unit">AI Engines</div></div>
+    <div class="wp-block wp-stat"><div class="num">200+</div><div class="unit">Shot Styles</div></div>
+    <div class="wp-block wp-stat"><div class="num">80+</div><div class="unit">Camera Presets</div></div>
   </div>
 </section>
 
-<div class="slash"><div class="slash-line"></div></div>
+<!-- ─── 02 PIPELINE ─── -->
+<section class="wp-section reveal" id="wp-pipeline">
+  <div class="wp-section-header">
+    <div class="wp-num">02</div>
+    <h2>The Pipeline</h2>
+    <p>Seven stages from creative idea to exported film. Each stage answers one question and produces one clear output.</p>
+  </div>
+  <div class="wp-flow">
+    <div class="wp-flow-step"><div class="icon">&#128172;</div><div class="label">Brief</div><div class="sub">What to make</div></div>
+    <div class="wp-flow-arrow">&#8594;</div>
+    <div class="wp-flow-step"><div class="icon">&#128221;</div><div class="label">Drafts</div><div class="sub">Review &amp; reference</div></div>
+    <div class="wp-flow-arrow">&#8594;</div>
+    <div class="wp-flow-step"><div class="icon">&#127912;</div><div class="label">Assets</div><div class="sub">Generated stills</div></div>
+    <div class="wp-flow-arrow">&#8594;</div>
+    <div class="wp-flow-step"><div class="icon">&#127916;</div><div class="label">Scenes</div><div class="sub">Compose boards</div></div>
+    <div class="wp-flow-arrow">&#8594;</div>
+    <div class="wp-flow-step"><div class="icon">&#128248;</div><div class="label">Shots</div><div class="sub">Film each moment</div></div>
+    <div class="wp-flow-arrow">&#8594;</div>
+    <div class="wp-flow-step"><div class="icon">&#9881;</div><div class="label">Render</div><div class="sub">Generate clips</div></div>
+    <div class="wp-flow-arrow">&#8594;</div>
+    <div class="wp-flow-step"><div class="icon">&#128230;</div><div class="label">Output</div><div class="sub">Assemble &amp; export</div></div>
+  </div>
 
-<!-- S3: MANIFESTO -->
-<section class="s s3">
-  <div class="s-inner reveal stagger">
-    <div class="t-mid">NO PERMISSION.</div>
-    <div class="t-mid t-dim">NO LIMITS.</div>
-    <div class="t-mid">NO SYSTEM.</div>
+  <div class="wp-block" style="margin-top:24px">
+    <h3>Stage-by-Stage</h3>
+    <table class="wp-table">
+      <tr><th>Stage</th><th>Question</th><th>Primary CTA</th><th>Output</th></tr>
+      <tr><td style="color:var(--accent)">1. Brief</td><td>What do you want to make?</td><td>Generate Project Draft</td><td>Structured creative brief + AI extraction</td></tr>
+      <tr><td style="color:var(--accent)">2. Drafts &amp; Refs</td><td>What does each element look like?</td><td>Generate Stills</td><td>Referenced assets with visual sources</td></tr>
+      <tr><td style="color:var(--accent)">3. Assets</td><td>Are the generated stills correct?</td><td>Build Scenes</td><td>Approved canonical reference sheets</td></tr>
+      <tr><td style="color:var(--accent)">4. Scenes</td><td>What happens in what order?</td><td>Expand to Shots</td><td>Scene boards with assets composed</td></tr>
+      <tr><td style="color:var(--accent)">5. Shots</td><td>How is each moment filmed?</td><td>Continue to Render</td><td>Shot list with camera, lens, lighting</td></tr>
+      <tr><td style="color:var(--accent)">6. Render</td><td>Generate the video clips</td><td>Render Final Clips</td><td>Video clips per shot</td></tr>
+      <tr><td style="color:var(--accent)">7. Output</td><td>Assemble, mix, and export</td><td>Export Video</td><td>Final film file</td></tr>
+    </table>
+  </div>
+
+  <div class="wp-grid" style="margin-top:16px">
+    <div class="wp-block">
+      <h3>Unified Flow</h3>
+      <p>One master prompt drives the entire pipeline. The AI extracts characters, environments, costumes, props, style direction, and a scene breakdown from your description. No manual entity creation required &mdash; just write your vision.</p>
+    </div>
+    <div class="wp-block">
+      <h3>Gate Checkpoints</h3>
+      <p>Between stages, soft gates ensure quality. Assets need visual sources before stills generate. Scenes need approved assets for visual consistency. Shots need camera assignments before rendering. Each gate is a quick checkpoint, not a blocker.</p>
+    </div>
+    <div class="wp-block">
+      <h3>Non-Linear Access</h3>
+      <p>While the pipeline flows linearly, you can click any stage in the stepper to jump back and adjust. Re-draft characters, regenerate a single shot, swap an environment reference &mdash; then continue forward. Changes propagate downstream.</p>
+    </div>
   </div>
 </section>
 
-<div class="slash"><div class="slash-line"></div></div>
+<!-- ─── 03 WORKSPACE ─── -->
+<section class="wp-section reveal" id="wp-workspace">
+  <div class="wp-section-header">
+    <div class="wp-num">03</div>
+    <h2>Workspace</h2>
+    <p>A stage-based interface where each screen answers one question. Progressive disclosure keeps things simple; Power Mode unlocks everything.</p>
+  </div>
 
-<!-- S4: FUNCTION -->
-<section class="s s4">
-  <div class="s-inner reveal stagger">
-    <div class="t-mid t-dim">DIRECT.</div>
-    <div class="t-mid">CUT.</div>
-    <div class="t-mid t-o">BUILD.</div>
-    <div class="t-mid t-dim">EXPORT.</div>
+  <div class="wp-block">
+    <h3>Stage Stepper</h3>
+    <p>A persistent 7-step progress bar across the top of the workspace. Each step shows a numbered dot and label. Completed stages get a green checkmark. The active stage is highlighted. Click any step to jump to it.</p>
+    <p style="margin-top:8px">Below the stepper, a description line reads: <code>Step 3 of 7 &mdash; Review and approve generated stills</code></p>
+  </div>
+
+  <div class="wp-grid" style="margin-top:16px">
+    <div class="wp-block">
+      <h3>Bottom Action Bar</h3>
+      <p>A fixed bar at the bottom of the viewport with one primary CTA per stage. The CTA label and action change with each stage: "Generate Project Draft" on Brief, "Render Final Clips" on Render. A back button sits alongside for navigation.</p>
+    </div>
+    <div class="wp-block">
+      <h3>Inspector Panel</h3>
+      <p>A 320px sidebar that slides in from the right when you click any asset, scene, or shot card. Shows full detail editor for the selected item. Close with &times; or Escape. On mobile (&lt;1024px), it becomes a bottom sheet instead.</p>
+    </div>
+  </div>
+
+  <div class="wp-block" style="margin-top:16px">
+    <h3>Power Mode</h3>
+    <p>Toggle with the <code>PWR</code> button in the toolbar. Power Mode does not add features &mdash; it removes progressive disclosure for experienced users:</p>
+    <table class="wp-table" style="margin-top:12px">
+      <tr><th>Change</th><th>Effect</th></tr>
+      <tr><td>Stage gates disabled</td><td>Free navigation, no readiness warnings</td></tr>
+      <tr><td>Inspector pinned open</td><td>320px panel always visible</td></tr>
+      <tr><td>Collapsibles auto-expand</td><td>Director Controls, Consistency, Advanced &mdash; all open</td></tr>
+      <tr><td>Keyboard shortcuts active</td><td><code>1-7</code> jump stages, <code>G</code> generate, <code>Escape</code> close</td></tr>
+      <tr><td>Import Shots always visible</td><td>Not collapsed in Shots stage</td></tr>
+    </table>
   </div>
 </section>
 
-<div class="slash"><div class="slash-line"></div></div>
+<!-- ─── 04 AI ENGINES ─── -->
+<section class="wp-section reveal" id="wp-engines">
+  <div class="wp-section-header">
+    <div class="wp-num">04</div>
+    <h2>AI Engines</h2>
+    <p>LUMN supports multiple generation backends. Each engine has unique strengths. Switch per-scene based on what the shot demands.</p>
+  </div>
+  <div class="wp-grid">
+    <div class="wp-block">
+      <h3>Runway Gen-4</h3>
+      <span class="tag tag-o">Primary</span><span class="tag">Image-to-Video</span><span class="tag">Text-to-Image</span>
+      <p style="margin-top:12px">The flagship engine. Generates canonical reference sheets via <code>text_to_image</code> with up to 3 @Tag references, then animates composed anchors via <code>image_to_video</code>. Supports 5s and 10s clips, Gen-4 Turbo, and camera control.</p>
+      <div class="wp-bar" style="margin-top:16px"><div class="wp-bar-label"><span>Photo Fidelity</span><span>95%</span></div><div class="wp-bar-track"><div class="wp-bar-fill" style="width:95%"></div></div></div>
+      <div class="wp-bar"><div class="wp-bar-label"><span>Motion Quality</span><span>90%</span></div><div class="wp-bar-track"><div class="wp-bar-fill" style="width:90%"></div></div></div>
+    </div>
+    <div class="wp-block">
+      <h3>Grok (xAI)</h3>
+      <span class="tag">Text-to-Image</span><span class="tag">Concept Art</span>
+      <p style="margin-top:12px">Fast image generation for concept frames, storyboards, and reference photos. Ideal for pre-visualization and generating source images that feed into the video pipeline.</p>
+      <div class="wp-bar" style="margin-top:16px"><div class="wp-bar-label"><span>Speed</span><span>92%</span></div><div class="wp-bar-track"><div class="wp-bar-fill" style="width:92%"></div></div></div>
+      <div class="wp-bar"><div class="wp-bar-label"><span>Creative Range</span><span>88%</span></div><div class="wp-bar-track"><div class="wp-bar-fill" style="width:88%"></div></div></div>
+    </div>
+    <div class="wp-block">
+      <h3>Luma Dream Machine</h3>
+      <span class="tag">Image-to-Video</span><span class="tag">Fluid Motion</span>
+      <p style="margin-top:12px">Excels at smooth, dreamlike camera movements and atmospheric scenes. Particularly strong for nature, landscapes, and slow-reveal establishing shots.</p>
+      <div class="wp-bar" style="margin-top:16px"><div class="wp-bar-label"><span>Atmosphere</span><span>94%</span></div><div class="wp-bar-track"><div class="wp-bar-fill" style="width:94%"></div></div></div>
+      <div class="wp-bar"><div class="wp-bar-label"><span>Camera Moves</span><span>91%</span></div><div class="wp-bar-track"><div class="wp-bar-fill" style="width:91%"></div></div></div>
+    </div>
+    <div class="wp-block">
+      <h3>OpenAI DALL-E</h3>
+      <span class="tag">Text-to-Image</span><span class="tag">Reference</span>
+      <p style="margin-top:12px">High-quality image generation for character sheets, environment design, and costume references. Used in the asset pipeline to create visual reference boards.</p>
+      <div class="wp-bar" style="margin-top:16px"><div class="wp-bar-label"><span>Prompt Accuracy</span><span>89%</span></div><div class="wp-bar-track"><div class="wp-bar-fill" style="width:89%"></div></div></div>
+      <div class="wp-bar"><div class="wp-bar-label"><span>Consistency</span><span>85%</span></div><div class="wp-bar-track"><div class="wp-bar-fill" style="width:85%"></div></div></div>
+    </div>
+  </div>
 
-<!-- S5: ABSENCE -->
-<section class="s s2">
-  <div class="s-inner reveal">
-    <div class="t-sm" style="margin-bottom:20px;color:#333;">NO CREW. NO BUDGET. NO APPROVAL.</div>
-    <div class="t-mid">JUST <span class="t-o">VISION</span><br>AND <span class="t-dim">EXECUTION</span>.</div>
+  <div class="wp-block" style="margin-top:16px">
+    <h3>API Constraints That Shape Architecture</h3>
+    <p>Runway's API dictates key design decisions in the pipeline:</p>
+    <table class="wp-table" style="margin-top:8px">
+      <tr><th>Endpoint</th><th>Constraint</th><th>Implication</th></tr>
+      <tr><td><code>text_to_image</code></td><td>Max 3 @Tag references</td><td>Only way to compose multiple assets into one frame</td></tr>
+      <tr><td><code>image_to_video</code></td><td>ONE first-frame image, no @Tags</td><td>Requires a pre-composed anchor image as input</td></tr>
+      <tr><td><code>text_to_video</code></td><td>No image input at all</td><td>Fallback only, no visual consistency</td></tr>
+      <tr><td>All endpoints</td><td>1000-char prompt limit</td><td>Prompt assembly must compress intelligently</td></tr>
+    </table>
+    <p style="margin-top:12px">This is why LUMN generates <strong>canonical sheets</strong> (permanent reference images) and then <strong>composes anchor images</strong> (temporary shot-specific first frames) from them. The anchor is what gets fed to <code>image_to_video</code>.</p>
   </div>
 </section>
 
-<div class="slash"><div class="slash-line"></div></div>
-
-<!-- CTA -->
-<section class="cta-s">
-  <div class="reveal stagger">
-    <div class="t-huge">BUILD WHAT</div>
-    <div class="t-huge">YOU SEE</div>
-    <div class="t-huge t-o">IN YOUR</div>
-    <div class="t-huge t-o">HEAD.</div>
+<!-- ─── 05 ASSET SYSTEM ─── -->
+<section class="wp-section reveal" id="wp-assets">
+  <div class="wp-section-header">
+    <div class="wp-num">05</div>
+    <h2>Asset System</h2>
+    <p>A three-tier model for visual consistency: Concept &rarr; Reference &rarr; Generation. Canonical sheets are the permanent source of truth. Anchors are temporary delivery artifacts.</p>
   </div>
-  <a href="/" class="cta-enter reveal" style="transition-delay:0.6s;">ENTER STUDIO</a>
+
+  <div class="wp-flow">
+    <div class="wp-flow-step"><div class="label">Concept</div><div class="sub">AI text draft</div></div>
+    <div class="wp-flow-arrow">&#8594;</div>
+    <div class="wp-flow-step" style="border-color:var(--accent)"><div class="label">Reference</div><div class="sub">Upload / confirm</div></div>
+    <div class="wp-flow-arrow">&#8594;</div>
+    <div class="wp-flow-step" style="border-color:var(--green)"><div class="label">Generation</div><div class="sub">AI-generated stills</div></div>
+  </div>
+
+  <div class="wp-grid" style="margin-top:24px">
+    <div class="wp-block">
+      <h3>Characters</h3>
+      <p>Physical appearance, role, personality, expression. Attach photo references for visual consistency. Characters get canonical face sheets, full-body views, and expression variants.</p>
+      <div class="example" style="margin-top:12px">Name, physical description, wardrobe notes, default expression, role (protagonist/supporting/extra)</div>
+    </div>
+    <div class="wp-block">
+      <h3>Environments</h3>
+      <p>Locations with atmosphere, lighting, and time of day. Environment sheets include wide establishing, medium angle, texture details, and lighting variants.</p>
+      <div class="example" style="margin-top:12px">Name, description, lighting conditions, atmosphere, time of day, architectural style</div>
+    </div>
+    <div class="wp-block">
+      <h3>Costumes</h3>
+      <p>Wardrobe items linked to characters. Front, side, back views with detail crops. Costume sheets enforce wardrobe continuity across scenes.</p>
+    </div>
+    <div class="wp-block">
+      <h3>Props</h3>
+      <p>Physical objects that appear in scenes. Hero props get dedicated sheets. Importance levels (hero/supporting/background) determine generation priority.</p>
+    </div>
+  </div>
+
+  <div class="wp-block" style="margin-top:16px">
+    <h3>Canonical Sheets vs Composed Anchors</h3>
+    <p>This distinction is the architectural foundation of LUMN's visual pipeline:</p>
+    <table class="wp-table" style="margin-top:12px">
+      <tr><th>Canonical Sheets</th><th>Composed Anchors</th></tr>
+      <tr><td>Permanent reference images</td><td>Temporary, shot-specific composites</td></tr>
+      <tr><td>Multiple views per asset (face, full body, 3/4, etc.)</td><td>One image per shot, derived from 1-3 canonical refs</td></tr>
+      <tr><td>Source of truth &mdash; never drift</td><td>Derived from canonical sheets &mdash; always recomposable</td></tr>
+      <tr><td>Generated via <code>text_to_image</code> with @Tags</td><td>Composed via <code>text_to_image</code> selecting priority refs</td></tr>
+      <tr><td>Stored in <code>output/pipeline/sheets/</code></td><td>Stored in <code>output/pipeline/anchors/</code></td></tr>
+      <tr><td>User approves individually</td><td>Rejected anchors are recomposed from canonical sheets</td></tr>
+    </table>
+    <p style="margin-top:12px">If an anchor looks wrong, you never edit the anchor. You go back to the canonical sheets, adjust the source, and recompose. The anchor is a derivative, not a source.</p>
+  </div>
+
+  <div class="wp-grid" style="margin-top:16px">
+    <div class="wp-block">
+      <h3>Lock Reference</h3>
+      <p>Protects the <strong>input source</strong> for an asset. A locked reference means the uploaded photo or AI description won't be accidentally changed. This is an input-side protection.</p>
+    </div>
+    <div class="wp-block">
+      <h3>Lock Asset</h3>
+      <p>Protects the <strong>generated output</strong>. A locked asset's generated stills won't be overwritten by regeneration. This is an output-side protection. Both locks can coexist independently.</p>
+    </div>
+  </div>
+
+  <div class="wp-block" style="margin-top:16px">
+    <h3>Status Lifecycle</h3>
+    <div class="wp-flow" style="margin:16px 0">
+      <div class="wp-flow-step"><div class="label">Drafted</div><div class="sub">AI text only</div></div>
+      <div class="wp-flow-arrow">&#8594;</div>
+      <div class="wp-flow-step"><div class="label">Generating</div><div class="sub">Stills in progress</div></div>
+      <div class="wp-flow-arrow">&#8594;</div>
+      <div class="wp-flow-step"><div class="label">Generated</div><div class="sub">Provisional</div></div>
+      <div class="wp-flow-arrow">&#8594;</div>
+      <div class="wp-flow-step" style="border-color:var(--accent)"><div class="label">Approved</div><div class="sub">Canonical</div></div>
+      <div class="wp-flow-arrow">&#8594;</div>
+      <div class="wp-flow-step" style="border-color:var(--green)"><div class="label">Locked</div><div class="sub">Protected</div></div>
+    </div>
+    <p><strong>Approved</strong> assets are the canonical downstream source of truth. <strong>Generated but unapproved</strong> assets are provisional &mdash; usable in scenes but visually unstable. <strong>Locked</strong> assets are immune to batch regeneration.</p>
+  </div>
 </section>
 
-<div style="height:80px;"></div>
+<!-- ─── 06 CINEMATIC SYSTEM ─── -->
+<section class="wp-section reveal" id="wp-cinematic">
+  <div class="wp-section-header">
+    <div class="wp-num">06</div>
+    <h2>Cinematic System</h2>
+    <p>200+ presets across 10 categories give you Hollywood-grade control over every shot. Mix and match to create your signature look.</p>
+  </div>
+
+  <div class="wp-acc" onclick="this.classList.toggle('open')">
+    <div class="wp-acc-head"><h4>Framing &mdash; 20 Options</h4><span class="arrow">&#9660;</span></div>
+    <div class="wp-acc-body"><div class="wp-acc-content">
+      <p>Control how much of the scene your audience sees. From sweeping establishing shots to intimate extreme close-ups.</p>
+      <div class="example">
+        <strong>Wide Establishing</strong> &mdash; Sets the scene geography and mood<br>
+        <strong>Medium Shot</strong> &mdash; Standard narrative framing, waist-up<br>
+        <strong>Close-Up</strong> &mdash; Face and emotional detail<br>
+        <strong>Over-the-Shoulder</strong> &mdash; Dialog perspective<br>
+        <strong>POV</strong> &mdash; First-person immersion<br>
+        <strong>Dutch Angle</strong> &mdash; Tension and unease<br>
+        <strong>Bird's Eye</strong> &mdash; God-view overhead<br>
+        <strong>Low Angle Hero</strong> &mdash; Power and dominance
+      </div>
+    </div></div>
+  </div>
+
+  <div class="wp-acc" onclick="this.classList.toggle('open')">
+    <div class="wp-acc-head"><h4>Camera Movement &mdash; 25 Options</h4><span class="arrow">&#9660;</span></div>
+    <div class="wp-acc-body"><div class="wp-acc-content">
+      <p>How the camera moves through space. Static to dynamic, subtle to dramatic.</p>
+      <div class="example">
+        <strong>Static</strong> &mdash; No movement, locked tripod<br>
+        <strong>Dolly In</strong> &mdash; Slow push toward subject<br>
+        <strong>Tracking</strong> &mdash; Lateral follow alongside action<br>
+        <strong>Crane Up</strong> &mdash; Vertical reveal ascending<br>
+        <strong>Orbit</strong> &mdash; 360-degree circling subject<br>
+        <strong>Handheld</strong> &mdash; Documentary, raw energy<br>
+        <strong>Steadicam</strong> &mdash; Smooth floating follow<br>
+        <strong>Whip Pan</strong> &mdash; Fast swivel between subjects<br>
+        <strong>Zoom Crawl</strong> &mdash; Subtle slow zoom (Kubrick)
+      </div>
+    </div></div>
+  </div>
+
+  <div class="wp-acc" onclick="this.classList.toggle('open')">
+    <div class="wp-acc-head"><h4>Lens, Lighting, Directors &amp; More</h4><span class="arrow">&#9660;</span></div>
+    <div class="wp-acc-body"><div class="wp-acc-content">
+      <ul style="list-style:none;padding:0">
+        <li style="padding:4px 0"><span class="tag">Lens Types</span> 18 options &mdash; 14mm Ultra Wide to 200mm Telephoto, Anamorphic</li>
+        <li style="padding:4px 0"><span class="tag">Lighting</span> 24 styles &mdash; Golden Hour, Noir, Neon, Silhouette, Candlelight, Moonlight</li>
+        <li style="padding:4px 0"><span class="tag">Director Styles</span> 20 presets &mdash; Kubrick, Fincher, Nolan, Tarantino, Wes Anderson, Wong Kar-wai</li>
+        <li style="padding:4px 0"><span class="tag">Color Grading</span> 20 looks &mdash; Teal &amp; Orange, Bleach Bypass, Cross Process</li>
+        <li style="padding:4px 0"><span class="tag">Atmosphere</span> 23 moods &mdash; Foggy, Dusty, Rain-soaked, Ethereal</li>
+        <li style="padding:4px 0"><span class="tag">Performance</span> 20 energy levels &mdash; Subtle, Intense, Frantic, Meditative</li>
+        <li style="padding:4px 0"><span class="tag">Composition</span> 17 rules &mdash; Rule of Thirds, Golden Ratio, Leading Lines</li>
+      </ul>
+    </div></div>
+  </div>
+</section>
+
+<!-- ─── 07 PRODUCTION PIPELINE ─── -->
+<section class="wp-section reveal" id="wp-production">
+  <div class="wp-section-header">
+    <div class="wp-num">07</div>
+    <h2>Production Pipeline</h2>
+    <p>The V5 unified pipeline. One master prompt triggers a 12-state production state machine that drives extraction, sheet generation, shot planning, anchor composition, and video rendering.</p>
+  </div>
+
+  <div class="wp-block">
+    <h3>Master Prompt Extraction</h3>
+    <p>An LLM parses your creative prompt into structured production data. It identifies and describes every entity needed to produce your film:</p>
+    <div class="wp-grid-3" style="margin-top:12px">
+      <div><span class="tag tag-o">Characters</span></div>
+      <div><span class="tag tag-o">Costumes</span></div>
+      <div><span class="tag tag-o">Environments</span></div>
+      <div><span class="tag tag-o">Props</span></div>
+      <div><span class="tag tag-o">Style Bible</span></div>
+      <div><span class="tag tag-o">Scene Breakdown</span></div>
+    </div>
+    <p style="margin-top:12px">If a character is described vaguely ("a man"), the system invents specific visual details that fit the tone. If wardrobe is not mentioned, appropriate wardrobe is inferred. Environments get atmospheric detail. The extraction is always complete enough to generate every frame.</p>
+  </div>
+
+  <div class="wp-block" style="margin-top:16px">
+    <h3>State Machine</h3>
+    <p>The pipeline runs through 12 states, each file-backed as JSON for save/resume:</p>
+    <div class="wp-flow" style="margin:16px 0;gap:4px">
+      <div class="wp-flow-step" style="min-width:90px;padding:10px"><div class="label" style="font-size:9px">Idle</div></div>
+      <div class="wp-flow-arrow" style="font-size:14px;padding:0 2px">&#8594;</div>
+      <div class="wp-flow-step" style="min-width:90px;padding:10px"><div class="label" style="font-size:9px">Prompt</div></div>
+      <div class="wp-flow-arrow" style="font-size:14px;padding:0 2px">&#8594;</div>
+      <div class="wp-flow-step" style="min-width:90px;padding:10px"><div class="label" style="font-size:9px">Extract</div></div>
+      <div class="wp-flow-arrow" style="font-size:14px;padding:0 2px">&#8594;</div>
+      <div class="wp-flow-step" style="min-width:90px;padding:10px"><div class="label" style="font-size:9px">Packages</div></div>
+      <div class="wp-flow-arrow" style="font-size:14px;padding:0 2px">&#8594;</div>
+      <div class="wp-flow-step" style="min-width:90px;padding:10px"><div class="label" style="font-size:9px">Sheets</div></div>
+      <div class="wp-flow-arrow" style="font-size:14px;padding:0 2px">&#8594;</div>
+      <div class="wp-flow-step" style="min-width:90px;padding:10px;border-color:var(--accent)"><div class="label" style="font-size:9px">Review</div></div>
+    </div>
+    <div class="wp-flow" style="margin:0 0 16px;gap:4px">
+      <div class="wp-flow-step" style="min-width:90px;padding:10px;border-color:var(--accent)"><div class="label" style="font-size:9px">Plan</div></div>
+      <div class="wp-flow-arrow" style="font-size:14px;padding:0 2px">&#8594;</div>
+      <div class="wp-flow-step" style="min-width:90px;padding:10px"><div class="label" style="font-size:9px">Anchors</div></div>
+      <div class="wp-flow-arrow" style="font-size:14px;padding:0 2px">&#8594;</div>
+      <div class="wp-flow-step" style="min-width:90px;padding:10px;border-color:var(--accent)"><div class="label" style="font-size:9px">A. Review</div></div>
+      <div class="wp-flow-arrow" style="font-size:14px;padding:0 2px">&#8594;</div>
+      <div class="wp-flow-step" style="min-width:90px;padding:10px"><div class="label" style="font-size:9px">Generate</div></div>
+      <div class="wp-flow-arrow" style="font-size:14px;padding:0 2px">&#8594;</div>
+      <div class="wp-flow-step" style="min-width:90px;padding:10px"><div class="label" style="font-size:9px">Conform</div></div>
+      <div class="wp-flow-arrow" style="font-size:14px;padding:0 2px">&#8594;</div>
+      <div class="wp-flow-step" style="min-width:90px;padding:10px;border-color:var(--green)"><div class="label" style="font-size:9px">Complete</div></div>
+    </div>
+    <p>Orange-bordered states are <strong>approval checkpoints</strong> where the user reviews output before continuing. In <code>auto_advance</code> mode, these gates are skipped for a one-click workflow.</p>
+  </div>
+
+  <div class="wp-grid" style="margin-top:16px">
+    <div class="wp-block">
+      <h3>Shot Family Classification</h3>
+      <p>Each shot is classified into a <strong>shot family</strong> that determines which canonical refs get priority in anchor composition:</p>
+      <div class="example" style="margin-top:8px">
+        <strong>wide_establishing</strong> &mdash; Environment 100%, Character 30%<br>
+        <strong>character_closeup</strong> &mdash; Character 100%, Costume 20%<br>
+        <strong>emotional_moment</strong> &mdash; Character 100%, Costume 50%, Environment 30%<br>
+        <strong>wardrobe_reveal</strong> &mdash; Costume 100%, Character 80%<br>
+        <strong>prop_interaction</strong> &mdash; Prop 100%, Character 70%<br>
+        <strong>action_scene</strong> &mdash; Character 80%, Costume 70%, Environment 80%
+      </div>
+    </div>
+    <div class="wp-block">
+      <h3>Anchor Composition</h3>
+      <p>For each shot, the compositor selects 1-3 canonical hero refs based on the shot family priority weights, then generates a composed still image via <code>text_to_image</code>. This anchor becomes the first frame for <code>image_to_video</code>.</p>
+      <p style="margin-top:8px">If a shot anchor is rejected, it is recomposed from the same canonical sheets &mdash; never edited directly. The canonical-to-anchor relationship is always one-directional.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ─── 08 DIRECTOR BRAIN ─── -->
+<section class="wp-section reveal" id="wp-brain">
+  <div class="wp-section-header">
+    <div class="wp-num">08</div>
+    <h2>Director Brain</h2>
+    <p>A learning system that watches what you approve and builds a taste profile. The more you use it, the better it gets.</p>
+  </div>
+
+  <div class="wp-block">
+    <h3>How Learning Works</h3>
+    <p>Every time you rate a scene (1-5 stars), the Director Brain records:</p>
+    <div class="wp-grid-3" style="margin-top:12px">
+      <div><span class="tag">Shot Type</span></div>
+      <div><span class="tag">Camera Movement</span></div>
+      <div><span class="tag">Color Grade</span></div>
+      <div><span class="tag">Duration</span></div>
+      <div><span class="tag">Engine Used</span></div>
+      <div><span class="tag">Prompt Length</span></div>
+      <div><span class="tag">Has Char Reference</span></div>
+      <div><span class="tag">Has Env Reference</span></div>
+      <div><span class="tag">Lighting Style</span></div>
+    </div>
+    <p style="margin-top:12px">Over time, it builds a <strong>style vector</strong> &mdash; a statistical profile of your preferred visual language.</p>
+  </div>
+
+  <div class="wp-grid" style="margin-top:16px">
+    <div class="wp-block">
+      <h3>Style Profile</h3>
+      <p>Eight axes define your visual taste: Warm/Cool, Clean/Gritty, Polished/Raw, Calm/Aggressive, Minimal/Dense, Intimate/Epic, Cinematic/Documentary, Symmetrical/Handheld. Take a 2-minute quiz or adjust sliders directly. Your profile influences every generation.</p>
+    </div>
+    <div class="wp-block">
+      <h3>Recommendations</h3>
+      <p>When you create a new scene, the Brain suggests shot type, camera, color grade, and duration based on what scored highest in similar contexts. It's like having an assistant editor who remembers everything you've ever liked.</p>
+    </div>
+    <div class="wp-block">
+      <h3>AutoAgent</h3>
+      <p>An automated optimization loop. The AutoAgent uses the Brain's learned preferences to run multiple generation variants, scoring each against your style profile. It finds optimal settings without manual trial-and-error.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ─── 09 AUDIO ─── -->
+<section class="wp-section reveal" id="wp-audio">
+  <div class="wp-section-header">
+    <div class="wp-num">09</div>
+    <h2>Audio System</h2>
+    <p>Music-aware editing, AI voice generation, multi-language dubbing, stem separation, and beat-synced cuts. Audio lives in two places: song upload in Brief, mixing in Output.</p>
+  </div>
+
+  <div class="wp-grid">
+    <div class="wp-block">
+      <h3>Track Management</h3>
+      <p>Three track types: Music, Voice/Dialogue, SFX/Ambience. Upload files (MP3, WAV, M4A) or generate with Runway's audio API. Mix levels independently with per-track volume and ducking controls.</p>
+    </div>
+    <div class="wp-block">
+      <h3>Beat Detection &amp; Sync</h3>
+      <p>Automatic BPM analysis and beat extraction. The waveform visualizer shows beat markers. Snap scene boundaries to musical beats with multiple cut modes: on-beat, half-time, double-time.</p>
+    </div>
+    <div class="wp-block">
+      <h3>AI Voice (TTS)</h3>
+      <p>Generate narration and dialogue using 40+ Runway voice presets. Type your script, select a voice, generate. Speech-to-speech transfers voice style from one recording to another.</p>
+    </div>
+    <div class="wp-block">
+      <h3>Voice Dubbing</h3>
+      <p>Upload audio in one language, translate and re-voice to another while preserving voice character. Supports 15 languages including Spanish, French, Japanese, Arabic, and Korean.</p>
+    </div>
+    <div class="wp-block">
+      <h3>Stem Separation</h3>
+      <p>Split a mixed track into drums, bass, vocals, and melody. Use stems for per-instrument visual control &mdash; map drum hits to cuts, bass to camera sway, vocals to close-ups.</p>
+    </div>
+    <div class="wp-block">
+      <h3>Transitions</h3>
+      <p>10+ transition types: Dissolve, Crossfade, Hard Cut, Fade Black, Fade White, Wipe, Slide, Glitch, Circular Reveal, Squeeze. Durations auto-scale with clip length &mdash; short clips get snappy cuts, long clips get smooth blends.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ─── 10 EXPORT ─── -->
+<section class="wp-section reveal" id="wp-export">
+  <div class="wp-section-header">
+    <div class="wp-num">10</div>
+    <h2>Export</h2>
+    <p>The Output stage has three internal tabs: Assembly (timeline editing), Audio (mixing), and Export (format and delivery). From timeline to distribution in one view.</p>
+  </div>
+
+  <div class="wp-grid">
+    <div class="wp-block">
+      <h3>Assembly Tab</h3>
+      <p>The sequence editor. A canvas timeline with drag-to-reorder clips, drag-edge trimming, scroll-to-pan, zoom control. Storyboard view for visual overview. Playback controller with scrubbing. Text overlays for titles, subtitles, lower thirds.</p>
+    </div>
+    <div class="wp-block">
+      <h3>Audio Tab</h3>
+      <p>Full audio mixing environment. Upload music, generate TTS, separate stems, clone voices, dub to other languages. The scene ruler shows clip boundaries aligned with audio tracks.</p>
+    </div>
+    <div class="wp-block">
+      <h3>Export Tab</h3>
+      <p>Format, quality, and platform settings. One-click presets for every major platform:</p>
+      <div style="margin-top:8px">
+        <span class="tag">YouTube</span>
+        <span class="tag">YT Shorts</span>
+        <span class="tag">TikTok</span>
+        <span class="tag">IG Reel</span>
+        <span class="tag">IG Post</span>
+        <span class="tag">Twitter/X</span>
+        <span class="tag">Cinema</span>
+        <span class="tag">GIF</span>
+      </div>
+      <p style="margin-top:8px">Each preset applies the correct aspect ratio (16:9, 9:16, 1:1), resolution (480p to 4K), encoding, and duration limits. AI upscaling via Real-ESRGAN is available for sub-1080p sources.</p>
+    </div>
+    <div class="wp-block">
+      <h3>Album Art &amp; Branding</h3>
+      <p>Generate album covers (1:1), Spotify Canvas visuals (9:16), and banners (16:9) from your project style. Add watermarks with custom text, logo upload, position, and opacity controls.</p>
+    </div>
+  </div>
+</section>
+
+<!-- WP FOOTER -->
+<div style="text-align:center;padding:80px 0 40px">
+  <div class="t-sm" style="color:var(--text-mute)">LUMN STUDIO</div>
+  <div style="margin-top:16px">
+    <a href="/" class="cta-enter">ENTER STUDIO</a>
+  </div>
+</div>
+
+</div><!-- /wp -->
+
+<div style="height:60px;"></div>
 
 <script>
-// Scroll reveal
-var reveals = document.querySelectorAll('.reveal');
-var observer = new IntersectionObserver(function(entries) {
-  entries.forEach(function(e) {
-    if (e.isIntersecting) {
-      e.target.classList.add('visible');
+(function() {
+  // ═══════════════════════════════════
+  // TITLE SEQUENCE ENGINE
+  // ═══════════════════════════════════
+  var cinema   = document.getElementById('cinema');
+  var skipBtn  = document.getElementById('skip');
+  var progress = document.getElementById('seq-progress');
+  var slides   = document.querySelectorAll('.seq-slide');
+  var totalSlides = slides.length;
+  var aborted  = false;
+
+  // Timing (snappy)
+  var FADE_IN  = 450;   // ms each slide fades in
+  var FADE_OUT = 350;   // ms each slide fades out
+  var STAGGER  = 120;   // ms between staggered children
+
+  // Total time for progress bar
+  var totalTime = 0;
+  slides.forEach(function(s) { totalTime += parseInt(s.dataset.dur || 3000) + FADE_IN + FADE_OUT; });
+
+  function endSequence() {
+    if (aborted) return;
+    aborted = true;
+    window.scrollTo(0, 0);
+    cinema.classList.add('done');
+    skipBtn.classList.remove('show');
+    progress.style.width = '100%';
+    document.body.classList.add('scrollable');
+    setTimeout(function() {
+      cinema.style.display = 'none';
+      progress.style.display = 'none';
+      window.scrollTo(0, 0);
+    }, 1300);
+  }
+
+  function showSlide(index, elapsed) {
+    if (aborted || index >= totalSlides) { endSequence(); return; }
+
+    var slide = slides[index];
+    var dur   = parseInt(slide.dataset.dur || 3000);
+    var hasStagger = slide.dataset.stagger === '1';
+    var children = hasStagger ? slide.querySelector('.seq-inner').children : [];
+
+    // Fade in
+    slide.style.transition = 'opacity ' + FADE_IN + 'ms ease';
+    slide.style.opacity = '1';
+
+    // Stagger children
+    if (hasStagger && children.length) {
+      for (var c = 0; c < children.length; c++) {
+        (function(el, delay) {
+          el.style.opacity = '0';
+          el.style.transform = 'translateY(25px)';
+          el.style.transition = 'none';
+          setTimeout(function() {
+            el.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+            el.style.opacity = '1';
+            el.style.transform = 'translateY(0)';
+          }, delay);
+        })(children[c], FADE_IN + c * STAGGER);
+      }
     }
+
+    // Hold, then fade out and advance
+    var holdTime = FADE_IN + dur;
+    setTimeout(function() {
+      if (aborted) return;
+      slide.style.transition = 'opacity ' + FADE_OUT + 'ms ease';
+      slide.style.opacity = '0';
+      var nextElapsed = elapsed + holdTime + FADE_OUT;
+      progress.style.width = Math.min(100, (nextElapsed / totalTime) * 100) + '%';
+      setTimeout(function() {
+        if (!aborted) showSlide(index + 1, nextElapsed);
+      }, FADE_OUT);
+    }, holdTime);
+  }
+
+  // Auto-start on page load
+  skipBtn.classList.add('show');
+  setTimeout(function() { showSlide(0, 0); }, 200);
+  skipBtn.addEventListener('click', endSequence);
+
+  // ═══════════════════════════════════
+  // WHITEPAPER: Scroll Reveal
+  // ═══════════════════════════════════
+  var reveals = document.querySelectorAll('.reveal');
+  var revealObs = new IntersectionObserver(function(entries) {
+    entries.forEach(function(e) {
+      if (e.isIntersecting) e.target.classList.add('visible');
+    });
+  }, {threshold: 0.15});
+  reveals.forEach(function(el) { revealObs.observe(el); });
+
+  // Nav active state — scroll-position based for reliable tracking
+  var wpSections = document.querySelectorAll('.wp-section');
+  var wpNavLinks = document.querySelectorAll('.wp-nav a');
+  function updateNavActive() {
+    var scrollY = window.scrollY || window.pageYOffset;
+    var trigger = scrollY + 120; // offset for sticky nav height
+    var current = '';
+    wpSections.forEach(function(s) {
+      if (s.offsetTop <= trigger) current = s.id;
+    });
+    // If scrolled near bottom, activate last section
+    if (window.innerHeight + scrollY >= document.body.scrollHeight - 60) {
+      current = wpSections[wpSections.length - 1].id;
+    }
+    wpNavLinks.forEach(function(a) {
+      a.classList.toggle('active', a.getAttribute('href') === '#' + current);
+    });
+  }
+  window.addEventListener('scroll', updateNavActive, {passive: true});
+  updateNavActive();
+
+  // Animated bars
+  var bars = document.querySelectorAll('.wp-bar-fill');
+  bars.forEach(function(b) {
+    b._targetWidth = b.style.width;
+    b.style.width = '0%';
   });
-}, {threshold: 0.15});
-reveals.forEach(function(el) { observer.observe(el); });
+  var barObs = new IntersectionObserver(function(entries) {
+    entries.forEach(function(e) {
+      if (e.isIntersecting) e.target.style.width = e.target._targetWidth;
+    });
+  }, {threshold: 0.3});
+  bars.forEach(function(b) { barObs.observe(b); });
+})();
 </script>
 
 </body>

@@ -811,8 +811,8 @@ def mix_audio_tracks(vocal_path: str, instrumental_path: str,
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
-    v_vol = max(0.0, min(2.0, vocal_level / 50.0))
-    i_vol = max(0.0, min(2.0, instrumental_level / 50.0))
+    v_vol = max(0.0, min(2.0, vocal_level / 100.0))  # 0-100 maps to 0.0-1.0, allow up to 2.0 boost
+    i_vol = max(0.0, min(2.0, instrumental_level / 100.0))  # 0-100 maps to 0.0-1.0, allow up to 2.0 boost
 
     filter_complex = (
         f"[0:a]volume={v_vol:.2f}[v];"
@@ -1347,13 +1347,14 @@ def _stitch_with_crossfades(clips: list, audio: str | None, output: str,
     filter_parts = []
     n = len(clips)
     running_duration = durations[0]
+    OFFSET_EPSILON = 0.05  # frame-boundary safety margin
 
     for i in range(1, n):
         # Area 4 item 7: vary crossfade based on clip length
         clip_crossfade = _get_transition_duration("crossfade", crossfade, clip_duration=durations[i])
-        offset = max(0, running_duration - clip_crossfade)
-        in_label = f"[{i - 1}:v]" if i == 1 else "[xf]"
-        out_label = "[xf]" if i < n - 1 else "[xfout]"
+        offset = max(0, running_duration - clip_crossfade - OFFSET_EPSILON)
+        in_label = f"[{i - 1}:v]" if i == 1 else f"[xf{i - 1}]"
+        out_label = f"[xf{i}]" if i < n - 1 else "[xfout]"
 
         filter_parts.append(
             f"{in_label}[{i}:v]xfade=transition=fade:duration={clip_crossfade}"
@@ -1601,24 +1602,28 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
     filter_parts = []
     running_duration = durations[0]
 
-    # We process transitions pair-wise.
-    # For hard_cut and glitch, we use concat demuxer approach or handle them
-    # as xfade with 0 duration (effectively a cut).
-    # For fade_black, we add fade-out and fade-in filters around the boundary.
+    # Safety margin for ffmpeg frame-boundary rounding.  Each chained xfade
+    # needs offset + duration <= actual_stream_duration, but the actual
+    # duration may be a frame or two shorter than the mathematical value.
+    # A 0.05s epsilon absorbs this cumulative drift while being visually
+    # imperceptible.
+    OFFSET_EPSILON = 0.05
 
     for i in range(1, n):
         trans = transitions[i] if i < len(transitions) else "crossfade"
         xfade_name = _get_xfade_name(trans)
         trans_dur = _get_transition_duration(trans, crossfade, clip_duration=durations[i])
 
-        in_label = f"[{i - 1}:v]" if i == 1 else "[xf]"
-        out_label = "[xf]" if i < n - 1 else "[xfout]"
+        # Unique intermediate labels to avoid any ffmpeg label-reuse issues
+        in_label = f"[{i - 1}:v]" if i == 1 else f"[xf{i - 1}]"
+        out_label = f"[xf{i}]" if i < n - 1 else "[xfout]"
 
         if trans == "hard_cut":
-            # Hard cut: xfade with 0 duration effectively just concats
-            offset = max(0, running_duration)
+            # Hard cut: very short fade, visually indistinguishable from a cut
+            hc_dur = 0.10
+            offset = max(0, running_duration - hc_dur - OFFSET_EPSILON)
             filter_parts.append(
-                f"{in_label}[{i}:v]xfade=transition=fade:duration=0.001"
+                f"{in_label}[{i}:v]xfade=transition=fade:duration={hc_dur:.3f}"
                 f":offset={offset:.3f}{out_label}"
             )
             running_duration = offset + durations[i]
@@ -1626,7 +1631,7 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
         elif trans == "fade_black":
             # Fade to black then fade in: use xfade=transition=fadeblack
             fb_dur = min(crossfade * 1.5, 1.5)
-            offset = max(0, running_duration - fb_dur)
+            offset = max(0, running_duration - fb_dur - OFFSET_EPSILON)
             filter_parts.append(
                 f"{in_label}[{i}:v]xfade=transition=fadeblack:duration={fb_dur:.3f}"
                 f":offset={offset:.3f}{out_label}"
@@ -1636,7 +1641,7 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
         elif trans == "glitch":
             # Glitch: use pixelize xfade for a digital distortion effect
             glitch_dur = min(crossfade * 0.8, 0.4)
-            offset = max(0, running_duration - glitch_dur)
+            offset = max(0, running_duration - glitch_dur - OFFSET_EPSILON)
             filter_parts.append(
                 f"{in_label}[{i}:v]xfade=transition=pixelize:duration={glitch_dur:.3f}"
                 f":offset={offset:.3f}{out_label}"
@@ -1645,7 +1650,7 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
 
         elif xfade_name:
             # Standard xfade-based transitions
-            offset = max(0, running_duration - trans_dur)
+            offset = max(0, running_duration - trans_dur - OFFSET_EPSILON)
             filter_parts.append(
                 f"{in_label}[{i}:v]xfade=transition={xfade_name}:duration={trans_dur:.3f}"
                 f":offset={offset:.3f}{out_label}"
@@ -1654,9 +1659,9 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
 
         else:
             # Unknown transition, fallback to crossfade
-            offset = max(0, running_duration - crossfade)
+            offset = max(0, running_duration - crossfade - OFFSET_EPSILON)
             filter_parts.append(
-                f"{in_label}[{i}:v]xfade=transition=fade:duration={crossfade}"
+                f"{in_label}[{i}:v]xfade=transition=fade:duration={crossfade:.3f}"
                 f":offset={offset:.3f}{out_label}"
             )
             running_duration = offset + durations[i]
@@ -1687,6 +1692,12 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
         map_args += ["-map", "[a]"]
 
     filter_complex = ";".join(filter_parts)
+
+    import logging as _stitch_log
+    _stitch_log.getLogger("video_stitcher").debug(
+        "xfade filter_complex (%d clips, expected %.1fs): %s",
+        n, total_dur, filter_complex,
+    )
 
     cmd = [
         "ffmpeg", "-y",

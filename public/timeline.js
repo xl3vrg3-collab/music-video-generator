@@ -9,6 +9,34 @@
 (function() {
   'use strict';
 
+  // ─────────── Theme-aware color helper ───────────
+  // Reads CSS custom properties so the timeline respects light/dark theme.
+  function getThemeColor(varName, fallback) {
+    return getComputedStyle(document.documentElement).getPropertyValue(varName).trim() || fallback;
+  }
+
+  function buildThemeColors() {
+    return {
+      bg: getThemeColor('--bg', '#0a0a0a'),
+      ruler: getThemeColor('--surface2', '#111').replace(')', ',0.8)').replace('rgba', 'rgba'),
+      rulerText: getThemeColor('--text-dim', '#666'),
+      rulerLine: getThemeColor('--border', '#333'),
+      playhead: getThemeColor('--red', '#ff3b3b'),
+      track: getThemeColor('--surface', '#141414'),
+      clip: getThemeColor('--cyan-dim', 'rgba(0,229,255,0.25)'),
+      clipBorder: getThemeColor('--cyan', '#00e5ff'),
+      clipText: getThemeColor('--text', '#e2e2e8'),
+      clipSelected: 'rgba(0,229,255,0.45)',
+      transition: getThemeColor('--magenta-dim', 'rgba(255,94,0,0.4)'),
+      transitionHandle: getThemeColor('--magenta', '#ff5e00'),
+      audioMusic: getThemeColor('--amber-dim', 'rgba(255,214,0,0.3)'),
+      audioVoice: getThemeColor('--cyan-dim', 'rgba(0,229,255,0.3)'),
+      audioSfx: getThemeColor('--green-dim', 'rgba(0,229,160,0.3)'),
+      trimHandle: getThemeColor('--text', '#ffffff'),
+      selection: 'rgba(106,92,255,0.15)',
+    };
+  }
+
   // ─────────── Configuration ───────────
   var CONFIG = {
     TRACK_HEIGHT: 60,
@@ -19,25 +47,7 @@
     PIXELS_PER_SECOND: 80, // Zoom level
     MIN_PPS: 20,
     MAX_PPS: 300,
-    COLORS: {
-      bg: '#0a0a0a',
-      ruler: '#111',
-      rulerText: '#666',
-      rulerLine: '#333',
-      playhead: '#ff3b3b',
-      track: '#141414',
-      clip: 'rgba(0,229,255,0.25)',
-      clipBorder: '#00e5ff',
-      clipText: '#e2e2e8',
-      clipSelected: 'rgba(0,229,255,0.45)',
-      transition: 'rgba(255,94,0,0.4)',
-      transitionHandle: '#ff5e00',
-      audioMusic: 'rgba(255,214,0,0.3)',
-      audioVoice: 'rgba(0,229,255,0.3)',
-      audioSfx: 'rgba(0,229,160,0.3)',
-      trimHandle: '#ffffff',
-      selection: 'rgba(106,92,255,0.15)',
-    },
+    COLORS: buildThemeColors(),
     FONTS: {
       ruler: '10px "JetBrains Mono", monospace',
       clip: '10px "Inter Tight", sans-serif',
@@ -73,10 +83,12 @@
       this._clipOffsets.push(total);
       var effective = c.duration - (c.trimStart || 0) - (c.trimEnd || 0);
       total += Math.max(0.5, effective);
-      // Add transition overlap
-      var tr = this.transitions[i] || {};
-      if (i > 0 && tr.duration) {
-        total -= Math.min(tr.duration, effective * 0.5);
+      // Subtract transition overlap (transition AFTER clip i, stored at transitions[i + 1])
+      if (i < this.clips.length - 1) {
+        var tr = this.transitions[i + 1] || {};
+        if (tr.duration) {
+          total -= Math.min(tr.duration, effective * 0.5);
+        }
       }
     }
     this.totalDuration = total;
@@ -162,6 +174,10 @@
   };
 
   TimelineRenderer.prototype.render = function() {
+    try {
+    // Refresh theme colors on each render (picks up light/dark switch)
+    CONFIG.COLORS = buildThemeColors();
+
     var ctx = this.ctx;
     var s = this.state;
     var w = this.width;
@@ -279,6 +295,9 @@
       var phSecs = (s.playheadTime % 60).toFixed(1);
       ctx.fillText(phMins + ':' + (phSecs < 10 ? '0' : '') + phSecs, phX + 4, 22);
     }
+    } catch(e) {
+      console.error('[Timeline] Render error:', e);
+    }
   };
 
   TimelineRenderer.prototype._renderRuler = function() {
@@ -375,6 +394,12 @@
       } else if (!thumb) {
         var img = new Image();
         img.src = clip.thumbUrl;
+        // Before setting cache, check size
+        var cacheKeys = Object.keys(this.thumbCache);
+        if (cacheKeys.length > 200) {
+            // Remove oldest 50 entries
+            cacheKeys.slice(0, 50).forEach(function(k) { delete self.thumbCache[k]; });
+        }
         this.thumbCache[clip.thumbUrl] = img;
         var self = this;
         img.onload = function() { self.render(); };
@@ -443,6 +468,20 @@
       self._onMouseMove({clientX: touch.clientX, clientY: touch.clientY, target: canvas, offsetX: touch.clientX - rect.left, offsetY: touch.clientY - rect.top});
     });
     canvas.addEventListener('touchend', function(e) { self._onMouseUp(e); });
+
+    // Keyboard navigation
+    var container = canvas.parentElement || canvas;
+    container.setAttribute('tabindex', '0');
+    container.setAttribute('role', 'application');
+    container.setAttribute('aria-label', 'Video timeline editor. Use arrow keys to navigate.');
+    container.addEventListener('keydown', function(e) {
+      var s = self.state;
+      if (e.key === 'ArrowRight') { s.playheadTime = Math.min(s.totalDuration, s.playheadTime + 0.5); self.renderer.render(); e.preventDefault(); }
+      if (e.key === 'ArrowLeft') { s.playheadTime = Math.max(0, s.playheadTime - 0.5); self.renderer.render(); e.preventDefault(); }
+      if (e.key === 'Home') { s.playheadTime = 0; self.renderer.render(); e.preventDefault(); }
+      if (e.key === 'End') { s.playheadTime = s.totalDuration; self.renderer.render(); e.preventDefault(); }
+      if (e.key === ' ') { self.togglePlayback && self.togglePlayback(); e.preventDefault(); }
+    });
   };
 
   TimelineController.prototype._getPos = function(e) {
@@ -523,12 +562,22 @@
         var clip = s.clips[s.dragClipIndex];
         if (clip) {
           clip.trimStart = Math.max(0, Math.min(clip.duration * 0.8, s.dragStartValue + dt));
+          // Ensure trimStart + trimEnd never exceeds 80% of duration
+          var maxTrim = clip.duration * 0.8;
+          if (clip.trimStart + clip.trimEnd > maxTrim) {
+            clip.trimStart = Math.max(0, maxTrim - clip.trimEnd);
+          }
           s.recalcDuration();
         }
       } else if (s.dragType === 'trimRight') {
         var clip = s.clips[s.dragClipIndex];
         if (clip) {
           clip.trimEnd = Math.max(0, Math.min(clip.duration * 0.8, s.dragStartValue - dt));
+          // Ensure trimStart + trimEnd never exceeds 80% of duration
+          var maxTrim = clip.duration * 0.8;
+          if (clip.trimStart + clip.trimEnd > maxTrim) {
+            clip.trimEnd = Math.max(0, maxTrim - clip.trimStart);
+          }
           s.recalcDuration();
         }
       } else if (s.dragType === 'move') {
@@ -658,12 +707,16 @@
     this.renderer = new TimelineRenderer(this.canvas, this.state);
     this.controller = new TimelineController(this.canvas, this.state, this.renderer);
 
-    // Resize observer
+    // Resize observer — debounced to avoid rapid re-renders
     var self = this;
+    var _resizeTimeout;
     if (window.ResizeObserver) {
       new ResizeObserver(function() {
-        self.renderer._resizeCanvas();
-        self.renderer.render();
+        clearTimeout(_resizeTimeout);
+        _resizeTimeout = setTimeout(function() {
+          self.renderer._resizeCanvas();
+          self.renderer.render();
+        }, 100);
       }).observe(this.container);
     }
 
@@ -682,7 +735,7 @@
         id: sc.id || ('scene_' + i),
         sceneIndex: i,
         name: sc.summary || sc.description || ('Scene ' + (i + 1)),
-        duration: parseFloat(sc.duration) || 4,
+        duration: parseFloat(sc.duration) || 5,
         trimStart: sc.trimStart || 0,
         trimEnd: sc.trimEnd || 0,
         clipUrl: sc.clip_url || sc.clipUrl || '',
@@ -738,6 +791,19 @@
       }
       // Update clip scene indices
       state.clips.forEach(function(c, i) { c.sceneIndex = i; });
+    }
+
+    // Persist reorder to server
+    if (window._autoScenes && window._autoScenes.length > 0) {
+        var order = window._autoScenes.map(function(s) { return s.id; });
+        fetch('/api/auto-director/scenes/reorder', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({order: order})
+        }).catch(function(e) {
+            console.warn('[Timeline] Reorder sync failed:', e.message);
+            if (window._toast) window._toast('Failed to save clip order — changes may be lost on refresh', 'warning', 4000);
+        });
     }
 
     // Sync transitions

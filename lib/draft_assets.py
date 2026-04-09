@@ -287,6 +287,8 @@ def creation_readiness(scenes):
 
     for i, scene in enumerate(scenes):
         for char in scene.get("characters", []):
+            if isinstance(char, str):
+                continue
             state = char.get("state", "")
             if state in ("draft", "generic") or (char.get("id", "").startswith("draft_")):
                 issues.append({
@@ -297,6 +299,8 @@ def creation_readiness(scenes):
                     "id": char.get("id", ""),
                 })
         for cos in scene.get("costumes", []):
+            if isinstance(cos, str):
+                continue
             state = cos.get("state", "")
             if state == "draft" or cos.get("id", "").startswith("draft_"):
                 issues.append({
@@ -307,6 +311,8 @@ def creation_readiness(scenes):
                     "id": cos.get("id", ""),
                 })
         for env in scene.get("environments", []):
+            if isinstance(env, str):
+                continue
             state = env.get("state", "")
             if state == "draft" or env.get("id", "").startswith("draft_"):
                 issues.append({

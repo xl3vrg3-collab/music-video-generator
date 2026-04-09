@@ -3279,6 +3279,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/cost":
             self._handle_get_cost()
 
+        elif path == "/api/runway/credits":
+            self._handle_runway_credits()
+
         elif path.startswith("/api/storyboard/"):
             fname = os.path.basename(path[len("/api/storyboard/"):])
             self._send_file(os.path.join(STORYBOARD_DIR, fname))
@@ -3571,6 +3574,13 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json({"error": str(e)}, 500)
             else:
                 self._send_json({"error": "No plan found"}, 404)
+
+        # ──── V5 Pipeline GET routes ────
+        elif path == "/api/pipeline/state":
+            self._handle_pipeline_get_state()
+
+        elif path == "/api/pipeline/anchors":
+            self._handle_pipeline_get_anchors()
 
         # ──── Preproduction GET routes ────
         elif path == "/api/preproduction/packages":
@@ -4270,6 +4280,40 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/auto-director/shot/(\d+)/(\d+)/edit$', path):
             m = re.match(r'^/api/auto-director/shot/(\d+)/(\d+)/edit$', path)
             self._handle_v4_shot_edit(int(m.group(1)), int(m.group(2)))
+
+        # ──── V5 Pipeline POST routes ────
+        elif path == "/api/pipeline/start":
+            self._handle_pipeline_start()
+
+        elif path == "/api/pipeline/advance":
+            self._handle_pipeline_advance()
+
+        elif path == "/api/pipeline/sheets/generate":
+            self._handle_pipeline_sheets_generate()
+
+        elif path == "/api/pipeline/sheets/approve-all":
+            self._handle_pipeline_sheets_approve_all()
+
+        elif path == "/api/pipeline/anchors/generate":
+            self._handle_pipeline_anchors_generate()
+
+        elif re.match(r'^/api/pipeline/anchors/([^/]+)/approve$', path):
+            m = re.match(r'^/api/pipeline/anchors/([^/]+)/approve$', path)
+            self._handle_pipeline_anchor_approve(m.group(1))
+
+        elif re.match(r'^/api/pipeline/anchors/([^/]+)/reject$', path):
+            m = re.match(r'^/api/pipeline/anchors/([^/]+)/reject$', path)
+            self._handle_pipeline_anchor_reject(m.group(1))
+
+        elif re.match(r'^/api/pipeline/anchors/([^/]+)/regenerate$', path):
+            m = re.match(r'^/api/pipeline/anchors/([^/]+)/regenerate$', path)
+            self._handle_pipeline_anchor_regenerate(m.group(1))
+
+        elif path == "/api/pipeline/generate":
+            self._handle_pipeline_generate()
+
+        elif path == "/api/pipeline/reset":
+            self._handle_pipeline_reset()
 
         # ──── Preproduction POST routes ────
         elif path == "/api/preproduction/package/create":
@@ -6932,6 +6976,32 @@ class Handler(BaseHTTPRequestHandler):
         """Return current cost tracking data."""
         tracker = _load_cost_tracker()
         self._send_json(tracker)
+
+    def _handle_runway_credits(self):
+        """Fetch remaining Runway API credits from /v1/organization."""
+        import requests as _req
+        key = os.environ.get("RUNWAY_API_KEY", "")
+        if not key:
+            self._send_json({"credits": None, "error": "RUNWAY_API_KEY not set"})
+            return
+        try:
+            resp = _req.get(
+                "https://api.dev.runwayml.com/v1/organization",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Accept": "application/json",
+                    "X-Runway-Version": "2024-11-06",
+                },
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                credits = data.get("creditBalance", data.get("credits", None))
+                self._send_json({"credits": credits, "raw": data})
+            else:
+                self._send_json({"credits": None, "error": f"Runway API {resp.status_code}"})
+        except Exception as e:
+            self._send_json({"credits": None, "error": str(e)})
 
     def _handle_quick_preview(self, scene_id: str):
         """Feature 5: Generate a 1-second preview or first frame for a scene."""
@@ -10991,6 +11061,245 @@ class Handler(BaseHTTPRequestHandler):
 
         self._send_json({"ok": True, "shot": shot})
 
+    # ──── V5 Pipeline Handlers ────
+
+    def _get_pipeline_state(self):
+        from lib.pipeline_state import PipelineState
+        return PipelineState(OUTPUT_DIR)
+
+    def _handle_pipeline_get_state(self):
+        pipeline = self._get_pipeline_state()
+        self._send_json(pipeline.get_progress())
+
+    def _handle_pipeline_get_anchors(self):
+        pipeline = self._get_pipeline_state()
+        self._send_json({"anchors": pipeline.anchors})
+
+    def _handle_pipeline_start(self):
+        """Ingest master prompt, extract assets, create packages, plan."""
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        master_prompt = body.get("master_prompt", "")
+        if not master_prompt:
+            self._send_json({"error": "master_prompt is required"}, 400)
+            return
+
+        song_path = body.get("song_path")
+        if not song_path:
+            # Find most recent uploaded audio
+            audio_files = []
+            for f in os.listdir(UPLOADS_DIR):
+                if f.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac')):
+                    fp = os.path.join(UPLOADS_DIR, f)
+                    audio_files.append((os.path.getmtime(fp), fp))
+            if audio_files:
+                audio_files.sort(reverse=True)
+                song_path = audio_files[0][1]
+
+        engine = body.get("engine", "gen4_turbo")
+        mode = body.get("mode", "fast")
+        auto_advance = body.get("auto_advance", False)
+        story_model = body.get("story_model")
+
+        try:
+            result = _auto_director.run_pipeline(
+                master_prompt=master_prompt,
+                song_path=song_path,
+                engine=engine,
+                mode=mode,
+                auto_advance=auto_advance,
+                story_model=story_model,
+            )
+            self._send_json(result)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_pipeline_advance(self):
+        """Advance pipeline to next state."""
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+        target = body.get("target_state")
+        pipeline = self._get_pipeline_state()
+        try:
+            new_state = pipeline.advance(target)
+            self._send_json({"ok": True, "state": new_state, "progress": pipeline.get_progress()})
+        except ValueError as e:
+            self._send_json({"error": str(e)}, 400)
+
+    def _handle_pipeline_sheets_generate(self):
+        """Trigger canonical sheet generation for all packages."""
+        from lib.preproduction_assets import PreproductionStore, build_sheet_prompt, get_sheet_plan
+        from lib.video_generator import _runway_generate_scene_image
+
+        pipeline = self._get_pipeline_state()
+        store = self._get_preprod_store()
+        packages = store.get_all()
+        pipeline.advance("SHEETS_GENERATING")
+
+        results = []
+        for pkg in packages:
+            if pkg.get("status") in ("approved", "generating"):
+                continue
+            sheet_plan = get_sheet_plan(pkg)
+            pkg["status"] = "generating"
+            store.save_package(pkg)
+            for view_def in sheet_plan:
+                prompt = build_sheet_prompt(pkg, view_def)
+                try:
+                    image_path = _runway_generate_scene_image(
+                        prompt=prompt,
+                        reference_photos=[],
+                        model="gen4_image_turbo",
+                    )
+                    for si in pkg["sheet_images"]:
+                        if si["view"] == view_def["view"]:
+                            si["image_path"] = image_path
+                            si["status"] = "generated"
+                            si["prompt_used"] = prompt
+                            break
+                except Exception as e:
+                    for si in pkg["sheet_images"]:
+                        if si["view"] == view_def["view"]:
+                            si["status"] = "failed"
+                            si["error"] = str(e)
+                            break
+            pkg["status"] = "generated"
+            # Auto-select first image as hero if none set
+            if not pkg.get("hero_image_path"):
+                for si in pkg["sheet_images"]:
+                    if si.get("image_path") and si["status"] == "generated":
+                        pkg["hero_image_path"] = si["image_path"]
+                        pkg["hero_view"] = si["view"]
+                        break
+            store.save_package(pkg)
+            results.append({"package_id": pkg["package_id"], "status": pkg["status"]})
+
+        self._send_json({"ok": True, "results": results, "pipeline": pipeline.get_progress()})
+
+    def _handle_pipeline_sheets_approve_all(self):
+        """Bulk approve all generated canonical sheets."""
+        store = self._get_preprod_store()
+        pipeline = self._get_pipeline_state()
+        approved = 0
+        for pkg in store.get_all():
+            if pkg.get("status") == "generated":
+                pkg["status"] = "approved"
+                store.save_package(pkg)
+                approved += 1
+        if pipeline.state == "SHEETS_REVIEW" or pipeline.state == "SHEETS_GENERATING":
+            pipeline.advance("SHEETS_REVIEW")
+        self._send_json({"ok": True, "approved": approved, "pipeline": pipeline.get_progress()})
+
+    def _handle_pipeline_anchors_generate(self):
+        """Compose shot anchors from approved canonical sheets."""
+        try:
+            result = _auto_director.pipeline_generate_anchors()
+            self._send_json(result)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_pipeline_anchor_approve(self, shot_id):
+        pipeline = self._get_pipeline_state()
+        pipeline.approve_anchor(shot_id)
+        self._send_json({"ok": True, "shot_id": shot_id, "status": "approved"})
+
+    def _handle_pipeline_anchor_reject(self, shot_id):
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+        reason = body.get("reason", "")
+        pipeline = self._get_pipeline_state()
+        pipeline.reject_anchor(shot_id, reason)
+        self._send_json({"ok": True, "shot_id": shot_id, "status": "rejected"})
+
+    def _handle_pipeline_anchor_regenerate(self, shot_id):
+        """Regenerate an anchor from canonical sheets."""
+        from lib.pipeline_state import PipelineState
+        from lib.preproduction_assets import PreproductionStore
+        from lib.scene_compositor import regenerate_anchor
+        from lib.master_prompt import extraction_to_style_bible
+
+        pipeline = self._get_pipeline_state()
+        store = self._get_preprod_store()
+        packages = [p for p in store.get_all() if p.get("status") == "approved"]
+
+        # Find the shot in the plan
+        shot = None
+        for s in pipeline.plan.get("scenes", []):
+            if s.get("shot_id") == shot_id or s.get("id") == shot_id:
+                shot = s
+                break
+        if not shot:
+            self._send_json({"error": f"Shot {shot_id} not found"}, 404)
+            return
+
+        style_bible = extraction_to_style_bible(pipeline.extraction) if pipeline.extraction else {
+            "global_style": "cinematic", "negative": "no text, no watermark",
+        }
+
+        try:
+            anchor = regenerate_anchor(shot, packages, style_bible, OUTPUT_DIR)
+            pipeline.set_anchor(shot_id, anchor)
+            self._send_json({"ok": True, "anchor": anchor})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_pipeline_generate(self):
+        """Trigger video generation using approved anchors."""
+        pipeline = self._get_pipeline_state()
+        plan_path = os.path.join(OUTPUT_DIR, "auto_director_plan.json")
+        if not os.path.isfile(plan_path):
+            self._send_json({"error": "No plan available"}, 400)
+            return
+
+        with open(plan_path) as f:
+            plan = json.load(f)
+
+        # Inject anchor paths from pipeline state into plan
+        for scene in plan.get("scenes", []):
+            sid = scene.get("shot_id", scene.get("id", ""))
+            anchor = pipeline.get_anchor(sid)
+            if anchor and anchor.get("image_path") and anchor.get("status") in ("approved", "generated"):
+                scene["anchor_image_path"] = anchor["image_path"]
+
+        pipeline.advance("SHOTS_GENERATING")
+
+        def _generate_thread():
+            try:
+                _auto_director.generate_full_video(plan)
+                pipeline.output_file = _auto_director.progress.get("output_file", "")
+                pipeline.advance("CONFORM")
+                pipeline.advance("COMPLETE")
+            except Exception as e:
+                pipeline.set_error(str(e))
+
+        import threading
+        t = threading.Thread(target=_generate_thread, daemon=True)
+        t.start()
+        self._send_json({"ok": True, "message": "Generation started", "pipeline": pipeline.get_progress()})
+
+    def _handle_pipeline_reset(self):
+        """Reset pipeline to a specific state."""
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        target = body.get("to_state", "IDLE")
+        pipeline = self._get_pipeline_state()
+        try:
+            pipeline.reset_to(target)
+            self._send_json({"ok": True, "state": pipeline.state, "progress": pipeline.get_progress()})
+        except ValueError as e:
+            self._send_json({"error": str(e)}, 400)
+
     # ──── Preproduction Handlers ────
 
     def _get_preprod_store(self):
@@ -11091,43 +11400,109 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "package": pkg})
 
     def _handle_preproduction_generate_package(self, pkg_id):
-        """Generate all sheet views for a package."""
-        from lib.preproduction_assets import build_sheet_prompt, get_sheet_plan, update_sheet_image
+        """Generate a single composite sheet image for a package.
+
+        Produces ONE image with all views/angles arranged in a grid (character
+        turnaround, environment collage, etc.). This single image becomes the
+        canonical @Tag reference for scene generation.
+
+        Includes vision-based quality gate: analyzes the generated image and
+        retries up to MAX_RETRIES times if it fails quality checks.
+
+        Accepts optional `model` in request body. Defaults to best engine
+        for the package type (gemini_2.5_flash for photorealism).
+        """
+        from lib.preproduction_assets import (
+            build_sheet_prompt, update_sheet_image, analyze_sheet_quality,
+        )
+        from lib.video_generator import generate_sheet_image, SHEET_ENGINE_DEFAULTS
         store = self._get_preprod_store()
         pkg = store.get_by_id(pkg_id)
         if not pkg:
             self._send_json({"error": "Package not found"}, 404)
             return
+
+        # Accept optional model override from request body
+        try:
+            body = json.loads(self._read_body())
+        except Exception:
+            body = {}
+        pkg_type = pkg.get("type", "character")
+        model = body.get("model") or SHEET_ENGINE_DEFAULTS.get(pkg_type, "gemini_2.5_flash")
+
         pkg["status"] = "generating"
         store.save_package(pkg)
         img_dir = store.package_image_dir(pkg_id)
 
-        views = get_sheet_plan(pkg)
+        prompt = build_sheet_prompt(pkg)
         results = []
-        for view_def in views:
-            view_name = view_def["view"]
-            prompt = build_sheet_prompt(pkg, view_def)
+        MAX_RETRIES = 2  # up to 3 total attempts
+
+        for attempt in range(1 + MAX_RETRIES):
             try:
-                from lib.video_generator import _runway_generate_scene_image
-                img_path = _runway_generate_scene_image(
+                print(f"[GENERATE] {pkg.get('name')} attempt {attempt + 1}/{1 + MAX_RETRIES} engine={model}")
+                img_path = generate_sheet_image(
                     prompt=prompt,
-                    reference_photos=[],
-                    ratio="1280:720",
-                    model="gen4_image",
+                    model=model,
                     seed=pkg.get("seed"),
                 )
                 if img_path and os.path.isfile(img_path):
                     import shutil
-                    dest = os.path.join(img_dir, f"{view_name}.png")
+                    dest = os.path.join(img_dir, "sheet.png")
                     shutil.copy2(img_path, dest)
-                    pkg = update_sheet_image(pkg, view_name, dest, prompt_used=prompt)
-                    results.append({"view": view_name, "status": "generated", "path": dest})
+
+                    # Quality gate — analyze before accepting
+                    qa = analyze_sheet_quality(dest, pkg)
+                    qa_passed = qa.get("pass", False)
+                    qa_skipped = qa.get("skipped", False)
+
+                    if qa_passed or qa_skipped:
+                        pkg = update_sheet_image(pkg, "sheet", dest, prompt_used=prompt)
+                        pkg["hero_image_path"] = dest
+                        pkg["hero_view"] = "sheet"
+                        pkg["qa_result"] = qa
+                        results.append({
+                            "view": "sheet", "status": "generated",
+                            "path": dest, "qa": qa, "attempt": attempt + 1,
+                        })
+                        break  # passed quality gate
+                    else:
+                        # Failed QA — log issues and retry
+                        issues = qa.get("issues", [])
+                        print(f"[QA] {pkg.get('name')} FAILED attempt {attempt + 1}: {issues}")
+                        results.append({
+                            "view": "sheet", "status": "qa_failed",
+                            "qa": qa, "attempt": attempt + 1,
+                        })
+                        if attempt < MAX_RETRIES:
+                            continue  # retry
+                        else:
+                            # Accept on final attempt despite QA failure
+                            pkg = update_sheet_image(pkg, "sheet", dest, prompt_used=prompt)
+                            pkg["hero_image_path"] = dest
+                            pkg["hero_view"] = "sheet"
+                            pkg["qa_result"] = qa
+                            pkg["qa_warning"] = "Accepted after max retries despite QA failure"
+                            results.append({
+                                "view": "sheet", "status": "generated_with_warnings",
+                                "path": dest, "qa": qa, "attempt": attempt + 1,
+                            })
+                            break
                 else:
-                    pkg = update_sheet_image(pkg, view_name, None, prompt_used=prompt)
-                    results.append({"view": view_name, "status": "failed"})
+                    pkg = update_sheet_image(pkg, "sheet", None, prompt_used=prompt)
+                    results.append({"view": "sheet", "status": "failed", "attempt": attempt + 1})
+                    if attempt < MAX_RETRIES:
+                        continue
+                    break
             except Exception as e:
-                pkg = update_sheet_image(pkg, view_name, None, prompt_used=prompt)
-                results.append({"view": view_name, "status": "error", "error": str(e)})
+                pkg = update_sheet_image(pkg, "sheet", None, prompt_used=prompt)
+                results.append({
+                    "view": "sheet", "status": "error",
+                    "error": str(e), "attempt": attempt + 1,
+                })
+                if attempt < MAX_RETRIES:
+                    continue
+                break
 
         pkg["status"] = "generated"
         store.save_package(pkg)
@@ -11155,13 +11530,14 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         prompt = body.get("custom_prompt") or build_sheet_prompt(pkg, view_def)
+        from lib.video_generator import generate_sheet_image, SHEET_ENGINE_DEFAULTS
+        pkg_type = pkg.get("type", "character")
+        model = body.get("model") or SHEET_ENGINE_DEFAULTS.get(pkg_type, "gemini_2.5_flash")
         img_dir = store.package_image_dir(pkg_id)
 
         try:
-            from lib.video_generator import _runway_generate_scene_image
-            img_path = _runway_generate_scene_image(
-                prompt=prompt, reference_photos=[], ratio="1280:720",
-                model="gen4_image", seed=body.get("seed"),
+            img_path = generate_sheet_image(
+                prompt=prompt, model=model, seed=body.get("seed"),
             )
             if img_path and os.path.isfile(img_path):
                 import shutil

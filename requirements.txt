@@ -1,5 +1,5 @@
-requests
-numpy
-librosa
-python-dotenv
-Pillow
+requests==2.31.0
+numpy==1.26.4
+librosa==0.10.2
+python-dotenv==1.0.1
+Pillow==10.4.0

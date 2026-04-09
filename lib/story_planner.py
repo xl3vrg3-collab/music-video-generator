@@ -294,6 +294,12 @@ def expand_beat_to_shots(beat, sequence_type=None, energy=0.5, section_type="ver
             "environment_package_id": None,
             "prop_package_ids": [],
 
+            # V5 anchor composition (populated by scene compositor)
+            "anchor_image_path": None,       # path to composed anchor image
+            "anchor_status": "pending",      # pending/generated/approved/rejected
+            "anchor_source_refs": [],        # which canonical assets composed it
+            "shot_family": None,             # set by classify_shot_family()
+
             # Multi-take
             "takes": [],
 
