@@ -259,7 +259,7 @@ def compose_anchor(shot: dict, refs: list, style_bible: dict,
     """
     Compose a shot-specific anchor image from canonical asset refs.
 
-    Calls Runway text_to_image with the selected refs (max 3) and a
+    Calls fal.ai Gemini 3.1 Flash image edit with the selected refs and a
     composition prompt built from the shot's action and style.
 
     Args:
@@ -274,7 +274,7 @@ def compose_anchor(shot: dict, refs: list, style_bible: dict,
                       image_path, prompt_used, status, derived_from_canon}
     """
     from lib.prompt_assembler import compile_anchor_prompt
-    from lib.video_generator import _runway_generate_scene_image
+    from lib.fal_client import gemini_edit_image, gemini_generate_image
 
     shot_id = shot.get("shot_id", shot.get("id", "unknown"))
     family = shot.get("shot_family") or classify_shot_family(shot)
@@ -287,15 +287,8 @@ def compose_anchor(shot: dict, refs: list, style_bible: dict,
         taste_mods=taste_mods,
     )
 
-    # Prepare reference photos for Runway API
-    ref_photos = []
-    for r in refs:
-        if r.get("path") and os.path.isfile(r["path"]):
-            ref_photos.append({
-                "path": r["path"],
-                "tag": r["tag"],
-                "type": r.get("package_type", "character"),
-            })
+    # Collect reference image paths for Gemini edit (refs carry identity/locations)
+    ref_paths = [r["path"] for r in refs if r.get("path") and os.path.isfile(r["path"])]
 
     # Generate the anchor image
     anchors_dir = os.path.join(output_dir, "pipeline", "anchors")
@@ -303,12 +296,21 @@ def compose_anchor(shot: dict, refs: list, style_bible: dict,
 
     image_path = None
     try:
-        image_path = _runway_generate_scene_image(
-            prompt=prompt,
-            reference_photos=ref_photos,
-            ratio="1280:720",
-            model="gen4_image",
-        )
+        if ref_paths:
+            paths = gemini_edit_image(
+                prompt=prompt,
+                reference_image_paths=ref_paths,
+                resolution="1K",
+                num_images=1,
+            )
+        else:
+            paths = gemini_generate_image(
+                prompt=prompt,
+                resolution="1K",
+                aspect_ratio="16:9",
+                num_images=1,
+            )
+        image_path = paths[0] if paths else None
         # Move to anchors directory with descriptive name
         if image_path and os.path.isfile(image_path):
             dest = os.path.join(anchors_dir, f"anchor_{shot_id}.png")
@@ -612,7 +614,7 @@ def build_scene_anchor_prompt(scene_group: dict, refs: list,
 
 
 def compose_scene_anchors(plan: dict, pkg_index: dict, output_dir: str,
-                          model: str = "gen4_image",
+                          model: str = "gemini",
                           progress_cb=None) -> list:
     """Compose ONE anchor image per scene.
 
@@ -623,12 +625,13 @@ def compose_scene_anchors(plan: dict, pkg_index: dict, output_dir: str,
         plan: auto_director_plan with scenes
         pkg_index: {package_id: package_dict}
         output_dir: where to save anchors
-        model: image generation model
+        model: ignored — anchors always go through fal.ai Gemini (parameter
+               kept for backwards-compatible callers)
         progress_cb: optional callback(scene_key, status, anchor_dict)
 
     Returns: list of scene anchor dicts
     """
-    from lib.video_generator import _runway_generate_scene_image
+    from lib.fal_client import gemini_edit_image, gemini_generate_image
     import shutil
 
     scenes = plan.get("scenes", [])
@@ -655,16 +658,28 @@ def compose_scene_anchors(plan: dict, pkg_index: dict, output_dir: str,
         if progress_cb:
             progress_cb(scene_key, "composing", None)
 
-        # Compose — use model-appropriate ratio
-        from lib.video_generator import _ENGINE_RATIO_MAP
-        ratio = _ENGINE_RATIO_MAP.get(model, "1280:720")
-        ref_photos = [{"path": r["path"], "tag": r["tag"]} for r in refs]
-        img_path = _runway_generate_scene_image(
-            prompt=prompt,
-            reference_photos=ref_photos,
-            ratio=ratio,
-            model=model,
-        )
+        # Compose via fal.ai Gemini — edit with refs when we have them,
+        # text-to-image otherwise.
+        ref_paths = [r["path"] for r in refs if r.get("path") and os.path.isfile(r["path"])]
+        try:
+            if ref_paths:
+                paths = gemini_edit_image(
+                    prompt=prompt,
+                    reference_image_paths=ref_paths,
+                    resolution="1K",
+                    num_images=1,
+                )
+            else:
+                paths = gemini_generate_image(
+                    prompt=prompt,
+                    resolution="1K",
+                    aspect_ratio="16:9",
+                    num_images=1,
+                )
+            img_path = paths[0] if paths else None
+        except Exception as _e:
+            print(f"[SCENE_ANCHOR] {scene_key}: gemini error {_e}")
+            img_path = None
 
         anchor = {
             "scene_key": scene_key,

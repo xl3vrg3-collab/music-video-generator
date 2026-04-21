@@ -118,7 +118,7 @@ def extract_production_data(prompt: str, model: str = None) -> dict:
 
     Args:
         prompt: The user's master creative prompt
-        model: LLM model to use (default from env or claude-sonnet-4-6)
+        model: LLM model to use (default from env or claude-opus-4-7)
 
     Returns:
         dict with narrative, style, characters, costumes, environments,

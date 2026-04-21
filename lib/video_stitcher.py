@@ -1602,6 +1602,20 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
     filter_parts = []
     running_duration = durations[0]
 
+    # Normalize every input clip to a common canvas so xfade/concat don't
+    # blow up when Kling renders at mixed tiers (v3 Pro = 1920x1080,
+    # v3 Standard = 1280x720, vertical = 768x1280, etc).  Target = 1920x1080
+    # @ 24fps, yuv420p, SAR=1.  force_original_aspect_ratio=decrease + pad
+    # preserves the subject and adds black bars where needed.
+    NORM_W, NORM_H, NORM_FPS = 1920, 1080, 24
+    norm_filter = (
+        f"scale={NORM_W}:{NORM_H}:force_original_aspect_ratio=decrease,"
+        f"pad={NORM_W}:{NORM_H}:(ow-iw)/2:(oh-ih)/2:color=black,"
+        f"setsar=1,fps={NORM_FPS},format=yuv420p"
+    )
+    for i in range(n):
+        filter_parts.append(f"[{i}:v]{norm_filter}[v{i}]")
+
     # Safety margin for ffmpeg frame-boundary rounding.  Each chained xfade
     # needs offset + duration <= actual_stream_duration, but the actual
     # duration may be a frame or two shorter than the mathematical value.
@@ -1615,7 +1629,7 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
         trans_dur = _get_transition_duration(trans, crossfade, clip_duration=durations[i])
 
         # Unique intermediate labels to avoid any ffmpeg label-reuse issues
-        in_label = f"[{i - 1}:v]" if i == 1 else f"[xf{i - 1}]"
+        in_label = f"[v{i - 1}]" if i == 1 else f"[xf{i - 1}]"
         out_label = f"[xf{i}]" if i < n - 1 else "[xfout]"
 
         if trans == "hard_cut":
@@ -1623,7 +1637,7 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
             hc_dur = 0.10
             offset = max(0, running_duration - hc_dur - OFFSET_EPSILON)
             filter_parts.append(
-                f"{in_label}[{i}:v]xfade=transition=fade:duration={hc_dur:.3f}"
+                f"{in_label}[v{i}]xfade=transition=fade:duration={hc_dur:.3f}"
                 f":offset={offset:.3f}{out_label}"
             )
             running_duration = offset + durations[i]
@@ -1633,7 +1647,7 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
             fb_dur = min(crossfade * 1.5, 1.5)
             offset = max(0, running_duration - fb_dur - OFFSET_EPSILON)
             filter_parts.append(
-                f"{in_label}[{i}:v]xfade=transition=fadeblack:duration={fb_dur:.3f}"
+                f"{in_label}[v{i}]xfade=transition=fadeblack:duration={fb_dur:.3f}"
                 f":offset={offset:.3f}{out_label}"
             )
             running_duration = offset + durations[i]
@@ -1643,7 +1657,7 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
             glitch_dur = min(crossfade * 0.8, 0.4)
             offset = max(0, running_duration - glitch_dur - OFFSET_EPSILON)
             filter_parts.append(
-                f"{in_label}[{i}:v]xfade=transition=pixelize:duration={glitch_dur:.3f}"
+                f"{in_label}[v{i}]xfade=transition=pixelize:duration={glitch_dur:.3f}"
                 f":offset={offset:.3f}{out_label}"
             )
             running_duration = offset + durations[i]
@@ -1652,7 +1666,7 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
             # Standard xfade-based transitions
             offset = max(0, running_duration - trans_dur - OFFSET_EPSILON)
             filter_parts.append(
-                f"{in_label}[{i}:v]xfade=transition={xfade_name}:duration={trans_dur:.3f}"
+                f"{in_label}[v{i}]xfade=transition={xfade_name}:duration={trans_dur:.3f}"
                 f":offset={offset:.3f}{out_label}"
             )
             running_duration = offset + durations[i]
@@ -1661,7 +1675,7 @@ def _stitch_with_transitions(clips: list, audio: str | None, output: str,
             # Unknown transition, fallback to crossfade
             offset = max(0, running_duration - crossfade - OFFSET_EPSILON)
             filter_parts.append(
-                f"{in_label}[{i}:v]xfade=transition=fade:duration={crossfade:.3f}"
+                f"{in_label}[v{i}]xfade=transition=fade:duration={crossfade:.3f}"
                 f":offset={offset:.3f}{out_label}"
             )
             running_duration = offset + durations[i]

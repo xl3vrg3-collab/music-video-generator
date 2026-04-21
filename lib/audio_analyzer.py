@@ -39,17 +39,46 @@ def analyze(song_path: str) -> dict:
 
 # ---------- librosa path ----------
 
+def _correct_tempo_octave(tempo: float, beats: list) -> tuple:
+    """Fix librosa's classic octave error for music-video tempo range.
+
+    Librosa's beat_track often locks to the 8th-note hi-hat pulse instead
+    of the kick on the one, reporting e.g. 172 BPM for a track that feels
+    like 86. Music videos overwhelmingly sit in 70-110 BPM, so:
+      - if tempo > 150 and halving lands in [70, 110], halve it and thin
+        the beats array (keep every other beat, which becomes the downbeat)
+      - if tempo < 60 and doubling lands in [70, 110], double it and
+        insert midpoint beats
+
+    Leaves legitimate DnB/metal tempi above ~220 untouched because their
+    halved value falls outside the sweet spot.
+    """
+    SWEET_LO, SWEET_HI = 70.0, 110.0
+    if tempo > 150 and SWEET_LO <= tempo / 2 <= SWEET_HI:
+        return tempo / 2, beats[::2]
+    if tempo < 60 and SWEET_LO <= tempo * 2 <= SWEET_HI:
+        doubled = []
+        for i in range(len(beats) - 1):
+            doubled.append(beats[i])
+            doubled.append((beats[i] + beats[i + 1]) / 2)
+        if beats:
+            doubled.append(beats[-1])
+        return tempo * 2, doubled
+    return tempo, beats
+
+
 def _analyze_librosa(path: str) -> dict:
     y, sr = librosa.load(path, sr=22050, mono=True)
     duration = float(librosa.get_duration(y=y, sr=sr))
 
-    # Tempo and beats
-    tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+    tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr, start_bpm=90.0)
     if hasattr(tempo, "__len__"):
         tempo = float(tempo[0])
     else:
         tempo = float(tempo)
     beats = librosa.frames_to_time(beat_frames, sr=sr).tolist()
+
+    tempo, beats = _correct_tempo_octave(tempo, beats)
 
     # RMS energy curve (one value per frame)
     hop = 512

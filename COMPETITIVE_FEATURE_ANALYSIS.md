@@ -1,38 +1,43 @@
 # LUMN Studio -- Competitive Feature Analysis
-## April 2026
+## April 2026 (last revised for V6 pipeline)
 
 Research conducted across 19 platforms: CapCut, DaVinci Resolve, Premiere Pro, Final Cut Pro, Descript, Runway, Pika, Kling, Luma Dream Machine, Veo/Google, HailuoAI/Minimax, Synthesia, HeyGen, InVideo AI, Opus Clip, Sora (shutting down), Kaiber, LTX Studio, Stability AI, Freebeat, Neural Frames.
 
 ---
 
-## WHAT LUMN HAS TODAY (Baseline)
+## WHAT LUMN HAS TODAY (V6 Baseline)
 
-- Audio analysis (BPM, beats, energy curve, section detection)
+**Pipeline**: 100% fal.ai for generation. Gemini 3.1 Flash for anchor stills + reference sheets, Kling 3.0 (v3 / o3, standard / pro) for image-to-video. Claude Haiku (default) + Sonnet (hero shots / escalations) for vision QA. FFmpeg for editorial conform.
+
+**Earlier LUMN builds supported Runway (Gen4.5 / Gen4 Turbo), Grok xAI video, Luma Ray2, and Veo 3.1 as selectable engines.** V6 retires the multi-engine model in favor of a single-engine production (no engine mixing) with Kling 3.0. Legacy engine stubs remain in `lib/video_generator.py` for backward compatibility with old project files but are not used by the V6 pipeline.
+
+- PromptOS (POS): character/costume/environment/prop/scene entity registry with approved hero ref per entity
+- Preproduction sheets: multi-panel character/costume/environment/prop reference sheets via Gemini 3.1 Flash
+- Anchor generation: Gemini edit-mode with up to ~10 reference images per shot, camera-only prompts
+- Video generation: Kling 3.0 image-to-video, 3-15s (V3 Standard / O3) or 5-10s (V3 Pro), native character element binding
+- 5D transition judge + strategy engine: motivated_cut / direct_animate / end_variants / bridge_frame / regenerate_pair with fallback chain
+- 14 structured prompt packs (Gemini + Kling + Claude templates)
+- Self-healing learning system: per-shot attempt log, failure clustering, rule updates
+- 7-stage stepper workflow: Brief -> Drafts & Refs -> Assets -> Scenes -> Shots -> Render -> Output
+- Audio analysis (BPM, beats, energy curve, section detection via librosa)
 - Auto scene planning from audio structure (intro/verse/chorus/bridge/outro)
-- Multi-engine video generation (Runway Gen4.5, Kling 3.0, Veo 3.1, Grok)
-- Photo-to-video with Ken Burns fallback
-- Character/costume/environment/prop reference system (Prompt OS)
-- Scene-by-scene prompt editing and per-scene engine override
-- Crossfade transitions between scenes (global and per-scene)
+- 19 editorial transition types assigned per cut by the Transition Intelligence system
+- Per-shot color grade presets (none/warm/cold/vintage/high-contrast/noir/cyberpunk/sepia)
 - Beat-sync cuts aligned to audio beats
 - Storyboard generation
-- Movie planner with bible (characters, costumes, environments)
-- Auto Director (workflow presets for automated generation)
-- Draft asset system (character sheets, costume sheets, environment sheets)
+- Movie planner with bible (characters, costumes, environments, props, style locks, world rules)
 - Prompt assistant (style presets, AI prompt enhancement)
-- Color grading presets
-- Speed ramp / reverse / boomerang effects
 - Audio ducking, audio crossfades, vocal overlay per scene
 - Lyrics overlay on video
-- Social media platform export presets
+- Platform export presets (YouTube, Instagram, TikTok)
 - GIF export
 - Project save/load system
 - Cost tracking per project
 - Credits sequence generation
 - Watermark system
 - Thumbnail extraction
-- Dark/light theme
-- Web-based UI (localhost)
+- Dark/light theme (cinematic Inter Tight / muted rgba / backdrop-blur aesthetic)
+- Web-based UI (localhost, port 3849)
 
 ---
 

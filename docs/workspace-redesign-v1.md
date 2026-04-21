@@ -1,6 +1,23 @@
-# LUMN Studio: Final Build Specification v1.0
+# LUMN Studio: Workspace Redesign v1.0 (Historical Spec)
 
 **Locked: 2026-04-08** | No contradictions. One authoritative version.
+
+> **Status note (V6 update):** This document is the canonical 7-stage stepper
+> spec -- Brief -> Drafts & Refs -> Assets -> Scenes -> Shots -> Render -> Output.
+> The stage architecture, CTAs, and gate logic still apply. Two things are
+> out of date and should be read as historical:
+> 1. **Engine references** -- section 3 Stage 6 still lists "Gen 4.5, Gen 4 Turbo,
+>    Veo 3, Veo 3.1, Luma, Grok". V6 runs one engine: Kling 3.0 via fal.ai
+>    (tiers v3_standard / v3_pro / o3_standard / o3_pro). Gemini 3.1 Flash handles
+>    all still generation. No engine mixing. No Runway.
+> 2. **Visual aesthetic** -- section 8's "Cyan / Amber / Gold gradient" CTA color
+>    labels and any neon/cyberpunk accents predate the current cinematic Inter
+>    Tight / muted rgba / backdrop-blur aesthetic. CTA color names should be read
+>    as semantic slots, not literal neon colors. Interpret "gold" as a muted
+>    warm accent, "green" as a muted cool accent, etc.
+> 3. **Runway `@Tag` reference** -- the mention in section 5 is historical. V6
+>    passes uploaded photos as fal.ai Gemini edit-mode reference images, not as
+>    Runway tags.
 
 ---
 
@@ -223,8 +240,8 @@ If the user uploads a photo, it appears as a thumbnail on the card. That photo b
 **What the user sees:**
 - Render summary at top: X shots queued (Y approved, Z provisional), estimated cost, estimated time
 - **Engine & Quality** section:
-  - Video Engine select (Gen 4.5, Gen 4 Turbo, Veo 3, Veo 3.1, Luma, Grok)
-  - Story AI Model select
+  - Video tier select (Kling v3_standard / v3_pro / o3_standard / o3_pro via fal.ai)
+  - Image anchor model (Gemini 3.1 Flash via fal.ai)
   - Quality preset (Draft / Standard / Premium)
 - Collapsible **Consistency Controls**:
   - Character lock slider
@@ -383,7 +400,7 @@ The UI never displays raw internal state names. Code should reference the intern
 4. Card shows thumbnail, mode switches to `upload`
 5. Status becomes `source_set`
 6. If user clicks "Lock Reference": `reference_locked = true`, downstream generation will always use this image. This is separate from "Lock Asset" in the Assets stage, which protects the generated output.
-7. During generation, the uploaded image is sent as a Runway `@Tag` reference
+7. During generation, the uploaded image is sent to Gemini 3.1 Flash as an edit-mode reference image (refs carry identity; prompts carry only camera/pose/framing)
 
 ### Bulk actions:
 

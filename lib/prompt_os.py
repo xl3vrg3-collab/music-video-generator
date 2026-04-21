@@ -2,7 +2,10 @@
 Prompt Operating System — Core module for managing structured prompt libraries,
 characters, costumes, environments, scenes, and prompt assembly.
 
-All data is stored as JSON files in output/prompt_os/.
+Data is stored as JSON files inside the *active project's* prompt_os/ directory
+(output/projects/<slug>/prompt_os/). Path resolution is deferred to instance
+methods on PromptOS so every read/write goes against the currently-active
+project. See lib/active_project.py for the registry and resolution logic.
 """
 
 import json
@@ -12,26 +15,7 @@ import threading
 import time
 import uuid
 
-
-PROMPT_OS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "output", "prompt_os")
-
-# JSON file paths
-MASTER_PROMPTS_PATH = os.path.join(PROMPT_OS_DIR, "master_prompts.json")
-CHARACTERS_PATH = os.path.join(PROMPT_OS_DIR, "characters.json")
-COSTUMES_PATH = os.path.join(PROMPT_OS_DIR, "costumes.json")
-ENVIRONMENTS_PATH = os.path.join(PROMPT_OS_DIR, "environments.json")
-SCENES_PATH = os.path.join(PROMPT_OS_DIR, "scenes.json")
-STYLE_LOCKS_PATH = os.path.join(PROMPT_OS_DIR, "style_locks.json")
-WORLD_RULES_PATH = os.path.join(PROMPT_OS_DIR, "world_rules.json")
-CONTINUITY_RULES_PATH = os.path.join(PROMPT_OS_DIR, "continuity_rules.json")
-PROPS_PATH = os.path.join(PROMPT_OS_DIR, "props.json")
-VOICES_PATH = os.path.join(PROMPT_OS_DIR, "voices.json")
-SHEETS_DIR = os.path.join(PROMPT_OS_DIR, "sheets")
-PROJECT_STYLE_PATH = os.path.join(PROMPT_OS_DIR, "project_style.json")
-
-# Ensure directories exist
-os.makedirs(PROMPT_OS_DIR, exist_ok=True)
-os.makedirs(SHEETS_DIR, exist_ok=True)
+from lib import active_project as _ap
 
 
 def _now():
@@ -129,10 +113,43 @@ def resolve_variables(text, character=None, costume=None, environment=None):
 class PromptOS:
     """Manages the entire Prompt Operating System."""
 
+    # ───── Path accessors (scoped to active project) ─────
+
+    def _pos_dir(self) -> str:
+        """Absolute path to the active project's prompt_os/ directory."""
+        slug = _ap.get_active_slug()
+        _ap.ensure_project_scaffold(slug)
+        return os.path.join(_ap.get_project_root(slug), "prompt_os")
+
+    def _path(self, name: str) -> str:
+        """Path to a JSON file inside the active POS dir, e.g. 'characters.json'."""
+        return os.path.join(self._pos_dir(), name)
+
+    def _sheets_dir(self) -> str:
+        d = os.path.join(self._pos_dir(), "sheets")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def _photos_dir(self, kind: str) -> str:
+        """kind: 'char', 'env', 'costume', 'reference' (or legacy 'prop'), 'voice'.
+        'reference' is stored on disk under ref_photos/ (shorter, matches pre-existing layout)."""
+        sub = "ref_photos" if kind == "reference" else f"{kind}_photos"
+        d = os.path.join(self._pos_dir(), sub)
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def _previews_dir(self, kind: str) -> str:
+        """kind: 'char', 'env', 'costume', 'reference' (or legacy 'prop').
+        'reference' is stored on disk under ref_previews/."""
+        sub = "ref_previews" if kind == "reference" else f"{kind}_previews"
+        d = os.path.join(self._pos_dir(), sub)
+        os.makedirs(d, exist_ok=True)
+        return d
+
     # ───── Master Prompts ─────
 
     def create_prompt(self, data):
-        prompts = _load_json(MASTER_PROMPTS_PATH)
+        prompts = _load_json(self._path("master_prompts.json"))
         record = {
             "id": _gen_id(),
             "name": data.get("name", "Untitled"),
@@ -147,23 +164,23 @@ class PromptOS:
             "notes": data.get("notes", ""),
         }
         prompts.append(record)
-        _save_json(MASTER_PROMPTS_PATH, prompts)
+        _save_json(self._path("master_prompts.json"), prompts)
         return record
 
     def get_prompts(self, category=None):
-        prompts = _load_json(MASTER_PROMPTS_PATH)
+        prompts = _load_json(self._path("master_prompts.json"))
         if category:
             prompts = [p for p in prompts if p.get("category") == category]
         return prompts
 
     def get_prompt(self, pid):
-        for p in _load_json(MASTER_PROMPTS_PATH):
+        for p in _load_json(self._path("master_prompts.json")):
             if p["id"] == pid:
                 return p
         return None
 
     def update_prompt(self, pid, data):
-        prompts = _load_json(MASTER_PROMPTS_PATH)
+        prompts = _load_json(self._path("master_prompts.json"))
         for i, p in enumerate(prompts):
             if p["id"] == pid:
                 if p.get("isImmutable"):
@@ -176,16 +193,16 @@ class PromptOS:
                 p["version"] = p.get("version", 1) + 1
                 p["updatedAt"] = _now()
                 prompts[i] = p
-                _save_json(MASTER_PROMPTS_PATH, prompts)
+                _save_json(self._path("master_prompts.json"), prompts)
                 return p
         return None
 
     def delete_prompt(self, pid):
-        prompts = _load_json(MASTER_PROMPTS_PATH)
+        prompts = _load_json(self._path("master_prompts.json"))
         new = [p for p in prompts if p["id"] != pid]
         if len(new) == len(prompts):
             return False
-        _save_json(MASTER_PROMPTS_PATH, new)
+        _save_json(self._path("master_prompts.json"), new)
         return True
 
     # ───── Characters ─────
@@ -194,12 +211,13 @@ class PromptOS:
         name = data.get("name", "").strip()
         if not name:
             return {"error": "Name is required"}
-        chars = _load_json(CHARACTERS_PATH)
+        chars = _load_json(self._path("characters.json"))
         # Accept both field name formats
         desc = data.get("description", data.get("physicalDescription", data.get("physical", "")))
         record = {
             "id": _gen_id(),
             "name": data.get("name", "Unnamed"),
+            "inspiredBy": data.get("inspiredBy", ""),
             "role": data.get("role", ""),
             "description": desc,
             "physicalDescription": desc,
@@ -211,6 +229,7 @@ class PromptOS:
             "accessories": data.get("accessories", []),
             "movementRules": data.get("movementRules", ""),
             "distinguishingFeatures": data.get("distinguishingFeatures", ""),
+            "identityMark": data.get("identityMark", ""),
             "defaultExpression": data.get("defaultExpression", ""),
             "ageRange": data.get("ageRange", ""),
             "referencePhoto": data.get("referencePhoto", ""),
@@ -237,27 +256,28 @@ class PromptOS:
             "sourceResolution": data.get("sourceResolution", {}),  # {width, height, format}
         }
         chars.append(record)
-        _save_json(CHARACTERS_PATH, chars)
+        _save_json(self._path("characters.json"), chars)
         return record
 
     def get_characters(self):
-        return _load_json(CHARACTERS_PATH)
+        return _load_json(self._path("characters.json"))
 
     def get_character(self, cid):
-        for c in _load_json(CHARACTERS_PATH):
+        for c in _load_json(self._path("characters.json")):
             if c["id"] == cid:
                 return c
         return None
 
     def update_character(self, cid, data):
-        chars = _load_json(CHARACTERS_PATH)
+        chars = _load_json(self._path("characters.json"))
         for i, c in enumerate(chars):
             if c["id"] == cid:
-                for key in ("name", "role", "description", "physicalDescription",
+                for key in ("name", "inspiredBy", "role", "description", "physicalDescription",
                              "hair", "skinTone", "bodyType", "posture",
                              "outfitDescription", "accessories", "movementRules",
-                             "distinguishingFeatures", "defaultExpression", "ageRange",
-                             "referencePhoto", "previewImage", "costumes",
+                             "distinguishingFeatures", "identityMark",
+                             "defaultExpression", "ageRange",
+                             "referencePhoto", "styledReference", "previewImage", "costumes",
                              "styleOverrides", "tags", "linkedPromptIds", "notes",
                              "isCharacterSheet",
                              "approvalState", "sheetImages", "approvedSheet",
@@ -269,20 +289,20 @@ class PromptOS:
                         c[key] = data[key]
                 c["updatedAt"] = _now()
                 chars[i] = c
-                _save_json(CHARACTERS_PATH, chars)
+                _save_json(self._path("characters.json"), chars)
                 return c
         return None
 
     def delete_character(self, cid):
-        chars = _load_json(CHARACTERS_PATH)
+        chars = _load_json(self._path("characters.json"))
         new = [c for c in chars if c.get("id") != cid]
         if len(new) == len(chars):
             return False
-        _save_json(CHARACTERS_PATH, new)
+        _save_json(self._path("characters.json"), new)
         # Cascade: remove costumes linked to this character
-        costumes = _load_json(COSTUMES_PATH)
+        costumes = _load_json(self._path("costumes.json"))
         costumes = [c for c in costumes if c.get("characterId") != cid]
-        _save_json(COSTUMES_PATH, costumes)
+        _save_json(self._path("costumes.json"), costumes)
         return True
 
     # ───── Costumes ─────
@@ -291,7 +311,7 @@ class PromptOS:
         name = data.get("name", "").strip()
         if not name:
             return {"error": "Name is required"}
-        costumes = _load_json(COSTUMES_PATH)
+        costumes = _load_json(self._path("costumes.json"))
         record = {
             "id": _gen_id(),
             "name": data.get("name", "Untitled Costume"),
@@ -302,6 +322,9 @@ class PromptOS:
             "footwear": data.get("footwear", ""),
             "accessories": data.get("accessories", ""),
             "colorPalette": data.get("colorPalette", ""),
+            "material": data.get("material", ""),
+            "wearLevel": data.get("wearLevel", ""),
+            "texture": data.get("texture", ""),
             "referenceImagePath": data.get("referenceImagePath", ""),
             "previewImage": data.get("previewImage", ""),
             "tags": data.get("tags", []),
@@ -321,27 +344,28 @@ class PromptOS:
         }
         record["referencePhoto"] = record.get("referenceImagePath", "")
         costumes.append(record)
-        _save_json(COSTUMES_PATH, costumes)
+        _save_json(self._path("costumes.json"), costumes)
         return record
 
     def get_costumes(self, character_id=None):
-        costumes = _load_json(COSTUMES_PATH)
+        costumes = _load_json(self._path("costumes.json"))
         if character_id:
             costumes = [c for c in costumes if c.get("characterId") == character_id]
         return costumes
 
     def get_costume(self, cid):
-        for c in _load_json(COSTUMES_PATH):
+        for c in _load_json(self._path("costumes.json")):
             if c["id"] == cid:
                 return c
         return None
 
     def update_costume(self, cid, data):
-        costumes = _load_json(COSTUMES_PATH)
+        costumes = _load_json(self._path("costumes.json"))
         for i, c in enumerate(costumes):
             if c["id"] == cid:
                 for key in ("name", "characterId", "description", "upperBody", "lowerBody",
                              "footwear", "accessories", "colorPalette",
+                             "material", "wearLevel", "texture",
                              "referenceImagePath", "previewImage", "tags", "notes",
                              "approvalState", "sheetImages", "approvedSheet",
                              "detailCrops", "linkedCharacterIds", "linkedAccessoryIds",
@@ -351,16 +375,16 @@ class PromptOS:
                         c[key] = data[key]
                 c["updatedAt"] = _now()
                 costumes[i] = c
-                _save_json(COSTUMES_PATH, costumes)
+                _save_json(self._path("costumes.json"), costumes)
                 return c
         return None
 
     def delete_costume(self, cid):
-        costumes = _load_json(COSTUMES_PATH)
+        costumes = _load_json(self._path("costumes.json"))
         new = [c for c in costumes if c["id"] != cid]
         if len(new) == len(costumes):
             return False
-        _save_json(COSTUMES_PATH, new)
+        _save_json(self._path("costumes.json"), new)
         return True
 
     # ───── Environments ─────
@@ -369,7 +393,7 @@ class PromptOS:
         name = data.get("name", "").strip()
         if not name:
             return {"error": "Name is required"}
-        envs = _load_json(ENVIRONMENTS_PATH)
+        envs = _load_json(self._path("environments.json"))
         record = {
             "id": _gen_id(),
             "name": data.get("name", "Untitled Environment"),
@@ -402,20 +426,20 @@ class PromptOS:
         }
         record["referencePhoto"] = record.get("referenceImagePath", "")
         envs.append(record)
-        _save_json(ENVIRONMENTS_PATH, envs)
+        _save_json(self._path("environments.json"), envs)
         return record
 
     def get_environments(self):
-        return _load_json(ENVIRONMENTS_PATH)
+        return _load_json(self._path("environments.json"))
 
     def get_environment(self, eid):
-        for e in _load_json(ENVIRONMENTS_PATH):
+        for e in _load_json(self._path("environments.json")):
             if e["id"] == eid:
                 return e
         return None
 
     def update_environment(self, eid, data):
-        envs = _load_json(ENVIRONMENTS_PATH)
+        envs = _load_json(self._path("environments.json"))
         for i, e in enumerate(envs):
             if e["id"] == eid:
                 for key in ("name", "locationType", "description", "architecture",
@@ -430,27 +454,34 @@ class PromptOS:
                         e[key] = data[key]
                 e["updatedAt"] = _now()
                 envs[i] = e
-                _save_json(ENVIRONMENTS_PATH, envs)
+                _save_json(self._path("environments.json"), envs)
                 return e
         return None
 
     def delete_environment(self, eid):
-        envs = _load_json(ENVIRONMENTS_PATH)
+        envs = _load_json(self._path("environments.json"))
         new = [e for e in envs if e["id"] != eid]
         if len(new) == len(envs):
             return False
-        _save_json(ENVIRONMENTS_PATH, new)
+        _save_json(self._path("environments.json"), new)
         return True
 
-    # ───── Props ─────
+    # ───── References (formerly Props) ─────
+    # Reusable visual-reference motifs: objects, body_parts, textures, silhouettes.
+    # Extended fields (motif_category, drift_rules, acts_used, usage_notes) let a
+    # single reference carry the per-story rules that used to live only in docs.
 
-    def create_prop(self, data):
-        props = _load_json(PROPS_PATH)
+    def create_reference(self, data):
+        refs = _load_json(self._path("references.json"))
         record = {
             "id": _gen_id(),
-            "name": data.get("name", "Untitled Prop"),
+            "name": data.get("name", "Untitled Reference"),
             "description": data.get("description", ""),
             "category": data.get("category", ""),
+            "motif_category": data.get("motif_category", ""),
+            "drift_rules": data.get("drift_rules", ""),
+            "acts_used": data.get("acts_used", []),
+            "usage_notes": data.get("usage_notes", ""),
             "referenceImagePath": data.get("referenceImagePath", ""),
             "tags": data.get("tags", []),
             "createdAt": _now(),
@@ -458,54 +489,64 @@ class PromptOS:
             "approvalState": data.get("approvalState", "draft"),
             "sheetImages": data.get("sheetImages", []),
             "approvedSheet": data.get("approvedSheet", ""),
+            "approvedRef": data.get("approvedRef", ""),
             "linkedCharacterIds": data.get("linkedCharacterIds", []),
             "linkedCostumeIds": data.get("linkedCostumeIds", []),
             "continuityNotes": data.get("continuityNotes", ""),
             "versionHistory": data.get("versionHistory", []),
             "sourceResolution": data.get("sourceResolution", {}),
         }
-        props.append(record)
-        _save_json(PROPS_PATH, props)
+        refs.append(record)
+        _save_json(self._path("references.json"), refs)
         return record
 
-    def get_props(self):
-        return _load_json(PROPS_PATH)
+    def get_references(self):
+        return _load_json(self._path("references.json"))
 
-    def get_prop(self, pid):
-        for p in _load_json(PROPS_PATH):
-            if p["id"] == pid:
-                return p
+    def get_reference(self, rid):
+        for r in _load_json(self._path("references.json")):
+            if r["id"] == rid:
+                return r
         return None
 
-    def update_prop(self, pid, data):
-        props = _load_json(PROPS_PATH)
-        for i, p in enumerate(props):
-            if p["id"] == pid:
+    def update_reference(self, rid, data):
+        refs = _load_json(self._path("references.json"))
+        for i, r in enumerate(refs):
+            if r["id"] == rid:
                 for key in ("name", "description", "category",
+                             "motif_category", "drift_rules", "acts_used", "usage_notes",
                              "referenceImagePath", "tags",
-                             "approvalState", "sheetImages", "approvedSheet",
+                             "approvalState", "sheetImages", "approvedSheet", "approvedRef",
                              "linkedCharacterIds", "linkedCostumeIds",
                              "continuityNotes", "versionHistory", "sourceResolution"):
                     if key in data:
-                        p[key] = data[key]
-                p["updatedAt"] = _now()
-                props[i] = p
-                _save_json(PROPS_PATH, props)
-                return p
+                        r[key] = data[key]
+                r["updatedAt"] = _now()
+                refs[i] = r
+                _save_json(self._path("references.json"), refs)
+                return r
         return None
 
-    def delete_prop(self, pid):
-        props = _load_json(PROPS_PATH)
-        new = [p for p in props if p["id"] != pid]
-        if len(new) == len(props):
+    def delete_reference(self, rid):
+        refs = _load_json(self._path("references.json"))
+        new = [r for r in refs if r["id"] != rid]
+        if len(new) == len(refs):
             return False
-        _save_json(PROPS_PATH, new)
+        _save_json(self._path("references.json"), new)
         return True
+
+    # Backward-compat aliases — any old caller using the prop API still works.
+    # Safe to remove after all callers are migrated.
+    create_prop = create_reference
+    get_props = get_references
+    get_prop = get_reference
+    update_prop = update_reference
+    delete_prop = delete_reference
 
     # ───── Voices ─────
 
     def create_voice(self, data):
-        voices = _load_json(VOICES_PATH)
+        voices = _load_json(self._path("voices.json"))
         record = {
             "id": _gen_id(),
             "name": data.get("name", "Untitled Voice"),
@@ -518,20 +559,20 @@ class PromptOS:
             "updatedAt": _now(),
         }
         voices.append(record)
-        _save_json(VOICES_PATH, voices)
+        _save_json(self._path("voices.json"), voices)
         return record
 
     def get_voices(self):
-        return _load_json(VOICES_PATH)
+        return _load_json(self._path("voices.json"))
 
     def get_voice(self, vid):
-        for v in _load_json(VOICES_PATH):
+        for v in _load_json(self._path("voices.json")):
             if v["id"] == vid:
                 return v
         return None
 
     def update_voice(self, vid, data):
-        voices = _load_json(VOICES_PATH)
+        voices = _load_json(self._path("voices.json"))
         for i, v in enumerate(voices):
             if v["id"] == vid:
                 for key in ("name", "characterId", "voicePresetId", "description",
@@ -540,22 +581,22 @@ class PromptOS:
                         v[key] = data[key]
                 v["updatedAt"] = _now()
                 voices[i] = v
-                _save_json(VOICES_PATH, voices)
+                _save_json(self._path("voices.json"), voices)
                 return v
         return None
 
     def delete_voice(self, vid):
-        voices = _load_json(VOICES_PATH)
+        voices = _load_json(self._path("voices.json"))
         new = [v for v in voices if v["id"] != vid]
         if len(new) == len(voices):
             return False
-        _save_json(VOICES_PATH, new)
+        _save_json(self._path("voices.json"), new)
         return True
 
     # ───── Scenes ─────
 
     def create_scene(self, data):
-        scenes = _load_json(SCENES_PATH)
+        scenes = _load_json(self._path("scenes.json"))
         record = {
             "id": _gen_id(),
             "name": data.get("name", "Untitled Scene"),
@@ -564,6 +605,10 @@ class PromptOS:
             "costumeId": data.get("costumeId", ""),
             "environmentId": data.get("environmentId", ""),
             "shotDescription": data.get("shotDescription", ""),
+            "sceneType": data.get("sceneType", ""),
+            "narrativeIntent": data.get("narrativeIntent", ""),
+            "emotion": data.get("emotion", ""),
+            "energy": int(data.get("energy", 5) or 5),
             "cameraAngle": data.get("cameraAngle", ""),
             "cameraMovement": data.get("cameraMovement", ""),
             "duration": data.get("duration", 5),
@@ -574,73 +619,75 @@ class PromptOS:
             "notes": data.get("notes", ""),
         }
         scenes.append(record)
-        _save_json(SCENES_PATH, scenes)
+        _save_json(self._path("scenes.json"), scenes)
         return record
 
     def get_scenes(self):
-        scenes = _load_json(SCENES_PATH)
+        scenes = _load_json(self._path("scenes.json"))
         return sorted(scenes, key=lambda s: s.get("orderIndex", 0))
 
     def get_scene(self, sid):
-        for s in _load_json(SCENES_PATH):
+        for s in _load_json(self._path("scenes.json")):
             if s["id"] == sid:
                 return s
         return None
 
     def update_scene(self, sid, data):
-        scenes = _load_json(SCENES_PATH)
+        scenes = _load_json(self._path("scenes.json"))
         for i, s in enumerate(scenes):
             if s["id"] == sid:
                 for key in ("name", "promptId", "characterId", "costumeId", "environmentId",
-                             "shotDescription", "cameraAngle", "cameraMovement", "duration",
-                             "orderIndex", "tags", "notes"):
+                             "shotDescription", "sceneType", "narrativeIntent", "emotion", "energy",
+                             "cameraAngle", "cameraMovement", "duration",
+                             "orderIndex", "tags", "notes",
+                             "coverageTier", "sceneGroupId"):
                     if key in data:
                         s[key] = data[key]
                 s["updatedAt"] = _now()
                 scenes[i] = s
-                _save_json(SCENES_PATH, scenes)
+                _save_json(self._path("scenes.json"), scenes)
                 return s
         return None
 
     def delete_scene(self, sid):
-        scenes = _load_json(SCENES_PATH)
+        scenes = _load_json(self._path("scenes.json"))
         new = [s for s in scenes if s["id"] != sid]
         if len(new) == len(scenes):
             return False
-        _save_json(SCENES_PATH, new)
+        _save_json(self._path("scenes.json"), new)
         return True
 
     # ───── Style Locks ─────
 
     def get_style_locks(self):
-        return _load_json(STYLE_LOCKS_PATH)
+        return _load_json(self._path("style_locks.json"))
 
     def set_style_locks(self, locks):
-        _save_json(STYLE_LOCKS_PATH, locks)
+        _save_json(self._path("style_locks.json"), locks)
         return locks
 
     # ───── World Rules ─────
 
     def get_world_rules(self):
-        return _load_json(WORLD_RULES_PATH)
+        return _load_json(self._path("world_rules.json"))
 
     def set_world_rules(self, rules):
-        _save_json(WORLD_RULES_PATH, rules)
+        _save_json(self._path("world_rules.json"), rules)
         return rules
 
     # ───── Continuity Rules ─────
 
     def get_continuity_rules(self):
-        return _load_json(CONTINUITY_RULES_PATH)
+        return _load_json(self._path("continuity_rules.json"))
 
     def set_continuity_rules(self, rules):
-        _save_json(CONTINUITY_RULES_PATH, rules)
+        _save_json(self._path("continuity_rules.json"), rules)
         return rules
 
     # ───── Project Style Lock ─────
 
     def get_project_style(self):
-        return _load_json(PROJECT_STYLE_PATH, default={})
+        return _load_json(self._path("project_style.json"), default={})
 
     def set_project_style(self, style):
         """Save structured project style lock.
@@ -649,14 +696,14 @@ class PromptOS:
         if not isinstance(style, dict):
             return {"error": "Style must be a dict"}
         style["updatedAt"] = _now()
-        _save_json(PROJECT_STYLE_PATH, style)
+        _save_json(self._path("project_style.json"), style)
         return style
 
     # ───── Sheet Management ─────
 
     def add_sheet_image(self, asset_type, asset_id, sheet_data):
         """Add a generated sheet image to an asset.
-        asset_type: 'character'|'costume'|'environment'|'prop'
+        asset_type: 'character'|'costume'|'environment'|'reference' (or legacy 'prop')
         sheet_data: {url, type, resolution:{width,height}, model, generatedAt}
         """
         getter = getattr(self, f'get_{asset_type}', None)
@@ -670,6 +717,82 @@ class PromptOS:
         sheet_data["addedAt"] = _now()
         sheets.append(sheet_data)
         updater(asset_id, {"sheetImages": sheets, "approvalState": "generated"})
+        return getter(asset_id)
+
+    def duplicate_sheet_image(self, asset_type, asset_id, sheet_url, server_root):
+        """Copy a sheet file to a new name and append a new entry to sheetImages.
+        Original entry stays in place. Returns {"asset": updated, "new_url": str}
+        or {"error": str}.
+        """
+        import shutil
+        getter = getattr(self, f'get_{asset_type}', None)
+        updater = getattr(self, f'update_{asset_type}', None)
+        if not getter or not updater:
+            return {"error": f"Unknown asset type: {asset_type}"}
+        asset = getter(asset_id)
+        if not asset:
+            return {"error": f"{asset_type} not found: {asset_id}"}
+        sheets = asset.get("sheetImages", []) or []
+        src_entry = None
+        for s in sheets:
+            url = s.get("url") if isinstance(s, dict) else s
+            if url == sheet_url:
+                src_entry = s
+                break
+        if src_entry is None:
+            return {"error": f"sheet not found in gallery: {sheet_url}"}
+        rel = sheet_url.lstrip("/")
+        src_disk = None
+        for candidate in (os.path.join(server_root, "public", rel),
+                          os.path.join(server_root, rel)):
+            if os.path.isfile(candidate):
+                src_disk = candidate
+                break
+        if not src_disk:
+            return {"error": f"source file not on disk: {sheet_url}"}
+        base_dir, base_name = os.path.split(src_disk)
+        name_root, ext = os.path.splitext(base_name)
+        new_name = f"{name_root}_copy_{int(time.time())}{ext}"
+        new_disk = os.path.join(base_dir, new_name)
+        try:
+            shutil.copy2(src_disk, new_disk)
+        except OSError as e:
+            return {"error": f"copy failed: {e}"}
+        url_dir = os.path.dirname(sheet_url.rstrip("/"))
+        new_url = f"{url_dir}/{new_name}"
+        new_entry = dict(src_entry) if isinstance(src_entry, dict) else {"url": new_url, "type": "full"}
+        new_entry["url"] = new_url
+        new_entry["addedAt"] = _now()
+        new_entry["duplicatedFrom"] = sheet_url
+        sheets.append(new_entry)
+        updater(asset_id, {"sheetImages": sheets})
+        return {"asset": getter(asset_id), "new_url": new_url}
+
+    def remove_sheet_image(self, asset_type, asset_id, sheet_url):
+        """Remove a sheet image from an asset's gallery.
+        Clears any approval slot pointing at this URL and clears previewImage
+        if it matches. Returns the updated asset (or error dict).
+        """
+        getter = getattr(self, f'get_{asset_type}', None)
+        updater = getattr(self, f'update_{asset_type}', None)
+        if not getter or not updater:
+            return {"error": f"Unknown asset type: {asset_type}"}
+        asset = getter(asset_id)
+        if not asset:
+            return {"error": f"{asset_type} not found: {asset_id}"}
+        sheets = asset.get("sheetImages", []) or []
+        new_sheets = [s for s in sheets if (s.get("url") if isinstance(s, dict) else s) != sheet_url]
+        if len(new_sheets) == len(sheets):
+            return {"error": f"sheet not found in gallery: {sheet_url}"}
+        updates = {"sheetImages": new_sheets}
+        slot_fields = ("approvedSheet", "approvedFaceCloseUp", "approvedHeroPortrait",
+                       "approvedFullBody", "approvedSideAngle", "previewImage")
+        for f in slot_fields:
+            if asset.get(f, "") == sheet_url:
+                updates[f] = ""
+        if updates.get("approvedSheet") == "":
+            updates["approvalState"] = "generated"
+        updater(asset_id, updates)
         return getter(asset_id)
 
     def approve_sheet(self, asset_type, asset_id, sheet_url, slot="approvedSheet"):
@@ -710,6 +833,20 @@ class PromptOS:
         if asset.get("approvalState") not in ("approved", "locked"):
             return {"error": "Asset must be approved before locking"}
         updater(asset_id, {"approvalState": "locked"})
+        return getter(asset_id)
+
+    def unlock_asset(self, asset_type, asset_id):
+        """Unlock a locked asset so it can be edited again."""
+        getter = getattr(self, f'get_{asset_type}', None)
+        updater = getattr(self, f'update_{asset_type}', None)
+        if not getter or not updater:
+            return {"error": f"Unknown asset type: {asset_type}"}
+        asset = getter(asset_id)
+        if not asset:
+            return {"error": f"{asset_type} not found: {asset_id}"}
+        if asset.get("approvalState") != "locked":
+            return {"error": "Asset is not locked"}
+        updater(asset_id, {"approvalState": "approved"})
         return getter(asset_id)
 
     def get_asset_readiness(self, asset_type, asset_id):
@@ -935,13 +1072,13 @@ class PromptOS:
     # ───── Dashboard ─────
 
     def get_dashboard(self):
-        prompts = _load_json(MASTER_PROMPTS_PATH)
-        characters = _load_json(CHARACTERS_PATH)
-        costumes = _load_json(COSTUMES_PATH)
-        environments = _load_json(ENVIRONMENTS_PATH)
-        scenes = _load_json(SCENES_PATH)
-        style_locks = _load_json(STYLE_LOCKS_PATH)
-        world_rules = _load_json(WORLD_RULES_PATH)
+        prompts = _load_json(self._path("master_prompts.json"))
+        characters = _load_json(self._path("characters.json"))
+        costumes = _load_json(self._path("costumes.json"))
+        environments = _load_json(self._path("environments.json"))
+        scenes = _load_json(self._path("scenes.json"))
+        style_locks = _load_json(self._path("style_locks.json"))
+        world_rules = _load_json(self._path("world_rules.json"))
 
         # Count locked prompts
         locked = sum(1 for p in prompts if p.get("isImmutable"))

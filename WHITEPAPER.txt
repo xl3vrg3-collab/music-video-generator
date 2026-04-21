@@ -1,296 +1,911 @@
 ================================================================================
-            AI MUSIC VIDEO GENERATOR — WHITE PAPER
-            Version 1.0 | March 2026
+  LUMN STUDIO  --  V6 TECHNICAL WHITEPAPER
+  AI Film Studio for Short Films, Trailers, and Cinematic Pieces
 ================================================================================
+  Version: 6.0
+  Pipeline: Gemini Anchors -> Sonnet QA -> Kling Video -> FFmpeg Conform
+  Server:   http://localhost:3849
+  Backend:  fal.ai (unified image + video API)
+================================================================================
+
 
 OVERVIEW
 --------
-This tool takes any song (MP3/WAV) and a style prompt, then generates a full
-AI music video using Grok's video generation model. The entire pipeline is
-automated: audio analysis, scene planning, video generation, and final
-stitching with crossfade transitions and your audio overlaid.
 
-No video editing skills required. Upload a song, describe the vibe, get a
-music video.
+LUMN Studio is a local-first AI film studio designed for producing short films,
+trailers, and cinematic pieces with frame-accurate shot control, persistent
+character identity, and motivated cinematic transitions.
+
+It is NOT a music video generator, a slideshow maker, or a social-clip tool.
+The system is built around a film production mental model: brief, preproduction,
+shot design, anchor generation, video rendering, and editorial conform.
+
+The V6 pipeline resolves the core failure mode of earlier AI video systems --
+identity drift -- by separating visual identity from motion description. Reference
+images carry the WHO and WHERE. Prompts carry only the HOW (camera, pose,
+framing). This division is enforced at every layer of the stack.
+
+Core engines:
+  - Gemini 3.1 Flash (via fal.ai)    -- anchor still generation + image editing
+  - Kling 3.0 V3/O3 (via fal.ai)    -- image-to-video, character element lock
+  - Claude Sonnet 4.6                -- QA arbiter, candidate selection, audit
+  - Claude Haiku 4.5                 -- fast evaluation, transition judge, critic
+  - FFmpeg                           -- editorial conform, color grade, output
+
+Runway is deprecated. All video production runs through fal.ai.
 
 
-HOW IT WORKS (PIPELINE)
------------------------
+ARCHITECTURE
+------------
 
-  Song File (.mp3/.wav)
+  [Web UI / Browser]
        |
+       | HTTP  (port 3849)
        v
-  [1] AUDIO ANALYSIS (librosa / numpy)
-       - Detects BPM and beat timestamps
-       - Maps energy curve over time (loud vs quiet sections)
-       - Segments the track into sections:
-           INTRO    — low energy opening
-           VERSE    — moderate energy, storytelling
-           CHORUS   — peak energy, climactic
-           BRIDGE   — transition, usually different feel
-           OUTRO    — wind down, closing
+  [server.py  --  BaseHTTPRequestHandler, no Flask]
        |
-       v
-  [2] SCENE PLANNING (scene_planner.py)
-       - Divides the song into ~8-second scenes (Grok video clip length)
-       - Generates a unique visual prompt for each scene based on:
-           * Your style input ("cyberpunk neon city rain")
-           * Section type (intro gets wide establishing shots,
-             chorus gets high-energy dynamic shots, bridge gets dreamy)
-           * Energy level (high energy = fast motion, low = slow/calm)
-       - Adds cinematic modifiers: camera angles, lighting, mood
-       - Example output for a 3-minute song: ~22 scenes
+       +---> lib/prompt_os.py            Prompt OS: character/costume/env/prop entities
        |
-       v
-  [3] VIDEO GENERATION (Grok grok-imagine-video API)
-       - Sends each scene prompt to xAI's video generation model
-       - Each clip is ~8 seconds at high quality
-       - Runs up to 3 generations concurrently for speed
-       - Async polling: submit request, poll every 5 seconds for completion
-       - If video generation fails for a scene, falls back to:
-           * Generate a still image (grok-imagine-image)
-           * Apply Ken Burns effect (slow zoom/pan) via ffmpeg
-           * Result: smooth animated clip from a single image
-       - Downloads all clips to output/clips/
+       +---> lib/preproduction_assets.py Sheet generation + package management
        |
-       v
-  [4] VIDEO STITCHING (ffmpeg)
-       - Takes all generated clips in order
-       - Applies 0.5-second crossfade transitions between each clip
-       - Overlays the original audio track on the combined video
-       - Adds 1-second fade-in at start and 2-second fade-out at end
-       - Outputs final music video as MP4 (H.264 video, AAC audio)
+       +---> lib/fal_client.py           Gemini image + Kling video via fal.ai SDK
        |
-       v
-  Final Output: music_video.mp4
+       +---> lib/claude_client.py        Haiku/Sonnet QA, vision analysis, escalation
+       |
+       +---> lib/video_stitcher.py       FFmpeg editorial conform + color grade
+       |
+       +---> lib/audio_analyzer.py       Beat/BPM/section analysis via librosa
+       |
+       +---> lib/scene_planner.py        Scene plan generation + transition assignment
+       |
+       +---> lib/transition_judge.py     5D continuity scorer for shot pairs
+       |
+       +---> lib/transition_strategy.py  Strategy engine: cut type selection + fallback
+       |
+       +---> lib/learning_system.py      Evidence log, failure clustering, rule updates
+       |
+       +---> lib/prompt_packs/           14 prompt pack modules (Gemini, Kling, Claude)
+
+  [output/]
+       |
+       +---> prompt_os/               Prompt OS entity JSON + sheet images
+       +---> preproduction/           Package JSON + ref sheets
+       +---> pipeline/
+       |       +---> anchors_v6/      Gemini-generated anchor stills
+       |       +---> clips_v6/        Kling-generated video clips
+       |       +---> final/           Conformed output
+       |       +---> learning/        Shot logs, failure clusters, rule history
+       +---> projects/                Full project save files
 
 
-SYSTEM REQUIREMENTS
--------------------
-  - Python 3.10 or newer
-  - ffmpeg installed and on your PATH
-      Windows:  winget install ffmpeg
-      Mac:      brew install ffmpeg
-      Linux:    sudo apt install ffmpeg
-  - xAI API key with access to grok-imagine-video model
-  - Internet connection (for API calls)
-  - ~500MB free disk space per music video
+THE 7-STAGE WORKFLOW
+--------------------
+
+Stage 1:  BRIEF
+  Define the project: genre, tone, world, characters, rough story beats.
+  Sets the creative brief that drives all downstream decisions.
+
+Stage 2:  DRAFTS & REFS
+  Upload reference images: character photos, environment collages, costume refs,
+  prop photos. These become the visual anchor of the production. No amount of
+  text description can substitute for a well-chosen reference image.
+
+Stage 3:  ASSETS (Preproduction)
+  Generate structured reference sheets for all entities:
+    - Character sheets: 8 panels (front, side, back, 3/4, face close-up x2,
+      detail, emotional expression) -- photorealistic, no labels
+    - Costume sheets: 8 panels (full-body, accessory details, fabric detail,
+      layering view, movement study)
+    - Environment sheets: 12 panels (establishing wide, interior POVs, ambient
+      detail shots, lighting variants, time-of-day reads)
+    - Prop sheets: detail panels for key story items
+
+  All sheets generated by Gemini 3.1 Flash via fal.ai.
+  Sheets are reviewed and one canonical "hero ref" is selected per entity before
+  production can advance.
+
+  Fast mode:       3-4 views per package.
+  Production mode: 6-10 views per package.
+
+Stage 4:  SCENES
+  Script or import the beat sheet: a sequence of beats, each with characters
+  present, location, emotion, and energy level. Scene planning assigns
+  transitions between beats automatically using a transition map keyed on
+  section flow (intro->verse, verse->chorus, etc.).
+
+Stage 5:  SHOTS
+  Each beat expands into individual shots with:
+    - Shot type (extreme wide, wide, medium, close-up, etc.)
+    - Camera angle (eye level, low angle, dutch, bird's eye, OTS, etc.)
+    - Lens selection (24mm through 200mm)
+    - Camera movement (push in, pull back, pan, crane, static, etc.)
+    - Duration (3-15s)
+    - Kling tier (v3_standard, v3_pro, o3_standard, o3_pro)
+    - Character elements (which preproduction packages to bind)
+
+  Shot priority is set per-shot: standard, hero, or insert.
+  Hero shots receive Sonnet QA. Standard shots run Haiku evaluation.
+
+Stage 6:  RENDER (V6 Pipeline)
+  The full pipeline runs in phases, each independently invokable:
+
+    anchors  ->  select  ->  review  ->  clips  ->  conform
+
+  See V6 Pipeline section below for full detail.
+
+Stage 7:  OUTPUT
+  Conformed MP4 at the target aspect ratio (16:9, 9:16, 1:1, 4:5).
+  Optional color grade applied via FFmpeg (none/warm/cold/vintage/
+  high_contrast/noir/cyberpunk/sepia).
+  Optional watermark, credits, thumbnail extraction.
+  Export presets for platform delivery (YouTube, Instagram, TikTok).
+
+
+V6 PIPELINE: GEMINI ANCHORS -> SONNET QA -> KLING VIDEO -> FFMPEG CONFORM
+--------------------------------------------------------------------------
+
+Entry point:   scripts/pipeline_v6_gemini_kling.py
+Web UI entry:  /api/v6/* endpoints in server.py
+Config:        output/pipeline/production_plan_v4.json
+Packages:      output/preproduction/packages.json
+
+  Phase 1 -- ANCHORS (Gemini 3.1 Flash)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  For each shot in the production plan:
+    1. Resolve character, costume, and environment packages assigned to the shot
+    2. Select the approved hero ref images for each package
+    3. Construct a lean anchor prompt -- camera/framing/pose ONLY
+       (refs carry identity; prompts must NOT re-describe what refs already show)
+    4. Call gemini_edit_image() with up to ~10 reference images
+       Endpoint: fal-ai/gemini-3.1-flash-image-preview/edit
+    5. Download resulting PNG to output/pipeline/anchors_v6/
+
+  Optionally run multiple candidates (3x) per shot before selection.
+  Anchor stills are stored with metadata binding them to their shot.
+
+  Phase 2 -- SELECT (Sonnet QA)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  When 3 candidates exist per shot, Sonnet picks the best one:
+    - Vision analysis of all candidate images
+    - Scores on identity fidelity, pose accuracy, environment match, composition
+    - Returns selection with reasoning
+  Selected anchor is marked in the production plan and used downstream.
+
+  Phase 3 -- REVIEW (Sonnet Transition Audit)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  Sonnet reviews adjacent anchor pairs across the full sequence:
+    - Checks spatial continuity (same location, consistent lighting,
+      180-degree rule compliance)
+    - Flags identity drift between shots of the same character
+    - Recommends transition type for each cut based on shot size jump
+    - Flags shots that need a re-establishing wide before proceeding
+  Results saved to: output/pipeline/learning/sonnet_review_v6.json
+
+  Phase 4 -- CLIPS (Kling 3.0 via fal.ai)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  For each approved anchor:
+    1. Build the Kling motion prompt: movement description only (15-40 words)
+       No subject re-description. No sound words. No color commentary.
+    2. Optionally attach character elements for Kling's native consistency system:
+         elements = [{"frontal_image_url": "...", "reference_image_urls": ["..."]}]
+       V3 endpoints support up to 4 elements. O3 does not use elements.
+    3. Optionally set end_image_path for transition control between two anchors
+    4. Submit to Kling via fal.ai queue and poll for result
+    5. Download MP4 to output/pipeline/clips_v6/
+
+  Kling tier selection:
+    v3_standard   $0.084/s   default, solid quality, reasonable queue time
+    v3_pro        $0.112/s   higher quality, slower queue
+    o3_standard   $0.084/s   newer architecture, no elements support
+    o3_pro        $0.392/s   premium quality, longest queue
+
+  Phase 5 -- CONFORM (FFmpeg)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  Editorial conform via lib/video_stitcher.py and lib/editorial_conform.py:
+    1. Normalize all clips to target resolution (default: 1920x1080)
+    2. Apply per-shot color grade preset
+    3. Concatenate with per-shot transition type
+    4. Apply audio track (optional) with fade in/out
+    5. Export final MP4 to output/pipeline/final/
+
+  Supported transition types (19 total):
+    hard_cut, crossfade, dissolve, fade_black, wipe_left, wipe_right,
+    slide_left, slide_right, slide_up, slide_down, zoom_in, glitch,
+    rotate, blur_transition, flash_white, flash_black, pixelate,
+    squeeze, circular_reveal
+
+  Transition type is assigned per cut from the Transition Intelligence system,
+  not defaulted uniformly across the production.
+
+
+PREPRODUCTION SYSTEM
+--------------------
+
+Module: lib/preproduction_assets.py
+API:    /api/preproduction/*, /api/pos/*
+Data:   output/preproduction/, output/prompt_os/
+
+The preproduction system sits between story planning and shot generation. Its
+purpose is to replace text-only character/environment descriptions with approved
+visual reference packages that drive all image and video generation.
+
+Package types:
+  character      Visual identity package -- 8-panel photorealistic reference sheet
+  costume        Wardrobe package -- clothing, materials, accessories
+  environment    Location package -- establishing wides + interior details + light reads
+  prop           Key story objects -- multi-angle detail sheet
+
+Package status flow:
+  draft -> generating -> generated -> approved / rejected / missing
+
+A package cannot be used in production until its status is "approved". This gate
+prevents shots from generating against incomplete or rejected references.
+
+Sheet generation:
+  All sheets are generated by Gemini 3.1 Flash (text-to-image mode, no refs needed
+  at the sheet stage). The system composes structured prompts using HERO_PROMPTS
+  templates that enforce multi-panel layouts, white backgrounds, consistent
+  character identity across panels, and zero text/labels in the output image.
+
+Hero ref selection:
+  After a sheet is generated, the user selects one canonical "hero ref" image per
+  package. This single image becomes the primary reference for all downstream
+  anchor generation and Kling element binding for that entity.
+
+
+PROMPT OS (PROMPT OPERATING SYSTEM)
+-------------------------------------
+
+Module: lib/prompt_os.py
+Data:   output/prompt_os/
+API:    /api/pos/*
+
+The Prompt OS is the central registry for all creative entities in a production.
+It stores structured records -- not just text prompts -- combining visual refs,
+descriptive metadata, and assembly rules.
+
+Entity types:
+
+  Characters    Unique people or beings. Each record stores:
+                  - Name, description, distinctive features
+                  - Attached photo/sheet path (the hero ref)
+                  - Default framing preference
+                  - Identity lock notes
+
+  Costumes      Wardrobe packages linked to one or more characters.
+                  - Full-body and detail ref images
+                  - Material, color, period notes
+                  - Associated props and accessories
+
+  Environments  Locations. Each record stores:
+                  - Canonical wide reference image
+                  - Interior/exterior designation
+                  - Lighting notes (golden hour, overcast, artificial, etc.)
+                  - Time-of-day variants
+
+  Props         Key story objects.
+                  - Multi-angle detail photos
+                  - Scale reference notes
+                  - Which characters handle this prop
+
+  Scenes        Assembled compositions: character + costume + environment + props.
+                  - Emotional tone
+                  - Energy level
+                  - Style lock notes
+
+  Style Locks   Production-wide visual rules:
+                  - Color palette constraints
+                  - Film stock or look reference
+                  - Camera movement restrictions
+                  - Forbidden visual elements
+
+  World Rules   Narrative and physical rules:
+                  - Diegetic constraints (no phones in period pieces, etc.)
+                  - Character knowledge/motivation notes
+
+Prompt assembly (lib/prompt_assembler.py) pulls from these records when building
+anchor and motion prompts, ensuring every shot inherits the correct visual context
+without the human operator having to manually re-state world details per shot.
+
+Data files in output/prompt_os/:
+  master_prompts.json     All prompt entities
+  characters.json         Character records
+  costumes.json           Costume records
+  environments.json       Environment records
+  scenes.json             Scene composition records
+  style_locks.json        Production-wide style rules
+  world_rules.json        Narrative/physical rules
+  continuity_rules.json   Continuity enforcement rules
+  props.json              Prop records
+  project_style.json      Top-level project style definition
+  sheets/                 Generated reference sheet images
+
+
+TRANSITION INTELLIGENCE SYSTEM
+--------------------------------
+
+Modules: lib/transition_judge.py, lib/transition_strategy.py,
+         lib/prompt_packs/ (14 packs)
+
+The Transition Intelligence system prevents jarring cuts by analyzing adjacent
+shot pairs and selecting the appropriate transition strategy before rendering.
+
+5+1 Dimension Scoring (transition_judge.py):
+
+  Dimension      Weight   What it measures
+  ---------      ------   ----------------
+  Identity         3.0    Subject looks consistent across the cut
+  Pose             2.0    Body position and angle compatible
+  Camera           1.5    Framing, height, and lens compatible
+  Scene            1.5    Same environment, lighting, time of day
+  Motion           2.0    Implied motion flows logically
+  Overall          --     Weighted composite of the above
+
+Scores run 0.0 (broken) to 1.0 (seamless). The composite score drives strategy
+selection in transition_strategy.py.
+
+Two scoring modes:
+  Heuristic    Fast structural analysis from shot metadata (free, no API call)
+  Vision       Actual image analysis via Claude Haiku or Sonnet (API cost applies)
+
+Strategy Engine (transition_strategy.py):
+
+  Strategy              Cost Tier    Description
+  --------              ---------    -----------
+  motivated_cut         free         Hard cut driven by narrative (action, eyeline,
+                                     smash, match, impact, audio-led)
+  direct_animate        standard     Animate straight from A to B anchor
+  end_variants          premium      Generate end-frame variants of clip A
+  bridge_frame          premium      Generate intermediate still bridging A to B
+  regenerate_pair       hero         Regenerate both clips with matched entry/exit
+
+  Fallback chain:
+    keep_start -> regen_end_variants -> bridge_frame -> motivated_cut -> regen_pair
+
+  Cost tier (standard/premium/hero) is set per shot and controls which strategies
+  are available. Hero shots get the full fallback budget; standard shots use
+  motivated_cut and direct_animate only.
+
+Motivated cut types (11 variants):
+  motivated_cut, hidden_cut, whip_pan_cut, object_wipe_cut,
+  foreground_wipe_cut, blink_cut, reaction_cut, insert_cut,
+  match_cut, impact_cut, audio_led_cut
+
+Self-Healing Learning (lib/learning_system.py):
+  Every shot attempt is logged with its inputs, scores, and failure types.
+  After a batch, Haiku clusters failure patterns and Sonnet proposes rule updates.
+  Active rules are written to output/pipeline/learning/prompt_rules.json and
+  applied to future shots in the same production.
+
+  Storage files in output/pipeline/learning/:
+    shot_attempts.json      Per-shot attempt log
+    failure_clusters.json   Grouped failure patterns
+    prompt_rules.json       Active prompt rule adjustments
+    thresholds.json         Current scoring thresholds
+    optimizer_history.json  History of optimizer runs
+    sonnet_review_v6.json   Sonnet full-sequence transition audit
+
+
+SPATIAL CONTINUITY SYSTEM
+--------------------------
+
+Rules enforced by the Sonnet review phase and the Prompt OS world rules:
+
+  Canonical Wides         Every location must have one approved wide establishing
+                          shot. This wide is re-used (not re-generated) as the
+                          spatial anchor for that location. Shot generation pulls
+                          from it.
+
+  180-Degree Rule         The axis of action is locked per scene. Camera positions
+                          are constrained to the approved side of the line.
+
+  Light Locks             Approved lighting direction and quality for each
+                          environment are stored in the environment package.
+                          Anchor prompts reference the locked light.
+
+  Re-establishing Shots   After a significant temporal or spatial break, the
+                          Sonnet review flags the need for a re-establishing
+                          wide before close or medium shots resume.
+
+  Identity Gate           The first 3-8 seconds of any character's appearance in
+                          a scene must be a medium or close shot that locks their
+                          identity before wider or faster shots proceed. This
+                          prevents the audience from losing track of who is on screen.
+
+
+CLAUDE QA SYSTEM (HAIKU / SONNET)
+-----------------------------------
+
+Module: lib/claude_client.py
+
+Two-tier evaluation designed to minimize cost while preserving quality gates.
+
+  Model            ID                              Primary Use
+  -----            --                              -----------
+  Haiku 4.5        claude-haiku-4-5-20251001       Default critic for all shots
+  Sonnet 4.6       claude-sonnet-4-6               Hero shots, borderline cases,
+                                                    escalations, meta-analysis
+
+Escalation triggers (automatic):
+  - Shot priority is "hero"
+  - Haiku overall score falls in borderline range (0.45 to 0.65)
+  - Two or more failure types detected in one shot
+  - Two or more retry attempts already made on that shot
+  - Explicit force_escalate flag set
+
+All calls return structured JSON. Vision calls include base64-encoded images
+inline. The client handles markdown fence stripping and fallback JSON extraction.
+
+QA call types:
+  judge_transition_vision()     Haiku-first transition scoring with auto-escalation
+  critique_render_vision()      Post-render image/video quality critique
+  call_json() / call_text()     General structured and unstructured reasoning tasks
+
+
+WEB UI
+------
+
+Entry: http://localhost:3849
+Files: public/index.html, public/v6-pipeline.js, public/timeline.js
+
+The web UI is a single-page application served by server.py (no Flask, pure
+http.server). Authentication uses a session token (LUMN_API_TOKEN env var; if
+not set, a random token is generated at startup and printed to the console).
+CSRF tokens are issued per session.
+
+Main workspace sections:
+
+  Prompt OS Panel     Create and manage characters, costumes, environments, props.
+                      Upload reference photos. Review and approve generated sheets.
+                      Assign entities to beats and shots.
+
+  Scene/Beat Editor   Define the production beat sheet. Set characters, location,
+                      emotion, energy per beat. Expand beats into individual shots
+                      with camera specs.
+
+  Shots Workspace     Per-shot editing: shot type, camera angle, lens, movement,
+                      duration, Kling tier, character element bindings.
+                      V6 pipeline panel (v6-pipeline.js) mounts here.
+
+  V6 Pipeline Panel   Camera and lens selection per shot. Trigger anchor
+                      generation, candidate selection, Sonnet review. One-click
+                      clip generation. Conform to output.
+
+                      Camera options available in the UI:
+                        Angles:    Eye level, Low angle, Ground level, High angle,
+                                   Bird's eye, Dutch angle, Over-the-shoulder
+                        Lenses:    24mm wide, 35mm standard, 50mm normal,
+                                   85mm telephoto, 135mm telephoto, 200mm telephoto
+                        Sizes:     Extreme wide, Wide establishing, Medium-wide,
+                                   Medium, Medium close-up, Close-up, Extreme close-up
+                        Movements: Push in, Pull back, Pan, Crane, Static, Handheld,
+                                   Orbit, Whip pan, and others
+
+  References Manager  Upload and manage general reference images (mood boards,
+                      style refs, collages) separate from entity packages.
+
+  Timeline            Shot-level timeline view. Per-shot playback. Stitch controls.
+                      Color grade selection per clip. Transition type override.
+
+  Output              Download conformed MP4. Export for platform. Extract
+                      thumbnail. Apply watermark. Generate credits.
+
+Key API endpoints:
+
+  GET  /                                  Serve the web UI
+  GET  /public/<file>                     Static file serving
+  POST /api/upload                        Upload audio file
+  POST /api/generate                      Start full generation
+  GET  /api/progress                      Poll generation progress
+  GET  /api/download                      Download final video
+  GET  /api/scenes                        Get scene plan + clip URLs
+  POST /api/scenes/<index>/regenerate     Regenerate single scene
+  POST /api/restitch                      Re-stitch all scenes
+  GET  /api/clips/<filename>              Serve individual clip file
+  POST /api/references/upload             Upload reference image
+  GET  /api/references                    List references
+  DELETE /api/references/<name>           Delete reference
+  GET  /api/pos/dashboard                 Prompt OS stats dashboard
+  GET  /api/pos/characters                List character entities
+  POST /api/pos/characters                Create character entity
+  GET  /api/pos/characters/<id>           Get character entity
+  POST /api/pos/characters/<id>/photo     Upload character photo
+  GET  /api/pos/characters/<id>/preview   Serve character preview sheet
+  GET  /api/pos/costumes                  List costume entities
+  GET  /api/pos/environments              List environment entities
+  GET  /api/pos/props                     List prop entities
+  GET  /api/pos/scenes                    List scene entities
+  GET  /api/pos/style-locks               Get style lock rules
+  GET  /api/pos/world-rules               Get world rules
+  GET  /api/pos/continuity-rules          Get continuity rules
+  GET  /api/pos/project-style             Get project style definition
+  GET  /api/v6/anchors                    List all anchors + candidates
+  GET  /api/v6/clips                      List all generated clips
+  POST /api/v6/anchor/generate            Generate anchor via Gemini
+  POST /api/v6/clip/generate              Generate clip via Kling
+  POST /api/v6/sonnet/select              Sonnet picks best candidate
+  POST /api/v6/sonnet/review              Sonnet reviews transition pair
+  GET  /api/preproduction/packages        List preproduction packages
+  GET  /api/preproduction/report          Package completeness report
+  GET  /api/preproduction/validate        Validate packages before production
+  GET  /api/projects                      List saved projects
+  POST /api/project/save                  Save current project
+  POST /api/project/load                  Load a saved project
+  POST /api/project/save-full             Full project archive
+  GET  /api/settings                      Get server settings
+  GET  /api/cost                          Estimated cost for current plan
+  GET  /api/engines                       Available engines list
+  GET  /api/camera-presets                Camera preset definitions
+  GET  /api/transitions                   Supported transition types
+  GET  /api/model-durations               Duration options per model/tier
 
 
 INSTALLATION
 ------------
-  1. Clone or download this project
 
-  2. Install Python dependencies:
-       pip install -r requirements.txt
+Requirements:
+  Python 3.11+
+  ffmpeg (on PATH or in standard Windows install locations)
 
-     Dependencies:
-       - requests     (HTTP client for Grok API)
-       - librosa      (audio analysis — optional but recommended)
-       - numpy        (numerical processing)
+Python packages (requirements.txt):
+  requests==2.31.0
+  numpy==1.26.4
+  librosa==0.10.2
+  python-dotenv==1.0.1
+  Pillow==10.4.0
+  anthropic>=0.7.0
+  fal>=0.4.0
+  opencv-python>=4.8.0
 
-     If librosa fails to install (common on Windows), the tool will
-     fall back to basic wave file analysis using Python's built-in
-     wave module. Beat detection will be less accurate but functional.
+Install:
+  pip install -r requirements.txt
 
-  3. Create your .env file:
-       cp .env.example .env
+Environment variables (.env file at project root):
+  FAL_API_KEY=fal-...            Required. fal.ai API key for Gemini + Kling
+  ANTHROPIC_API_KEY=sk-ant-...   Required. Anthropic API key for Claude
+  LUMN_API_TOKEN=...             Optional. Session auth token for web UI
 
-     Edit .env and add your xAI API key:
-       XAI_API_KEY=your_key_here
+Start the server:
+  python server.py
 
-  4. Verify ffmpeg is installed:
-       ffmpeg -version
+The server starts on port 3849. Open http://localhost:3849 in a browser.
+If LUMN_API_TOKEN is not set, a random session token is generated and printed
+to the console at startup. This token is required for all API calls from the UI.
+
+CLI pipeline (no server required):
+  python scripts/pipeline_v6_gemini_kling.py anchors    # Generate anchor stills
+  python scripts/pipeline_v6_gemini_kling.py select     # Sonnet selects candidates
+  python scripts/pipeline_v6_gemini_kling.py review     # Sonnet audits transitions
+  python scripts/pipeline_v6_gemini_kling.py clips      # Kling generates clips
+  python scripts/pipeline_v6_gemini_kling.py conform    # FFmpeg conform to output
+  python scripts/pipeline_v6_gemini_kling.py all        # Full pipeline end-to-end
+
+CLI prerequisites:
+  output/pipeline/production_plan_v4.json    The production plan (beats + shots)
+  output/preproduction/packages.json         Preproduction packages (all approved)
 
 
-USAGE — COMMAND LINE
+USAGE: CLI WORKFLOW
 --------------------
-  Basic:
-    python generate.py --song mysong.mp3 --style "cyberpunk neon city"
 
-  Full options:
-    python generate.py \
-      --song   path/to/song.mp3 \
-      --style  "dark moody cinematic rain neon lights" \
-      --output path/to/output.mp4 \
-      --seed   42 \
-      --dry-run
+1. Define your production plan JSON or use the web UI to build it.
+2. Complete preproduction: generate and approve all entity packages.
+3. Run anchors phase -- generates one still per shot via Gemini.
+4. Run select phase (if using 3x candidates) -- Sonnet picks the best.
+5. Run review phase -- Sonnet audits the full anchor sequence.
+6. Address any flags from the review (re-run individual anchors as needed).
+7. Run clips phase -- Kling generates video from each selected anchor.
+8. Run conform phase -- FFmpeg stitches the final output.
 
-  Options:
-    --song      Path to your audio file (MP3 or WAV)
-    --style     Visual style description — be descriptive!
-    --output    Output file path (default: output/final_video.mp4)
-    --seed      Random seed for reproducible scene planning
-    --dry-run   Analyze audio and plan scenes WITHOUT generating videos
-                (useful to preview the scene prompts before spending API credits)
+To regenerate a single shot anchor without re-running the full batch:
+  Edit that shot entry in production_plan_v4.json to clear anchor_path, then
+  re-run the anchors phase. It will skip shots that already have anchors.
 
-  Typical run:
-    1. First do a dry run to preview the plan:
-         python generate.py --song track.mp3 --style "synthwave retro" --dry-run
-
-    2. Review the scene prompts it generates
-
-    3. Run for real:
-         python generate.py --song track.mp3 --style "synthwave retro"
-
-    4. Wait for generation (a 3-minute song takes ~10-15 minutes)
-
-    5. Find your video at output/final_video.mp4
+To re-render a single clip:
+  Clear clip_path for that shot entry and re-run the clips phase.
 
 
-USAGE — WEB UI
---------------
-  1. Start the server:
-       python server.py
+USAGE: WEB UI WORKFLOW
+-----------------------
 
-  2. Open in browser:
-       http://localhost:3849
-
-  3. The web interface lets you:
-       - Drag and drop your song file
-       - Type your style prompt
-       - Watch real-time progress as each scene generates
-       - Preview the final video in-browser
-       - Download the finished video
-
-
-STYLE PROMPT TIPS
------------------
-  Your style prompt drives the visual look of every scene. Be descriptive
-  but consistent. The tool automatically varies shots per section, so you
-  just need to set the overall vibe.
-
-  Good prompts:
-    "dark cyberpunk city at night, neon signs, rain, moody lighting"
-    "ethereal forest, golden hour, mist, dreamy soft focus"
-    "abstract geometric shapes, bold colors, high contrast, minimal"
-    "underwater ocean scene, bioluminescent creatures, deep blue"
-    "gritty urban streets, graffiti, skateboarding, handheld camera"
-    "outer space, nebulas, astronaut floating, cinematic wide shots"
-
-  Tips:
-    - Include lighting: "neon", "golden hour", "moody", "harsh shadows"
-    - Include mood: "dark", "ethereal", "energetic", "melancholic"
-    - Include camera: "cinematic", "handheld", "aerial", "macro"
-    - Keep it to 10-20 words — too long and the model loses focus
-    - The tool adds section-specific modifiers automatically
-      (you don't need to specify "wide shot" for intro, etc.)
+1. Open http://localhost:3849.
+2. Navigate to Prompt OS. Create character, costume, and environment entities.
+   Upload reference photos for each entity.
+3. In Preproduction, generate reference sheets for each entity. Review and approve.
+4. In Scene/Beat Editor, build the beat sheet. Assign characters and locations.
+5. In Shots Workspace, configure per-shot camera specs. Set shot priorities.
+6. In V6 Pipeline Panel, run: anchors -> select -> review -> clips -> conform.
+7. In Timeline, review clips. Adjust transition types per cut if needed.
+   Re-render individual clips directly from the timeline interface.
+8. In Output, download the final MP4. Export for platform if needed.
 
 
-COST ESTIMATE
--------------
-  Grok video generation pricing (approximate):
-    - grok-imagine-video:  ~$0.10-0.20 per 8-second clip
-    - grok-imagine-image:  ~$0.02 per image (fallback)
+COST ESTIMATES (fal.ai pricing)
+--------------------------------
 
-  Typical costs per song length:
-    2-minute song:  ~15 clips  = $1.50 - $3.00
-    3-minute song:  ~22 clips  = $2.20 - $4.40
-    4-minute song:  ~30 clips  = $3.00 - $6.00
-    5-minute song:  ~37 clips  = $3.70 - $7.40
+Gemini 3.1 Flash -- Image Generation
+  Text-to-image (sheet generation):    ~$0.005 per image
+  Edit mode (anchor with refs):         ~$0.01-0.02 per anchor image
+  A 20-shot production (3 candidates):  ~$0.60-1.20 for all anchors
 
-  Use --dry-run to see the exact clip count and cost estimate before
-  committing to generation.
+Kling 3.0 -- Video Generation
+  v3_standard ($0.084/s):
+    5s clip = $0.42     10s clip = $0.84
+  v3_pro ($0.112/s):
+    5s clip = $0.56     10s clip = $1.12
+  o3_standard ($0.084/s):
+    5s clip = $0.42     10s clip = $0.84
+  o3_pro ($0.392/s):
+    5s clip = $1.96     10s clip = $3.92
 
+Claude QA (Anthropic API)
+  Haiku 4.5:   ~$0.001-0.003 per vision call
+  Sonnet 4.6:  ~$0.01-0.03 per vision call
 
-SCENE PLANNING DETAILS
-----------------------
-  The scene planner adapts visuals to the music structure:
+Representative production estimates (v3_standard, 5s average duration):
 
-  INTRO (low energy):
-    - Wide establishing shots
-    - Slow camera movement
-    - Setting the scene
+  Short film (20 shots, all standard):
+    Anchors:    ~$0.40    (Gemini, 3 candidates per shot)
+    QA:         ~$0.10    (Haiku for all, Sonnet for hero shots)
+    Video:      ~$8.40    (20 shots x $0.42)
+    TOTAL:      ~$8.90
 
-  VERSE (moderate energy):
-    - Medium shots, closer framing
-    - Steady camera with gentle movement
-    - Storytelling visuals
+  Trailer (10 shots, mixed standard + pro):
+    Anchors:    ~$0.20
+    QA:         ~$0.05
+    Video:      ~$5.00    (mixed tiers)
+    TOTAL:      ~$5.25
 
-  CHORUS (high energy):
-    - Dynamic shots, fast movement
-    - Bold colors, high contrast
-    - Energetic, climactic visuals
+  Single hero shot (10s at o3_pro):
+    Anchor:     ~$0.02
+    QA:         ~$0.03    (Sonnet)
+    Video:      ~$3.92
+    TOTAL:      ~$3.97
 
-  BRIDGE (transitional):
-    - Abstract or dreamy visuals
-    - Different color palette
-    - Contemplative mood
+Preproduction sheet generation (one-time per production):
+  4 characters x 2 sheets each = ~$0.04
+  3 environments x 2 sheets    = ~$0.03
+  TOTAL preproduction:           ~$0.07
 
-  OUTRO (fading energy):
-    - Pull back to wide shots
-    - Slower movement
-    - Fading, closing visuals
-
-  Within each section, energy levels further modify the prompts:
-    - High energy: "dynamic movement, vibrant, intense"
-    - Medium energy: "steady, flowing, balanced"
-    - Low energy: "still, calm, minimal movement"
-
-
-TROUBLESHOOTING
----------------
-  "ffmpeg not found"
-    Install ffmpeg and ensure it's on your PATH.
-
-  "librosa not found"
-    pip install librosa
-    Or: the tool will fall back to basic wave analysis automatically.
-
-  "API key error"
-    Check your .env file has a valid XAI_API_KEY.
-
-  "Video generation failed"
-    The tool automatically retries and falls back to image + Ken Burns.
-    If all scenes fail, check your xAI API quota/billing.
-
-  "Video is silent"
-    Ensure your input file is a valid MP3 or WAV with audio data.
-
-  Slow generation:
-    Each 8-second video clip takes 30-90 seconds to generate.
-    A 3-minute song with ~22 clips takes 10-15 minutes.
-    Up to 3 clips generate concurrently.
+A full 20-shot short film from scratch typically costs $9-15 in total API fees
+depending on tier selection and the number of candidates generated per shot.
 
 
 FILE STRUCTURE
 --------------
-  music-video-generator/
-  |
-  |-- generate.py            Main CLI tool
-  |-- server.py              Web UI server (port 3849)
-  |-- requirements.txt       Python dependencies
-  |-- .env.example           Template for API key config
-  |-- .gitignore             Git ignore rules
-  |-- README.md              Quick start guide
-  |-- WHITEPAPER.txt         This file
-  |
-  |-- public/
-  |   |-- index.html         Web interface (Blade Runner theme)
-  |
-  |-- lib/
-  |   |-- audio_analyzer.py  Beat detection, BPM, sections, energy
-  |   |-- scene_planner.py   Prompt generation per section
-  |   |-- video_generator.py Grok API client (video + image)
-  |   |-- video_stitcher.py  ffmpeg compositing and audio overlay
-  |
-  |-- uploads/               Your uploaded songs (gitignored)
-  |-- output/                Generated videos and clips (gitignored)
+
+lumn/
+  server.py                       Web server (port 3849, no Flask)
+  requirements.txt                Python dependencies
+  .env                            API keys (not committed to version control)
+
+  lib/
+    fal_client.py                 Gemini + Kling via fal.ai SDK
+    claude_client.py              Haiku/Sonnet QA client with escalation logic
+    prompt_os.py                  Entity registry (characters, costumes, etc.)
+    preproduction_assets.py       Sheet generation + package management
+    video_generator.py            Legacy engine stubs (Grok, Luma, OpenAI)
+    video_stitcher.py             FFmpeg conform, color grade, export
+    audio_analyzer.py             Beat/BPM/section analysis (librosa)
+    scene_planner.py              Scene plan generator + transition map
+    transition_judge.py           5D continuity scorer for shot pairs
+    transition_strategy.py        Strategy engine + fallback chain
+    learning_system.py            Evidence log + self-healing rules
+    editorial_conform.py          Final editorial assembly
+    narrative_engine.py           Story beat expansion
+    movie_planner.py              High-level production planning
+    prompt_assembler.py           Assembles prompts from POS entities
+    prompt_templates.py           Reusable prompt template definitions
+    cinematic_engine.py           Cinematic composition helpers
+    shot_style_library.py         Shot style definitions
+    coherence_scorer.py           Cross-shot coherence measurement
+    coverage_system.py            Shot coverage analysis
+    director_brain.py             Director-mode decision engine
+    quality_metrics.py            Output quality measurement
+    render_critic.py              Post-render evaluation
+    pipeline_state.py             Pipeline state persistence
+    prompt_compiler.py            Prompt compilation from entities
+    story_planner.py              Story structure planning
+    master_prompt.py              Master prompt assembly
+    beat_sync.py                  Beat-synchronized timing
+
+    prompt_packs/                 14 structured prompt pack modules
+      gemini_start_frame.py       Anchor/start-frame prompt pack (Gemini)
+      gemini_end_frame.py         End-frame prompt pack (Gemini)
+      gemini_end_variants.py      End-frame variant generation
+      gemini_bridge_frame.py      Bridge-frame prompt pack
+      gemini_repair_frame.py      Anchor repair/retry prompts
+      kling_direct_motion.py      Direct motion prompt pack (Kling)
+      kling_bridge_motion.py      Bridge motion prompt pack
+      kling_motivated_cut.py      Motivated cut prompt pack
+      sonnet_transition_escalation.py   Sonnet escalation prompts
+      haiku_post_render_critic.py       Haiku post-render critic
+      sonnet_post_render_escalation.py  Sonnet escalation for renders
+      haiku_optimizer.py                Haiku prompt optimizer
+      sonnet_optimizer_escalation.py    Sonnet prompt optimizer
+      haiku_transition_judge.py         Haiku transition judge
+
+  scripts/
+    pipeline_v6_gemini_kling.py   Full V6 CLI pipeline (all phases)
+
+  public/
+    index.html                    Main web UI
+    v6-pipeline.js                V6 pipeline panel component
+    timeline.js                   Timeline and clip review component
+    landing.html                  Landing/intro page
+    manifesto.html                Design philosophy page
+
+  output/
+    prompt_os/                    Prompt OS entity JSON + sheet images
+      characters.json
+      costumes.json
+      environments.json
+      scenes.json
+      style_locks.json
+      world_rules.json
+      continuity_rules.json
+      props.json
+      project_style.json
+      sheets/                     Generated reference sheet images
+    preproduction/
+      packages.json               All preproduction package records
+    pipeline/
+      production_plan_v4.json     Active production plan (beats + shots)
+      anchors_v6/                 Gemini-generated anchor stills
+      clips_v6/                   Kling-generated video clips
+      final/                      Conformed output video
+      learning/
+        shot_attempts.json        Per-shot attempt log
+        failure_clusters.json     Grouped failure patterns
+        prompt_rules.json         Active rule adjustments
+        thresholds.json           Scoring thresholds
+        sonnet_review_v6.json     Sonnet transition audit results
+    projects/                     Saved project archives
+    exports/                      Platform export files
+    settings.json                 Server settings
+    cost_tracker.json             Running cost log per production
+
+
+BRAND + UI AESTHETIC
+--------------------
+
+LUMN's interface is cinematic and artistic, not SaaS. The UI is meant to feel
+like a filmmaker's production wall, not a dashboard.
+
+  Typography        Inter Tight, light weight 300 for body copy.
+                    Wide letter-spacing (6-8px) uppercase for labels.
+                    No monospace accent fonts in UI chrome.
+
+  Surfaces          Muted rgba whites on dark backgrounds.
+                    12px backdrop-blur translucent panels.
+                    No glowing drop shadows. No neon glows.
+
+  Welcome imagery   brand_assets/LUMN_Welcome_Dark_*.png and
+                    brand_assets/LUMN_Welcome_White_*.png
+                    (bear_dark / bear_light atmospheric anchors). The welcome
+                    page is the heaviest visual surface in the app -- all other
+                    panels are quiet.
+
+  Retired palette   Earlier iterations used a cyberpunk neon look
+                    (cyan #00E5FF, magenta #FF5E00, amber, violet, glowing
+                    shadows, JetBrains Mono). That aesthetic is retired.
+                    Any reference to it in older CSS, comments, or docs
+                    should be treated as historical. The "cyberpunk" color
+                    grade preset in video_stitcher.py is a post-production
+                    color look for output video, NOT the UI.
+
+  Voice             Cinematic, film-production-binder feel. Not dashboard.
+                    Labels are short. Status indicators are subtle. The user
+                    should feel they are directing a production, not operating
+                    a SaaS tool.
+
+
+KEY DESIGN DECISIONS
+---------------------
+
+1. REFS NOT TEXT
+   Visual identity is carried entirely by reference images, not prompt text.
+   Anchor prompts describe only camera, pose, and framing. Describing the
+   subject in a prompt when a reference image is present dilutes the reference
+   signal and causes drift. This is the single most important rule in the system.
+
+2. NO ENGINE MIXING
+   A production uses exactly one video engine from start to finish. Currently
+   that is Kling 3.0 via fal.ai for all video. If a clip fails QA, it is
+   re-rendered with the same engine using a different prompt strategy -- it is
+   never silently substituted with a different engine.
+
+3. NO MULTI-SHOT API CALLS FOR CONTINUITY
+   Kling's multi-shot API mode causes character drift between sub-shots. Every
+   shot in LUMN is generated as an independent call with a single anchor image.
+   Per-shot QA is applied before advancing to the next shot.
+
+4. IDENTITY GATE
+   The first appearance of any character in a scene must be a medium or close
+   shot. This locks the audience's read of that character's identity before
+   wider or faster shots that compress the identity signal.
+
+5. MOTIVATED CUTS ONLY
+   Generic dissolves or crossfades are not applied by default. Every transition
+   is evaluated by the Transition Intelligence system and assigned a type with
+   a narrative justification (action cut, eyeline cut, smash cut, match cut,
+   etc.). A dissolve is only used when it is the right choice for the specific
+   emotional context of that cut.
+
+6. NO VISIBLE WINDOWS (WINDOWS PLATFORM)
+   All subprocess calls on Windows use windowsHide=True / CREATE_NO_WINDOW.
+   FFmpeg and all other subprocesses run invisibly in the background.
+
+7. QA BEFORE ADVANCING
+   Generated images are vision-analyzed by Claude before the pipeline advances
+   to the next stage. No shot proceeds to video rendering if its anchor fails
+   the QA gate. The system re-generates or escalates rather than silently passing
+   failing assets downstream.
 
 
 FUTURE ENHANCEMENTS
 --------------------
-  - Custom scene prompts (override auto-generated prompts per section)
-  - Multiple style presets (synthwave, horror, nature, abstract, etc.)
-  - Lyrics-aware scene generation (parse lyrics for visual themes)
-  - Beat-synced cuts (hard cuts on beats instead of crossfades)
-  - Green screen / overlay effects
-  - Multi-resolution output (1080p, 4K, vertical for TikTok/Reels)
-  - Batch processing (generate videos for multiple songs)
-  - Style transfer from reference images/videos
+
+  Multi-character element binding
+    Bind up to 4 character packages simultaneously for ensemble shots.
+    Currently limited by Kling's elements system maximum of 4 total elements.
+
+  Temporal extension via clip stitching
+    Stitch two 5s clips from the same anchor to produce 10s compound shots
+    without incurring O3 Pro pricing for every long shot.
+
+  Audio-driven shot timing
+    Use audio analysis data (beat/section from audio_analyzer.py) to suggest
+    shot durations that align cuts to musical or narrative rhythm points.
+
+  Veo 3.1 integration
+    fal.ai is expected to carry Veo 3.1 when API access opens. Architecture
+    supports adding new engines via fal_client.py without changing upstream
+    pipeline logic.
+
+  Shot coverage intelligence (lib/coverage_system.py)
+    Automatic detection of coverage gaps: scenes missing establishing wides,
+    characters without identity-locking medium shots, dialogue scenes without
+    over-the-shoulder setups.
+
+  Taste profile learning (lib/taste_profile.py)
+    Per-user preference model that adjusts default tier selection, transition
+    type preferences, and color grade choices based on approval/rejection history.
+
+  Project import from screenplay PDF
+    Parse standard screenplay format (Fountain or PDF) to auto-generate beat
+    sheets and shot lists, with manual review before production starts.
+
+  Collaborative review mode
+    Export a production package (anchor stills + shot data) to a shareable
+    review link. Collaborators can approve/reject shots and add notes without
+    requiring local server access.
+
+
+NOTES ON DEPRECATED ENGINES
+-----------------------------
+
+Runway
+  Deprecated. All Runway API references in video_generator.py are legacy stubs
+  retained for backward compatibility with older project files. No new production
+  should use Runway endpoints. The RUNWAY_COST_PER_SEC constant and related
+  polling code remain in video_generator.py but are not called by the V6 pipeline.
+
+Luma Dream Machine (Ray2)
+  Legacy engine, not recommended for current productions. Supported in
+  video_generator.py for experimental use but not part of the V6 workflow.
+
+Grok (xAI)
+  Legacy text-to-video engine. Retained for experimental use. Fixed 8-second
+  duration. Not part of the V6 pipeline.
+
+OpenAI image + Ken Burns
+  Legacy still-to-video fallback via GPT image generation plus FFmpeg Ken Burns
+  animation. Available but not recommended for production work.
 
 
 ================================================================================
-  Built with Grok AI (xAI) + Python + ffmpeg
-  github.com/xl3vrg3-collab/music-video-generator
+  LUMN STUDIO V6
+  fal.ai API  |  Anthropic API  |  FFmpeg
+  http://localhost:3849
 ================================================================================

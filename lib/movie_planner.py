@@ -1214,7 +1214,16 @@ class PromptBuilder:
         # 1. Delta-first: what's NEW in this scene
         beat_type = scene.get("beat_type", "discovery")
         delta = scene.get("delta", "")
-        action = scene.get("action", "")
+        # Accept both LUMN MV shape (shotDescription) and cinematic shape (action dict/string)
+        action = (
+            scene.get("shotDescription")
+            or scene.get("shot_description")
+            or scene.get("action")
+            or ""
+        )
+        if isinstance(action, dict):
+            action = action.get("summary", "") or ""
+        action = action.strip() if isinstance(action, str) else ""
 
         is_film = getattr(bible, "project_mode", "music_video") != "music_video"
 
@@ -1235,6 +1244,11 @@ class PromptBuilder:
                 parts.append(f"Opening scene — establishing the narrative world and characters")
             else:
                 parts.append(f"Opening scene establishing the world")
+
+        # 1b. Subject action — PRIMARY VERB so Kling binds motion to the subject, not camera.
+        # Root-cause fix for "subject just stands there" bug (2026-04-17 TB MV panel finding).
+        if action:
+            parts.append(action)
 
         # 2. Character/costume/environment details (resolved from bible by ID)
         char_descs = []
@@ -1294,7 +1308,17 @@ class PromptBuilder:
                     break
 
         # 3. Camera, lighting, color, motion
+        # Accept both film-mode (camera_direction) and MV-mode (cameraMovement/cameraAngle) shapes.
         camera = scene.get("camera_direction", "")
+        if not camera:
+            cam_move = scene.get("cameraMovement") or scene.get("camera_movement") or ""
+            cam_angle = scene.get("cameraAngle") or scene.get("camera_angle") or ""
+            cam_parts = []
+            if cam_move:
+                cam_parts.append(f"Camera: {cam_move}")
+            if cam_angle and cam_angle not in (cam_move or ""):
+                cam_parts.append(cam_angle)
+            camera = ", ".join(cam_parts)
         if camera:
             parts.append(camera)
 

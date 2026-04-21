@@ -796,9 +796,10 @@
     // Persist reorder to server
     if (window._autoScenes && window._autoScenes.length > 0) {
         var order = window._autoScenes.map(function(s) { return s.id; });
+        var _csrfEl = document.querySelector('meta[name="csrf-token"]');
         fetch('/api/auto-director/scenes/reorder', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': _csrfEl ? _csrfEl.content : ''},
             body: JSON.stringify({order: order})
         }).catch(function(e) {
             console.warn('[Timeline] Reorder sync failed:', e.message);

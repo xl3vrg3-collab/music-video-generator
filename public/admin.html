@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LUMN Admin</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; padding: 20px;
+    font: 13px/1.45 -apple-system, "Segoe UI", system-ui, sans-serif;
+    background: #0b0b0e; color: #e8e8ec;
+  }
+  h1 { margin: 0 0 4px; font-size: 18px; }
+  .sub { color: #6a6a76; font-size: 12px; margin-bottom: 18px; }
+  .grid {
+    display: grid; gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  }
+  .card {
+    background: #14141a; border: 1px solid #24242e; border-radius: 10px;
+    padding: 16px;
+  }
+  .card h2 {
+    margin: 0 0 10px; font-size: 12px; text-transform: uppercase;
+    letter-spacing: .08em; color: #8a8a96;
+  }
+  .stat { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+  .stat small { font-size: 13px; color: #6a6a76; font-weight: 400;
+                margin-left: 6px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td {
+    text-align: left; padding: 6px 8px; border-bottom: 1px solid #1e1e26;
+    font-size: 12px;
+  }
+  th { color: #8a8a96; font-weight: 500; text-transform: uppercase;
+       letter-spacing: .05em; font-size: 10px; }
+  tr:last-child td { border-bottom: 0; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .ok { color: #6efa6e; }
+  .warn { color: #ffd66e; }
+  .err { color: #ff6e6e; }
+  .endpoint { font-family: ui-monospace, "Cascadia Code", monospace;
+              color: #aaa; font-size: 11px; }
+  .feedback-row {
+    background: #0f0f15; padding: 10px 12px; border-radius: 6px;
+    margin-bottom: 8px; border-left: 3px solid #5a5aff;
+  }
+  .feedback-row .meta {
+    color: #6a6a76; font-size: 10px; margin-bottom: 4px;
+  }
+  .feedback-row .msg { white-space: pre-wrap; }
+  .controls { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .controls button {
+    background: #1e1e26; border: 1px solid #2a2a36; color: #e8e8ec;
+    padding: 6px 12px; border-radius: 6px; font: inherit; cursor: pointer;
+  }
+  .controls button:hover { background: #28283a; }
+  .ts { color: #5a5a66; font-size: 10px; }
+  .empty { color: #5a5a66; font-style: italic; padding: 8px 0; }
+</style>
+</head>
+<body>
+  <h1>LUMN Admin</h1>
+  <p class="sub">Live snapshot — auto-refreshes every <span id="interval">10</span>s</p>
+  <div class="controls">
+    <button id="refreshBtn">Refresh now</button>
+    <span class="ts">Last update: <span id="lastUpdate">—</span></span>
+    <span id="errBox" class="err"></span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Spend (24h)</h2>
+      <div class="stat" id="spendTotal">—</div>
+      <div id="spendCap" class="sub" style="margin-top:6px"></div>
+      <h2 style="margin-top:18px">Top users</h2>
+      <table id="spendTable"><tbody><tr><td class="empty">no data</td></tr></tbody></table>
+    </div>
+
+    <div class="card">
+      <h2>Requests</h2>
+      <div class="stat" id="reqTotal">—</div>
+      <div class="sub" id="uptime"></div>
+      <h2 style="margin-top:18px">By endpoint (top 12)</h2>
+      <table id="metricsTable">
+        <thead><tr><th>endpoint</th><th class="num">n</th><th class="num">err</th><th class="num">p50</th><th class="num">p95</th></tr></thead>
+        <tbody><tr><td colspan="5" class="empty">no data</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Users</h2>
+      <div class="stat" id="userCount">—</div>
+      <h2 style="margin-top:18px">Recent</h2>
+      <table id="usersTable">
+        <thead><tr><th>id</th><th>email</th><th class="num">$</th><th>role</th></tr></thead>
+        <tbody><tr><td colspan="4" class="empty">no data</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card" style="grid-column: 1 / -1;">
+      <h2>Feedback (latest 20)</h2>
+      <div id="feedbackList"><p class="empty">no feedback yet</p></div>
+    </div>
+  </div>
+
+<script>
+const REFRESH_MS = 10000;
+const errBox = document.getElementById('errBox');
+
+async function fetchJson(url) {
+  const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  return r.json();
+}
+
+function fmt$(cents) {
+  return '$' + (cents / 100).toFixed(2);
+}
+
+function fmtTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts * 1000);
+  return d.toLocaleString();
+}
+
+async function refresh() {
+  errBox.textContent = '';
+  try {
+    const [metrics, spend, users, feedback] = await Promise.all([
+      fetchJson('/api/metrics'),
+      fetchJson('/api/admin/spend?window=86400'),
+      fetchJson('/api/admin/users'),
+      fetchJson('/api/admin/feedback?limit=20'),
+    ]);
+
+    // Spend
+    document.getElementById('spendTotal').textContent = fmt$(spend.total_cents || 0);
+    const spendTbody = document.querySelector('#spendTable tbody');
+    if (spend.by_user && spend.by_user.length) {
+      spendTbody.innerHTML = spend.by_user.slice(0, 10).map(u =>
+        `<tr><td>${u.email}</td><td class="num">${fmt$(u.cents)}</td><td class="num">${u.count}</td></tr>`
+      ).join('');
+    } else {
+      spendTbody.innerHTML = '<tr><td class="empty" colspan="3">no spend yet</td></tr>';
+    }
+
+    // Metrics
+    document.getElementById('reqTotal').textContent = metrics.total_requests || 0;
+    document.getElementById('uptime').textContent =
+      `up ${Math.round((metrics.uptime_s || 0) / 60)} min`;
+    const ep = metrics.by_endpoint || {};
+    const rows = Object.entries(ep)
+      .map(([key, m]) => ({ key, ...m }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 12);
+    const mtb = document.querySelector('#metricsTable tbody');
+    if (rows.length) {
+      mtb.innerHTML = rows.map(r => {
+        const errCls = r.errors > 0 ? 'err' : '';
+        return `<tr>
+          <td class="endpoint">${r.key}</td>
+          <td class="num">${r.count}</td>
+          <td class="num ${errCls}">${r.errors}</td>
+          <td class="num">${Math.round(r.p50_ms)}</td>
+          <td class="num">${Math.round(r.p95_ms)}</td>
+        </tr>`;
+      }).join('');
+    } else {
+      mtb.innerHTML = '<tr><td colspan="5" class="empty">no requests yet</td></tr>';
+    }
+
+    // Users
+    const uList = users.users || [];
+    document.getElementById('userCount').textContent = uList.length;
+    const utb = document.querySelector('#usersTable tbody');
+    if (uList.length) {
+      utb.innerHTML = uList.slice(0, 12).map(u => {
+        const roleCls = u.role === 'admin' ? 'ok' : '';
+        return `<tr>
+          <td>${u.id}</td>
+          <td>${u.email}</td>
+          <td class="num">${fmt$(u.credits_cents)}</td>
+          <td class="${roleCls}">${u.role}</td>
+        </tr>`;
+      }).join('');
+    } else {
+      utb.innerHTML = '<tr><td colspan="4" class="empty">no users yet</td></tr>';
+    }
+
+    // Feedback
+    const fb = feedback.feedback || [];
+    const flist = document.getElementById('feedbackList');
+    if (fb.length) {
+      flist.innerHTML = fb.map(f => {
+        const status = f.resolved ? 'ok' : 'warn';
+        const who = f.email || 'anon';
+        return `<div class="feedback-row">
+          <div class="meta">
+            #${f.id} · <span class="${status}">${f.resolved ? 'done' : 'open'}</span> ·
+            ${f.category} · ${who} · ${fmtTime(f.ts)}
+          </div>
+          <div class="msg">${escapeHtml(f.message || '')}</div>
+        </div>`;
+      }).join('');
+    } else {
+      flist.innerHTML = '<p class="empty">no feedback yet</p>';
+    }
+
+    document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+  } catch (e) {
+    errBox.textContent = 'error: ' + e.message;
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+document.getElementById('refreshBtn').addEventListener('click', refresh);
+document.getElementById('interval').textContent = REFRESH_MS / 1000;
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>

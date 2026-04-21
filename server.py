@@ -58,7 +58,7 @@ else:
 import uuid as _uuid
 import urllib.parse
 import zipfile
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 
 # Load .env if python-dotenv is available
 try:
@@ -73,10 +73,66 @@ if not _API_TOKEN:
     _API_TOKEN = secrets.token_hex(16)
     print(f"[AUTH] No LUMN_API_TOKEN set. Generated session token: {_API_TOKEN[:8]}...")
     print(f"[AUTH] Full token in memory only. Set LUMN_API_TOKEN env var for persistence.")
-_CSRF_TOKEN = secrets.token_hex(16)
+# CSRF: per-session derived tokens. Server keeps a long-lived secret; the
+# browser-facing token is HMAC(secret, session_id). No session = no valid
+# CSRF token. This kills the old "static global = API key" vulnerability.
+_CSRF_SECRET = secrets.token_bytes(32)
+
+def _csrf_for_sid(sid: str) -> str:
+    if not sid:
+        return ""
+    return hmac.new(_CSRF_SECRET, sid.encode("utf-8"), hashlib.sha256).hexdigest()
+
+def _verify_csrf(sid: str, token: str) -> bool:
+    if not sid or not token:
+        return False
+    expected = _csrf_for_sid(sid)
+    return hmac.compare_digest(expected, token)
+
+def _build_session_cookie(sid: str, max_age: int | None = None) -> str:
+    """Build Set-Cookie value with production-grade attrs.
+
+    Secure is set when LUMN_PRODUCTION=1 — behind Cloudflare Tunnel the edge
+    is HTTPS even though the origin is HTTP, and browsers respect Secure as
+    long as the request itself arrived via TLS (which CF guarantees at the
+    edge after setting CF-Visitor). M3 fix.
+    """
+    if max_age is None:
+        max_age = getattr(lumn_db, "SESSION_TTL_SECONDS", 2592000) if lumn_db else 2592000
+    parts = [f"lumn_sid={sid}", "Path=/", "HttpOnly", "SameSite=Lax", f"Max-Age={max_age}"]
+    if os.environ.get("LUMN_PRODUCTION") == "1":
+        parts.append("Secure")
+    return "; ".join(parts)
 
 from lib.audio_analyzer import analyze
 from lib.scene_planner import plan_scenes, TRANSITION_TYPES, coherence_pass
+try:
+    import lib.db as lumn_db
+    lumn_db.init_db()
+except Exception as _e:
+    lumn_db = None
+    print(f"[DB] init failed, multi-user disabled: {_e}")
+
+try:
+    import lib.obs as lumn_obs
+except Exception as _e:
+    lumn_obs = None
+    print(f"[OBS] init failed, metrics disabled: {_e}")
+
+try:
+    import lib.validate as lumn_validate
+except Exception as _e:
+    lumn_validate = None
+    print(f"[VALIDATE] init failed, input validation disabled: {_e}")
+
+try:
+    import lib.worker as lumn_worker
+    import lib.jobs_runners as lumn_jobs_runners
+    lumn_jobs_runners.register_all()
+except Exception as _e:
+    lumn_worker = None
+    lumn_jobs_runners = None
+    print(f"[WORKER] init failed, async jobs disabled: {_e}")
 from lib.video_generator import (
     generate_scene, generate_all, generate_from_photo,
     describe_photo, CAMERA_PRESETS, CAMERA_PROMPT_SUFFIXES,
@@ -103,19 +159,158 @@ from lib.prompt_assistant import (
     extract_palette,
 )
 from lib.storyboard_generator import generate_storyboard
-from lib.project_manager import ProjectManager
-PORT = 3849
+from lib.project_manager import ProjectManager  # retained for back-compat imports; no longer instantiated
+from lib import active_project
+PORT = int(os.environ.get("PORT", "3849"))
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOADS_DIR = os.path.join(PROJECT_DIR, "uploads")
 OUTPUT_DIR = os.path.join(PROJECT_DIR, "output")
+
+# LUMN per-user credits now track the live fal.ai balance (sync'd on each
+# /api/auth/me probe). Default: gate is active. Set LUMN_DEFER_USER_CREDITS=1
+# to bypass (for local dev when admin key isn't configured yet).
+def _user_credits_deferred() -> bool:
+    v = os.environ.get("LUMN_DEFER_USER_CREDITS", "0").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+def _safe_user_path(p: str) -> str | None:
+    """Validate that a user-supplied file path points inside our pipeline
+    output root or uploads dir. Returns the realpath on success, None on
+    rejection. SECURITY (C3): without this, a caller can post any absolute
+    path and the worker will upload it to fal.ai (arbitrary local file
+    exfiltration of .ssh/id_rsa, .env, etc).
+    """
+    if not p or not isinstance(p, str):
+        return None
+    # Reject obvious nasties up front
+    if "\x00" in p:
+        return None
+    try:
+        resolved = os.path.realpath(p)
+    except Exception:
+        return None
+    if not os.path.isfile(resolved):
+        return None
+    # Must live under one of the allowed roots. `output/` as a whole is
+    # server-managed content (generated sheets, packages, pipelines) — safe
+    # to pass as refs. `uploads/` covers user-uploaded references.
+    allowed_roots = [
+        os.path.realpath(OUTPUT_DIR),
+        os.path.realpath(UPLOADS_DIR),
+    ]
+    for root in allowed_roots:
+        if resolved == root or resolved.startswith(root + os.sep):
+            return resolved
+    return None
+
+
+def _safe_project_ref_path(p: str, project_slug: str | None = None) -> str | None:
+    """Validate that a reference path is safe AND scoped to the active
+    project. Rejects paths under `output/preproduction/` (legacy orphan
+    catalog) and any other project's workspace. Returns realpath on success,
+    None on rejection. Belt-and-suspenders against the Apr 20 cross-project
+    leak (Buddy/Owen/Maya sheets contaminating TB anchor generation).
+    """
+    safe = _safe_user_path(p)
+    if not safe:
+        return None
+    slug = project_slug or "default"
+    try:
+        from lib import active_project as _ap
+        if not project_slug:
+            slug = _ap.get_active_slug() or "default"
+    except Exception:
+        slug = project_slug or "default"
+    # Allowed roots for a project-scoped anchor generation:
+    project_root = os.path.realpath(os.path.join(OUTPUT_DIR, "projects", slug))
+    refs_v6 = os.path.realpath(os.path.join(OUTPUT_DIR, "pipeline", "references_v6"))
+    anchors_v6 = os.path.realpath(os.path.join(OUTPUT_DIR, "pipeline", "anchors_v6"))
+    uploads_root = os.path.realpath(UPLOADS_DIR)
+    allowed = [project_root, refs_v6, anchors_v6, uploads_root]
+    for root in allowed:
+        if safe == root or safe.startswith(root + os.sep):
+            return safe
+    # Explicit denial: anything under preproduction/ (legacy packages) is
+    # rejected. Same for any other project's workspace.
+    return None
+
 
 # Lock for all scene/movie plan file writes to prevent concurrent corruption
 _plan_file_lock = threading.Lock()
 
 from lib.prompt_os import PromptOS
 _prompt_os = PromptOS()
-PROMPT_OS_DATA_DIR = os.path.join(OUTPUT_DIR, "prompt_os")
-os.makedirs(PROMPT_OS_DATA_DIR, exist_ok=True)
+
+
+def _check_project_header(handler):
+    """Enforce X-Lumn-Project header parity on mutating routes.
+
+    The frontend sends `X-Lumn-Project: <slug>` so the server can detect when
+    a tab is acting against a project different from the currently-active
+    one (e.g. the user switched projects in another tab). If the header is
+    absent the request passes through — older clients and bearer-token
+    callers may not send it. If it's present and mismatched we return a 409
+    so the caller can refresh and retry.
+
+    Returns None on success, or a (status, dict) tuple on mismatch.
+    """
+    expected = handler.headers.get("X-Lumn-Project")
+    if not expected:
+        return None
+    try:
+        actual = active_project.get_active_slug()
+    except Exception:
+        return None
+    if expected != actual:
+        return (409, {"error": "project_mismatch",
+                      "expected": expected, "active": actual})
+    return None
+
+
+# Paths that touch project-scoped state. Used by do_POST/do_PUT/do_DELETE
+# to decide whether to enforce the X-Lumn-Project header. Auth/upload routes
+# and /api/projects (create) are deliberately excluded.
+_PROJECT_SCOPED_PREFIXES = (
+    "/api/pos/",
+    "/api/vault/",
+    "/api/shots/",
+    "/api/scenes/",
+    "/api/manual/",
+    "/api/takes/",
+    "/api/voice/",
+    "/api/sheet/",
+    "/api/char/",
+    "/api/style-transfer",
+    "/api/approve",
+    "/api/lock",
+    "/api/continuity",
+)
+
+
+def _is_project_scoped_mutation(path: str) -> bool:
+    """True if the path mutates project-scoped state and should enforce
+    the X-Lumn-Project header. /api/projects is handled per-route so create
+    is exempt but active/rename/delete/snapshot enforce the header at the
+    route level."""
+    if not path.startswith("/api/"):
+        return False
+    if path.startswith("/api/auth/"):
+        return False
+    if path == "/api/upload" or path == "/api/feedback":
+        return False
+    # /api/projects and the create endpoint are handled per-route.
+    if path == "/api/projects" or path == "/api/projects/":
+        return False
+    for pref in _PROJECT_SCOPED_PREFIXES:
+        if path.startswith(pref):
+            return True
+    return False
+# NOTE: PROMPT_OS_DATA_DIR used to point at the single shared
+# output/prompt_os/ workspace. Under the multi-project refactor each project
+# owns its own prompt_os/ at output/projects/<slug>/prompt_os/. Resolve it
+# dynamically against the active project instead of caching a frozen path.
+def _prompt_os_data_dir() -> str:
+    return _prompt_os._pos_dir()
 
 from lib.auto_director import AutoDirector, get_workflow_presets, save_custom_preset
 from lib.movie_planner import (
@@ -167,14 +362,19 @@ PROMPT_HISTORY_PATH = os.path.join(OUTPUT_DIR, "prompt_history.json")
 AUTOSAVE_PATH = os.path.join(OUTPUT_DIR, "autosave.json")
 TEMPLATES_DIR = os.path.join(OUTPUT_DIR, "templates")
 GIFS_DIR = os.path.join(OUTPUT_DIR, "gifs")
-POS_PHOTOS_DIR = os.path.join(PROMPT_OS_DATA_DIR, "photos")
-POS_PHOTOS_CHARS_DIR = os.path.join(POS_PHOTOS_DIR, "characters")
-POS_PHOTOS_COSTUMES_DIR = os.path.join(POS_PHOTOS_DIR, "costumes")
-POS_PHOTOS_ENVS_DIR = os.path.join(POS_PHOTOS_DIR, "environments")
-POS_PREVIEWS_DIR = os.path.join(PROMPT_OS_DATA_DIR, "previews")
-POS_PREVIEWS_CHARS_DIR = os.path.join(POS_PREVIEWS_DIR, "characters")
-POS_PREVIEWS_COSTUMES_DIR = os.path.join(POS_PREVIEWS_DIR, "costumes")
-POS_PREVIEWS_ENVS_DIR = os.path.join(POS_PREVIEWS_DIR, "environments")
+# POS asset-dir resolvers — each call lands inside the active project's
+# prompt_os/ subtree. These replaced module-level POS_* path constants which
+# could not survive a project switch without a process restart.
+def _pos_photos_dir(kind: str) -> str:
+    """kind: 'char' | 'costume' | 'env' | 'reference' (or legacy 'prop') | 'voice'."""
+    return _prompt_os._photos_dir(kind)
+
+def _pos_previews_dir(kind: str) -> str:
+    """kind: 'char' | 'costume' | 'env' | 'reference' (or legacy 'prop')."""
+    return _prompt_os._previews_dir(kind)
+
+def _pos_voices_dir() -> str:
+    return _prompt_os._photos_dir("voice")
 
 # Render time estimation constants (seconds per clip by engine/model)
 RENDER_TIME_ESTIMATES = {
@@ -199,10 +399,26 @@ STITCH_TIME_PER_CLIP = 5
 WAVEFORM_CACHE_PATH = os.path.join(OUTPUT_DIR, "waveform_cache.json")
 TAKES_DIR = os.path.join(OUTPUT_DIR, "takes")
 
-# Cost defaults
+# Cost defaults (fallback when tier/duration not supplied)
 COST_PER_VIDEO_GEN = 0.15
 COST_PER_IMAGE_GEN = 0.02
 DEFAULT_BUDGET = 10.00
+
+# Real per-second pricing for accurate ledger recording
+KLING_PRICE_PER_SEC = {
+    "v3_standard": 0.084,
+    "v3_pro": 0.112,
+    "o3_standard": 0.084,
+    "o3_pro": 0.392,
+}
+# Flat image prices
+IMAGE_PRICE_BY_ENGINE = {
+    "gemini_2.5_flash": 0.039,
+    "gemini": 0.039,
+    "flux": 0.025,
+    "grok": 0.04,
+    "sdxl": 0.02,
+}
 
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -222,15 +438,16 @@ os.makedirs(FULL_PROJECTS_DIR, exist_ok=True)
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
 os.makedirs(GIFS_DIR, exist_ok=True)
 os.makedirs(TAKES_DIR, exist_ok=True)
-os.makedirs(POS_PHOTOS_CHARS_DIR, exist_ok=True)
-os.makedirs(POS_PHOTOS_COSTUMES_DIR, exist_ok=True)
-os.makedirs(POS_PHOTOS_ENVS_DIR, exist_ok=True)
-os.makedirs(POS_PREVIEWS_CHARS_DIR, exist_ok=True)
-os.makedirs(POS_PREVIEWS_COSTUMES_DIR, exist_ok=True)
-os.makedirs(POS_PREVIEWS_ENVS_DIR, exist_ok=True)
+# POS photo/preview dirs are created on-demand by PromptOS._photos_dir /
+# _previews_dir inside the active project scaffold, so no eager mkdir here.
 
-# ---- Project Manager instance ----
-_project_mgr = ProjectManager(FULL_PROJECTS_DIR, OUTPUT_DIR, UPLOADS_DIR, REFERENCES_DIR)
+# ---- Project Manager (RETIRED) ----
+# The old ProjectManager provided a copy-in/copy-out workspace model. Under
+# the multi-project refactor each project lives at
+# output/projects/<slug>/ and switching is just set_active_slug(). The
+# ProjectManager import is retained for any external module that still
+# references the class name, but the server no longer instantiates it.
+# See lib/active_project.py for the current registry.
 
 # ---- Global generation state ----
 gen_state = {
@@ -243,6 +460,7 @@ gen_state = {
     "analysis": None,
     "scenes": None,
     "song_path": None,
+    "cancel_requested": False,  # user clicked Stop on the render screen
 }
 gen_lock = threading.Lock()
 
@@ -410,7 +628,7 @@ def _queue_generate_item(item: dict):
                 if m:
                     cid = m.group(1)
                     for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                        candidate = os.path.join(POS_PHOTOS_CHARS_DIR, f"{cid}{ext}")
+                        candidate = os.path.join(_pos_photos_dir("char"), f"{cid}{ext}")
                         if os.path.isfile(candidate):
                             photo_path = candidate
                             break
@@ -432,7 +650,7 @@ def _queue_generate_item(item: dict):
                     _mqco = _re_qco.search(r"/api/pos/costumes/([^/]+)/photo", _cref)
                     if _mqco:
                         for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                            candidate = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{_mqco.group(1)}{ext}")
+                            candidate = os.path.join(_pos_photos_dir("costume"), f"{_mqco.group(1)}{ext}")
                             if os.path.isfile(candidate):
                                 q_cos_photo = candidate
                                 break
@@ -455,7 +673,7 @@ def _queue_generate_item(item: dict):
                     _mqen = _re_qen.search(r"/api/pos/environments/([^/]+)/photo", _eref)
                     if _mqen:
                         for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                            candidate = os.path.join(POS_PHOTOS_ENVS_DIR, f"{_mqen.group(1)}{ext}")
+                            candidate = os.path.join(_pos_photos_dir("env"), f"{_mqen.group(1)}{ext}")
                             if os.path.isfile(candidate):
                                 q_env_photo = candidate
                                 break
@@ -545,6 +763,7 @@ def _reset_state():
         "analysis": None,
         "scenes": None,
         "song_path": None,
+        "cancel_requested": False,
     })
 
 
@@ -706,7 +925,7 @@ def _enrich_scene_with_assets(scene):
                             m = re.search(r"/api/pos/characters/([^/]+)/photo", ref_img)
                             if m:
                                 for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                                    candidate = os.path.join(POS_PHOTOS_CHARS_DIR, f"{m.group(1)}{ext}")
+                                    candidate = os.path.join(_pos_photos_dir("char"), f"{m.group(1)}{ext}")
                                     if os.path.isfile(candidate):
                                         char_photo_path = candidate
                                         break
@@ -746,7 +965,7 @@ def _enrich_scene_with_assets(scene):
                         m = re.search(r"/api/pos/characters/([^/]+)/photo", ref_img)
                         if m:
                             for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                                candidate = os.path.join(POS_PHOTOS_CHARS_DIR, f"{m.group(1)}{ext}")
+                                candidate = os.path.join(_pos_photos_dir("char"), f"{m.group(1)}{ext}")
                                 if os.path.isfile(candidate):
                                     char_photo_path = candidate
                                     break
@@ -776,7 +995,7 @@ def _enrich_scene_with_assets(scene):
                             m = re.search(r"/api/pos/costumes/([^/]+)/photo", ref_img)
                             if m:
                                 for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                                    candidate = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{m.group(1)}{ext}")
+                                    candidate = os.path.join(_pos_photos_dir("costume"), f"{m.group(1)}{ext}")
                                     if os.path.isfile(candidate):
                                         costume_photo_path = candidate
                                         break
@@ -797,7 +1016,7 @@ def _enrich_scene_with_assets(scene):
                         m = re.search(r"/api/pos/costumes/([^/]+)/photo", ref_img)
                         if m:
                             for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                                candidate = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{m.group(1)}{ext}")
+                                candidate = os.path.join(_pos_photos_dir("costume"), f"{m.group(1)}{ext}")
                                 if os.path.isfile(candidate):
                                     costume_photo_path = candidate
                                     break
@@ -824,7 +1043,7 @@ def _enrich_scene_with_assets(scene):
                             m = re.search(r"/api/pos/environments/([^/]+)/photo", ref_img)
                             if m:
                                 for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                                    candidate = os.path.join(POS_PHOTOS_ENVS_DIR, f"{m.group(1)}{ext}")
+                                    candidate = os.path.join(_pos_photos_dir("env"), f"{m.group(1)}{ext}")
                                     if os.path.isfile(candidate):
                                         env_photo_path = candidate
                                         break
@@ -845,7 +1064,7 @@ def _enrich_scene_with_assets(scene):
                         m = re.search(r"/api/pos/environments/([^/]+)/photo", ref_img)
                         if m:
                             for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                                candidate = os.path.join(POS_PHOTOS_ENVS_DIR, f"{m.group(1)}{ext}")
+                                candidate = os.path.join(_pos_photos_dir("env"), f"{m.group(1)}{ext}")
                                 if os.path.isfile(candidate):
                                     env_photo_path = candidate
                                     break
@@ -871,7 +1090,7 @@ def _enrich_scene_with_assets(scene):
                     m = re.search(r"/api/pos/characters/([^/]+)/photo", ri)
                     if m:
                         for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                            candidate = os.path.join(POS_PHOTOS_CHARS_DIR, f"{m.group(1)}{ext}")
+                            candidate = os.path.join(_pos_photos_dir("char"), f"{m.group(1)}{ext}")
                             if os.path.isfile(candidate):
                                 resolved = candidate
                                 break
@@ -896,7 +1115,7 @@ def _enrich_scene_with_assets(scene):
                     m = re.search(r"/api/pos/costumes/([^/]+)/photo", ri)
                     if m:
                         for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                            candidate = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{m.group(1)}{ext}")
+                            candidate = os.path.join(_pos_photos_dir("costume"), f"{m.group(1)}{ext}")
                             if os.path.isfile(candidate):
                                 resolved = candidate
                                 break
@@ -1143,6 +1362,11 @@ def _run_generation_approved():
                     gen_state["progress"][local_idx]["status"] = status
 
         for local_idx, (orig_i, scene) in enumerate(scenes_to_gen):
+            with gen_lock:
+                if gen_state.get("cancel_requested"):
+                    on_progress(local_idx, "cancelled")
+                    break
+
             # Merge preview notes into prompt if present
             notes = scene.get("preview_notes", "")
             prompt_base = scene.get("prompt", "")
@@ -1218,238 +1442,89 @@ def _run_generation_approved():
 
 def _generate_scene_thumbnail(index: int, prompt: str, notes: str = "",
                                scene_data: dict = None) -> dict:
-    """
-    Generate a preview thumbnail for a scene.
+    """Generate a preview still for a scene via fal.ai Gemini 3.1 Flash.
 
-    Strategy:
-    1. If a character photo exists, use Runway to generate a 5-second clip
-       with the photo as character reference, then extract the first frame.
-       This produces an accurate preview that matches the final video.
-    2. Fallback: use Grok image generation (text-only, no character likeness).
-
-    Returns dict with 'preview_url' on success or 'error' on failure.
+    If character/costume/environment reference photos exist on the scene,
+    uses gemini_edit_image so the preview respects identity. Otherwise uses
+    gemini_generate_image for a text-only still.
     """
-    import subprocess, tempfile
+    import shutil as _shutil
+    from lib.fal_client import gemini_generate_image, gemini_edit_image
 
     full_prompt = prompt.strip()
     if notes and notes.strip():
         full_prompt = f"{full_prompt}. {notes.strip()}"
 
     out_path = os.path.join(SCENE_THUMBNAILS_DIR, f"scene_{index}.jpg")
+    os.makedirs(SCENE_THUMBNAILS_DIR, exist_ok=True)
 
-    # --- Resolve character photo from scene data ---
-    char_photo = None
+    # Collect reference photos + enrich prompt with asset descriptions.
+    ref_paths = []
     if scene_data:
-        # Enrich scene to get photo paths
         enriched = dict(scene_data)
         _enrich_scene_with_assets(enriched)
-        char_photo = enriched.get("character_photo_path", "") or None
-        # Diagnostic logging (stderr to bypass HTTP handler)
-        import sys as _sys
-        chars_in_scene = scene_data.get("characters", [])
-        _sys.stderr.write(f"[PREVIEW][{index}] Scene characters: {chars_in_scene}\n")
-        _sys.stderr.write(f"[PREVIEW][{index}] Resolved char_photo: {char_photo}\n")
-        _sys.stderr.write(f"[PREVIEW][{index}] costume_photo: {enriched.get('costume_photo_path', 'NONE')}\n")
-        _sys.stderr.write(f"[PREVIEW][{index}] env_photo: {enriched.get('environment_photo_path', 'NONE')}\n")
-        _sys.stderr.flush()
-    else:
-        print(f"[PREVIEW][{index}] No scene_data provided")
 
-    # --- Strategy A: Runway clip + frame extraction ---
-    # Use Runway if ANY photos are available (character, costume, or environment)
-    has_any_photos = (char_photo and os.path.isfile(char_photo)) or \
-        (scene_data and any(scene_data.get("costume_photo_paths", []))) or \
-        (scene_data and scene_data.get("environment_photo_path") and os.path.isfile(scene_data.get("environment_photo_path", "")))
-    if has_any_photos:
-        try:
-            from lib.video_generator import (
-                _runway_submit_text_to_video, _runway_poll, _get_api_key,
-                _photo_to_data_uri, _describe_entity_photo, describe_photo,
-                _download
-            )
-            import requests as _req
+        char_p = enriched.get("character_photo_path", "") or ""
+        if char_p and os.path.isfile(char_p):
+            ref_paths.append(char_p)
+        for cp in (enriched.get("character_photo_paths", []) or []):
+            if cp and os.path.isfile(cp) and cp not in ref_paths:
+                ref_paths.append(cp)
 
-            print(f"[PREVIEW][{index}] Using Runway preview with character photo: {char_photo}")
+        cos_p = enriched.get("costume_photo_path", "") or ""
+        if cos_p and os.path.isfile(cos_p):
+            ref_paths.append(cos_p)
+        for cp in (enriched.get("costume_photo_paths", []) or []):
+            if cp and os.path.isfile(cp) and cp not in ref_paths:
+                ref_paths.append(cp)
 
-            # Tell Runway to animate the character into the scene, not just show the photo
-            preview_prompt = f"Animate this person into a cinematic scene. Keep their exact appearance but place them naturally into the following scene: {full_prompt}"
+        env_p = enriched.get("environment_photo_path", "") or ""
+        if env_p and os.path.isfile(env_p):
+            ref_paths.append(env_p)
 
-            # Inject environment and costume descriptions into prompt
-            env_desc = enriched.get("environment_description", "")
-            if env_desc and env_desc.lower() not in preview_prompt.lower():
-                preview_prompt = f"{preview_prompt}. Setting: {env_desc}"
-            env_p = enriched.get("environment_photo_path", "")
-            if env_p and os.path.isfile(env_p):
-                try:
-                    ed = _describe_entity_photo(env_p, "environment")
-                    if ed and ed.lower() not in preview_prompt.lower():
-                        preview_prompt = f"{preview_prompt}. Environment (from photo): {ed}"
-                except Exception:
-                    pass
+        # Fold asset descriptions into the prompt (no re-description of refs).
+        env_desc = enriched.get("environment_description", "")
+        if env_desc and env_desc.lower() not in full_prompt.lower():
+            full_prompt = f"{full_prompt}. Setting: {env_desc}"
+        cos_desc = enriched.get("costume_description", "")
+        if cos_desc and cos_desc.lower() not in full_prompt.lower():
+            full_prompt = f"{full_prompt}. Wearing: {cos_desc}"
 
-            cos_desc = enriched.get("costume_description", "")
-            if cos_desc and cos_desc.lower() not in preview_prompt.lower():
-                preview_prompt = f"{preview_prompt}. Wearing: {cos_desc}"
-            cos_p = enriched.get("costume_photo_path", "")
-            if cos_p and os.path.isfile(cos_p):
-                try:
-                    cd = _describe_entity_photo(cos_p, "costume")
-                    if cd and cd.lower() not in preview_prompt.lower():
-                        preview_prompt = f"{preview_prompt}. Costume (from photo): {cd}"
-                except Exception:
-                    pass
+        # Gemini edit path caps refs at 3 (per fal.ai guidance).
+        ref_paths = ref_paths[:3]
 
-            if len(preview_prompt) > 800:
-                preview_prompt = preview_prompt[:797] + "..."
+    if len(full_prompt) > 800:
+        full_prompt = full_prompt[:797] + "..."
 
-            # Get engine — check scene, then director state, then default
-            preview_engine = (scene_data or {}).get("engine", "")
-            if not preview_engine:
-                settings = _load_settings()
-                ds = settings.get("director_state", {})
-                preview_engine = ds.get("engine", "") or settings.get("default_engine", "gen4.5")
-            engine_map = {"runway": "gen4.5", "grok": "gen4.5"}
-            preview_engine = engine_map.get(preview_engine, preview_engine)
-
-            # Collect ALL photos from enrichment
-            all_char_photos = enriched.get("character_photo_paths", [])
-            all_costume_photos = enriched.get("costume_photo_paths", [])
-            env_photo = enriched.get("environment_photo_path", "")
-
-            import sys as _prev_sys
-            _prev_sys.stderr.write(f"[PREVIEW][{index}] Sending {len(all_char_photos)} char photos, {len(all_costume_photos)} costume photos, env={'YES' if env_photo else 'NO'}\n")
-            _prev_sys.stderr.flush()
-
-            scene_duration = int(scene_data.get("duration", 5)) if scene_data else 5
-            task_id = _runway_submit_text_to_video(
-                preview_prompt,
-                duration=scene_duration,
-                model=preview_engine,
-                character_photo_paths=all_char_photos,
-                costume_photo_paths=all_costume_photos,
-                environment_photo_path=env_photo if env_photo and os.path.isfile(env_photo) else None,
-            )
-
-            print(f"[PREVIEW][{index}] Runway task submitted: {task_id[:16]}...")
-            video_info = _runway_poll(task_id)
-
-            # Download the preview clip (keep it — it's the playable preview)
-            clip_path = os.path.join(SCENE_THUMBNAILS_DIR, f"scene_{index}_preview.mp4")
-            _download(video_info["url"], clip_path)
-
-            # Also extract first frame as thumbnail for collapsed card view
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", clip_path, "-vframes", "1", "-q:v", "2", out_path],
-                capture_output=True, timeout=30,
-                creationflags=0x08000000 if os.name == "nt" else 0,  # windowsHide
-            )
-
-            if os.path.isfile(clip_path):
-                _record_cost(f"thumb_{index}", "video_preview")
-                print(f"[PREVIEW][{index}] Runway preview clip saved: {clip_path}")
-                return {
-                    "preview_url": f"/api/scene-thumbnails/scene_{index}.jpg",
-                    "video_url": f"/api/scene-thumbnails/scene_{index}_preview.mp4",
-                }
-            else:
-                print(f"[PREVIEW][{index}] Runway download failed, falling back to Grok")
-
-        except Exception as e:
-            import sys as _sys2, traceback as _tb
-            _sys2.stderr.write(f"[PREVIEW][{index}] Runway preview FAILED: {e}\n")
-            _tb.print_exc(file=_sys2.stderr)
-            _sys2.stderr.flush()
-            # Return the error instead of silently falling back
-            return {"error": f"Runway preview failed: {str(e)[:200]}"}
-
-    # --- Strategy B: Runway text-to-video (no character photo) ---
     try:
-        from lib.video_generator import (
-            _runway_submit_text_to_video, _runway_poll, _download
-        )
-        import sys as _sys3
+        if ref_paths:
+            print(f"[PREVIEW][{index}] fal.ai Gemini edit with {len(ref_paths)} refs")
+            paths = gemini_edit_image(
+                prompt=full_prompt,
+                reference_image_paths=ref_paths,
+                resolution="1K",
+                num_images=1,
+            )
+        else:
+            print(f"[PREVIEW][{index}] fal.ai Gemini text-to-image")
+            paths = gemini_generate_image(
+                prompt=full_prompt,
+                resolution="1K",
+                aspect_ratio="16:9",
+                num_images=1,
+            )
 
-        _sys3.stderr.write(f"[PREVIEW][{index}] Using Runway text-to-video (no character photo)\n")
-        _sys3.stderr.flush()
+        if not paths or not os.path.isfile(paths[0]):
+            return {"error": "fal.ai Gemini returned no image"}
 
-        preview_engine = "gen4.5"
-        if scene_data:
-            eng = scene_data.get("engine", "")
-            if eng and eng not in ("grok", "openai"):
-                preview_engine = eng
-        if preview_engine in ("gen4.5", "runway"):
-            settings_b = _load_settings()
-            ds_b = settings_b.get("director_state", {})
-            eng_b = ds_b.get("engine", "")
-            if eng_b and eng_b not in ("grok", "openai"):
-                preview_engine = eng_b
-
-        # Add costume/environment descriptions if available
-        enriched_prompt = full_prompt
-        if scene_data:
-            enriched_b = dict(scene_data)
-            _enrich_scene_with_assets(enriched_b)
-            cos_p = enriched_b.get("costume_photo_path", "")
-            env_p = enriched_b.get("environment_photo_path", "")
-            if cos_p and os.path.isfile(cos_p):
-                try:
-                    from lib.video_generator import _describe_entity_photo
-                    cd = _describe_entity_photo(cos_p, "costume")
-                    if cd: enriched_prompt = f"{enriched_prompt}. Wearing: {cd}"
-                except Exception: pass
-            if env_p and os.path.isfile(env_p):
-                try:
-                    from lib.video_generator import _describe_entity_photo
-                    ed = _describe_entity_photo(env_p, "environment")
-                    if ed: enriched_prompt = f"{enriched_prompt}. Setting: {ed}"
-                except Exception: pass
-
-        if len(enriched_prompt) > 500:
-            enriched_prompt = enriched_prompt[:497] + "..."
-
-        # Use environment photo as promptImage if available (visual scene reference)
-        env_photo_for_input = None
-        if scene_data:
-            ep = enriched_b.get("environment_photo_path", "") if 'enriched_b' in dir() else ""
-            if ep and os.path.isfile(ep):
-                env_photo_for_input = ep
-
-        scene_dur = int(scene_data.get("duration", 5)) if scene_data else 5
-        task_id = _runway_submit_text_to_video(
-            enriched_prompt,
-            duration=scene_dur,
-            model=preview_engine,
-            first_frame_path=env_photo_for_input,
-        )
-
-        _sys3.stderr.write(f"[PREVIEW][{index}] Runway text-to-video task: {task_id[:16]}...\n")
-        _sys3.stderr.flush()
-        video_info = _runway_poll(task_id)
-
-        clip_path = os.path.join(SCENE_THUMBNAILS_DIR, f"scene_{index}_preview.mp4")
-        _download(video_info["url"], clip_path)
-
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", clip_path, "-vframes", "1", "-q:v", "2", out_path],
-            capture_output=True, timeout=30,
-            creationflags=0x08000000 if os.name == "nt" else 0,
-        )
-
-        if os.path.isfile(clip_path):
-            _record_cost(f"thumb_{index}", "video_preview")
-            return {
-                "preview_url": f"/api/scene-thumbnails/scene_{index}.jpg",
-                "video_url": f"/api/scene-thumbnails/scene_{index}_preview.mp4",
-            }
-
-        # If clip download failed somehow, just return what we have
-        if os.path.isfile(out_path):
-            _record_cost(f"thumb_{index}", "video_preview")
-            return {"preview_url": f"/api/scene-thumbnails/scene_{index}.jpg"}
-
-        return {"error": "Preview generation produced no output"}
-
+        _shutil.move(paths[0], out_path)
+        _record_cost(f"thumb_{index}", "image")
+        return {"preview_url": f"/api/scene-thumbnails/scene_{index}.jpg"}
     except Exception as e:
+        import sys as _sys, traceback as _tb
+        _sys.stderr.write(f"[PREVIEW][{index}] Gemini preview failed: {e}\n")
+        _tb.print_exc(file=_sys.stderr)
+        _sys.stderr.flush()
         return {"error": f"Preview failed: {str(e)[:200]}"}
 
 
@@ -1540,6 +1615,7 @@ def _load_cost_tracker() -> dict:
         "image_generations": 0,
         "budget": DEFAULT_BUDGET,
         "scene_costs": {},  # scene_id_or_index -> cost
+        "generations": [],  # ledger: list of per-generation records
     }
 
 
@@ -1548,21 +1624,121 @@ def _save_cost_tracker(tracker: dict):
         json.dump(tracker, f, indent=2)
 
 
-def _record_cost(scene_key: str, gen_type: str = "video"):
-    """Record a generation cost. gen_type: 'video' or 'image'."""
+def _price_for(engine: str, tier: str, duration: float, gen_type: str) -> float:
+    """Best-effort accurate pricing for a generation."""
+    try:
+        if gen_type == "video":
+            per_sec = KLING_PRICE_PER_SEC.get(tier or "", None)
+            if per_sec is not None and duration:
+                return round(per_sec * float(duration), 4)
+            return COST_PER_VIDEO_GEN
+        # image
+        return IMAGE_PRICE_BY_ENGINE.get(engine or "", COST_PER_IMAGE_GEN)
+    except Exception:
+        return COST_PER_VIDEO_GEN if gen_type == "video" else COST_PER_IMAGE_GEN
+
+
+def _record_generation(
+    shot_key: str,
+    gen_type: str = "video",
+    engine: str = "",
+    tier: str = "",
+    duration: float = 0,
+    est_cost: float = 0,
+    actual_cost: float = None,
+    status: str = "ok",
+    meta: dict = None,
+):
+    """Append a ledger entry + update running totals. Returns the tracker."""
     tracker = _load_cost_tracker()
+    if actual_cost is None:
+        actual_cost = _price_for(engine, tier, duration, gen_type)
+    # Only bill delivered assets
+    billable = actual_cost if status == "ok" else 0.0
     if gen_type == "video":
-        cost = COST_PER_VIDEO_GEN
-        tracker["video_generations"] += 1
+        if status == "ok":
+            tracker["video_generations"] = tracker.get("video_generations", 0) + 1
     else:
-        cost = COST_PER_IMAGE_GEN
-        tracker["image_generations"] += 1
-    tracker["total_cost"] = round(tracker["total_cost"] + cost, 4)
-    tracker["scene_costs"][str(scene_key)] = round(
-        tracker["scene_costs"].get(str(scene_key), 0) + cost, 4
+        if status == "ok":
+            tracker["image_generations"] = tracker.get("image_generations", 0) + 1
+    tracker["total_cost"] = round(tracker.get("total_cost", 0) + billable, 4)
+    tracker["scene_costs"][str(shot_key)] = round(
+        tracker["scene_costs"].get(str(shot_key), 0) + billable, 4
     )
+    entry = {
+        "ts": time.time(),
+        "shot_id": str(shot_key),
+        "type": gen_type,
+        "engine": engine,
+        "tier": tier,
+        "duration": duration,
+        "est": round(est_cost or 0, 4),
+        "actual": round(actual_cost, 4),
+        "billed": round(billable, 4),
+        "status": status,
+    }
+    if meta:
+        entry["meta"] = meta
+    tracker.setdefault("generations", []).append(entry)
+    # Cap ledger length to last 5000 entries
+    if len(tracker["generations"]) > 5000:
+        tracker["generations"] = tracker["generations"][-5000:]
     _save_cost_tracker(tracker)
     return tracker
+
+
+def _record_cost(scene_key: str, gen_type: str = "video"):
+    """Legacy shim — use _record_generation for new code."""
+    return _record_generation(scene_key, gen_type=gen_type, status="ok")
+
+
+def _scene_duration_for_shot(shot_id: str) -> tuple[int | None, str]:
+    """Look up planner-assigned duration for a shot in the active project.
+
+    Returns (duration_s, source) where source is one of:
+      "planner" — duration_source=="planner" in scenes.json
+      "scene"   — scene has duration/duration_s but not planner-tagged
+      "none"    — shot not found or no duration field present
+
+    Returns (None, "none") if nothing resolvable.
+    """
+    if not shot_id:
+        return None, "none"
+    try:
+        from lib.active_project import get_project_root
+        scenes_path = os.path.join(get_project_root(), "prompt_os", "scenes.json")
+        if not os.path.isfile(scenes_path):
+            return None, "none"
+        with open(scenes_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        scenes = raw.get("scenes", raw) if isinstance(raw, dict) else raw
+        if not isinstance(scenes, list):
+            return None, "none"
+        for s in scenes:
+            if s.get("id") == shot_id or s.get("opus_shot_id") == shot_id:
+                dur = s.get("duration_s") or s.get("duration")
+                if dur is None:
+                    return None, "none"
+                try:
+                    dur_i = int(dur)
+                except (TypeError, ValueError):
+                    return None, "none"
+                src = "planner" if s.get("duration_source") == "planner" else "scene"
+                return dur_i, src
+    except Exception:
+        pass
+    return None, "none"
+
+
+def _check_budget_gate(est_cost: float) -> tuple:
+    """Returns (ok, reason, tracker). ok=False when budget would be exceeded."""
+    tracker = _load_cost_tracker()
+    budget = float(tracker.get("budget", DEFAULT_BUDGET) or DEFAULT_BUDGET)
+    spent = float(tracker.get("total_cost", 0))
+    projected = spent + float(est_cost or 0)
+    if budget > 0 and projected > budget:
+        return False, f"Budget ${budget:.2f} would be exceeded (spent ${spent:.4f} + est ${est_cost:.4f}).", tracker
+    return True, "", tracker
 
 
 # ---- Settings helpers ----
@@ -1796,7 +1972,7 @@ def _run_manual_generate_scene(scene_id: str):
                 if m:
                     cid = m.group(1)
                     for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                        candidate = os.path.join(POS_PHOTOS_CHARS_DIR, f"{cid}{ext}")
+                        candidate = os.path.join(_pos_photos_dir("char"), f"{cid}{ext}")
                         if os.path.isfile(candidate):
                             resolved_photo = candidate
                             break
@@ -1913,7 +2089,7 @@ def _run_manual_generate_scene(scene_id: str):
                     if m_cos:
                         cid_cos = m_cos.group(1)
                         for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                            candidate = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{cid_cos}{ext}")
+                            candidate = os.path.join(_pos_photos_dir("costume"), f"{cid_cos}{ext}")
                             if os.path.isfile(candidate):
                                 costume_photo_path = candidate
                                 break
@@ -1933,7 +2109,7 @@ def _run_manual_generate_scene(scene_id: str):
                     if m_env:
                         eid_env = m_env.group(1)
                         for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                            candidate = os.path.join(POS_PHOTOS_ENVS_DIR, f"{eid_env}{ext}")
+                            candidate = os.path.join(_pos_photos_dir("env"), f"{eid_env}{ext}")
                             if os.path.isfile(candidate):
                                 environment_photo_path = candidate
                                 break
@@ -2224,7 +2400,7 @@ def _run_manual_generate_all():
                             _mc = _re_ca2.search(r"/api/pos/characters/([^/]+)/photo", _ref)
                             if _mc:
                                 for _ext in (".jpg", ".jpeg", ".png", ".webp"):
-                                    _cand = os.path.join(POS_PHOTOS_CHARS_DIR, f"{_mc.group(1)}{_ext}")
+                                    _cand = os.path.join(_pos_photos_dir("char"), f"{_mc.group(1)}{_ext}")
                                     if os.path.isfile(_cand):
                                         scene_photo_path = _cand
                                         break
@@ -2245,7 +2421,7 @@ def _run_manual_generate_all():
                             _mco3 = _re_co3.search(r"/api/pos/costumes/([^/]+)/photo", _cref)
                             if _mco3:
                                 for _ext in (".jpg", ".jpeg", ".png", ".webp"):
-                                    _cand = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{_mco3.group(1)}{_ext}")
+                                    _cand = os.path.join(_pos_photos_dir("costume"), f"{_mco3.group(1)}{_ext}")
                                     if os.path.isfile(_cand):
                                         _all_cos_photo = _cand
                                         break
@@ -2267,7 +2443,7 @@ def _run_manual_generate_all():
                             _men3 = _re_en3.search(r"/api/pos/environments/([^/]+)/photo", _eref)
                             if _men3:
                                 for _ext in (".jpg", ".jpeg", ".png", ".webp"):
-                                    _cand = os.path.join(POS_PHOTOS_ENVS_DIR, f"{_men3.group(1)}{_ext}")
+                                    _cand = os.path.join(_pos_photos_dir("env"), f"{_men3.group(1)}{_ext}")
                                     if os.path.isfile(_cand):
                                         _all_env_photo = _cand
                                         break
@@ -2455,7 +2631,7 @@ def _run_batch_generate_queue():
                             _mbc = _re_bco.search(r"/api/pos/costumes/([^/]+)/photo", _cref)
                             if _mbc:
                                 for _ext in (".jpg", ".jpeg", ".png", ".webp"):
-                                    _cand = os.path.join(POS_PHOTOS_COSTUMES_DIR, f"{_mbc.group(1)}{_ext}")
+                                    _cand = os.path.join(_pos_photos_dir("costume"), f"{_mbc.group(1)}{_ext}")
                                     if os.path.isfile(_cand):
                                         batch_cos_photo = _cand
                                         break
@@ -2481,7 +2657,7 @@ def _run_batch_generate_queue():
                             _mbe = _re_ben.search(r"/api/pos/environments/([^/]+)/photo", _eref)
                             if _mbe:
                                 for _ext in (".jpg", ".jpeg", ".png", ".webp"):
-                                    _cand = os.path.join(POS_PHOTOS_ENVS_DIR, f"{_mbe.group(1)}{_ext}")
+                                    _cand = os.path.join(_pos_photos_dir("env"), f"{_mbe.group(1)}{_ext}")
                                     if os.path.isfile(_cand):
                                         batch_env_photo = _cand
                                         break
@@ -3019,20 +3195,78 @@ class Handler(BaseHTTPRequestHandler):
         # Quieter logging
         sys.stderr.write(f"[server] {fmt % args}\n")
 
+    def _parse_cookie(self, name: str) -> str:
+        """Read a single cookie value from the Cookie header."""
+        raw = self.headers.get("Cookie", "") or ""
+        for part in raw.split(";"):
+            part = part.strip()
+            if part.startswith(name + "="):
+                return part[len(name) + 1:]
+        return ""
+
+    def _real_client_ip(self) -> str:
+        """Best-effort real client IP for rate limiting.
+
+        Prefers CF-Connecting-IP (set by Cloudflare edge, single value, not
+        client-spoofable when tunnel terminates here), then X-Forwarded-For's
+        first hop, then the raw socket peer. Trusting proxy headers is gated
+        on LUMN_TRUST_XFF=1 so a direct-exposed dev server can't be spoofed.
+        """
+        if os.environ.get("LUMN_TRUST_XFF") == "1":
+            cf = (self.headers.get("CF-Connecting-IP", "") or "").strip()
+            if cf:
+                return cf
+            xff = self.headers.get("X-Forwarded-For", "") or ""
+            if xff:
+                return xff.split(",")[0].strip()
+        return self.client_address[0] if self.client_address else "unknown"
+
+    def _current_user(self) -> dict | None:
+        """Resolve the authenticated user from session cookie (DB-backed) or
+        fall back to a synthetic 'local' user when the legacy bearer token is
+        used. Returns None when no user is resolvable.
+
+        The local fallback keeps dev workflows (e2e_walk, multi_shot_test)
+        working without signup — they get user_id=0 = LOCAL_USER.
+        """
+        if lumn_db:
+            sid = self._parse_cookie("lumn_sid")
+            if sid:
+                u = lumn_db.get_session_user(sid)
+                if u:
+                    return u
+        # Legacy bearer path: return a synthetic local user so handlers that
+        # want user_id have something to namespace by.
+        token = self.headers.get("Authorization", "").replace("Bearer ", "")
+        if token and hmac.compare_digest(token, _API_TOKEN):
+            return {"id": 0, "email": "local@dev", "role": "admin",
+                    "credits_cents": 10_000_000}
+        return None
+
     def _check_auth(self):
-        """Check auth. Browser UI uses CSRF token; external API uses bearer token."""
+        """Check auth. Browser UI uses CSRF token; external API uses bearer token;
+        logged-in users use session cookies."""
         path = self.path.split("?")[0]
-        # Skip auth for static files, health, and the main page
-        if path in ("/", "/health", "/landing", "/manifesto") or path.startswith("/public/") or path.startswith("/output/") or path.endswith(".png"):
+        # Skip auth for static files, health, the main page, and auth endpoints
+        if path in ("/", "/health", "/landing", "/manifesto", "/signin", "/favicon.ico") or path.startswith("/public/") or path.startswith("/output/") or path.endswith(".png") or path.endswith(".webp") or path.endswith(".ico"):
             return True
-        # If request has valid CSRF token, it's from our UI — allow it
-        csrf = self.headers.get("X-CSRF-Token", "")
-        if csrf == _CSRF_TOKEN:
+        if path in ("/api/auth/signup", "/api/auth/login", "/api/auth/logout",
+                    "/api/auth/me", "/api/feedback"):
             return True
+        # Session cookie (DB-backed) = authenticated user
+        if lumn_db:
+            sid = self._parse_cookie("lumn_sid")
+            if sid and lumn_db.get_session_user(sid):
+                return True
         # Otherwise check bearer token (for external API access)
+        # NOTE: we intentionally do NOT accept CSRF-alone as auth — CSRF is
+        # a request-forgery guard, not an identity claim. The old code here
+        # made the global CSRF token act as a shared API key (vuln C1).
         token = self.headers.get("Authorization", "").replace("Bearer ", "")
         if not hmac.compare_digest(token, _API_TOKEN):
-            self.send_error(401, "Unauthorized")
+            # Return JSON so client-side fetch wrappers that parse .json()
+            # don't crash on the stdlib HTML error page.
+            self._send_json({"error": "unauthorized"}, 401)
             return False
         return True
 
@@ -3045,6 +3279,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _send_json(self, data, status=200):
+        self._last_status = status
         body = json.dumps(data).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -3055,41 +3290,57 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # In-memory cache for small text assets (css/js/html) keyed on (path, mtime).
+    # Capped at ~4MB total to avoid memory blowup.
+    _file_cache: dict = {}
+    _file_cache_bytes: int = 0
+    _FILE_CACHE_LIMIT = 4 * 1024 * 1024
+
+    _EXT_CONTENT_TYPES = {
+        ".html": "text/html",
+        ".css": "text/css",
+        ".js": "application/javascript",
+        ".json": "application/json",
+        ".mp4": "video/mp4",
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".svg": "image/svg+xml",
+        ".webm": "video/webm",
+        ".mov": "video/quicktime",
+        ".zip": "application/zip",
+    }
+
     def _send_file(self, path, content_type=None):
+        # Single stat call — avoids 4-5 repeated os.path.* round-trips
+        try:
+            st = os.stat(path, follow_symlinks=False)
+        except (FileNotFoundError, OSError):
+            self.send_error(404)
+            return
+        import stat as _stat
+        if _stat.S_ISLNK(st.st_mode):
+            self.send_error(403, "Symlinks not allowed")
+            return
+        if not _stat.S_ISREG(st.st_mode):
+            self.send_error(404)
+            return
         # Path traversal protection: only serve files under PROJECT_DIR
         resolved = os.path.realpath(path)
         if not resolved.startswith(os.path.realpath(PROJECT_DIR)):
             self.send_error(403)
             return
-        if os.path.islink(path):
-            self.send_error(403, "Symlinks not allowed")
-            return
-        if not os.path.isfile(path):
-            self.send_error(404)
-            return
+
         if content_type is None:
             ext = os.path.splitext(path)[1].lower()
-            content_type = {
-                ".html": "text/html",
-                ".css": "text/css",
-                ".js": "application/javascript",
-                ".json": "application/json",
-                ".mp4": "video/mp4",
-                ".mp3": "audio/mpeg",
-                ".wav": "audio/wav",
-                ".png": "image/png",
-                ".jpg": "image/jpeg",
-                ".jpeg": "image/jpeg",
-                ".gif": "image/gif",
-                ".webp": "image/webp",
-                ".svg": "image/svg+xml",
-                ".webm": "video/webm",
-                ".mov": "video/quicktime",
-                ".zip": "application/zip",
-            }.get(ext, "application/octet-stream")
-        size = os.path.getsize(path)
-        # ETag caching for static files
-        mtime = os.path.getmtime(path)
+            content_type = Handler._EXT_CONTENT_TYPES.get(ext, "application/octet-stream")
+
+        size = st.st_size
+        mtime = st.st_mtime
         etag = f'"{int(mtime)}-{size}"'
         if self.headers.get("If-None-Match") == etag:
             self.send_response(304)
@@ -3108,6 +3359,34 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_header("Cache-Control", "public, max-age=30")
         self.end_headers()
+
+        # In-memory cache for small text/code assets (big binaries stream from disk).
+        is_cacheable = (
+            size <= 512 * 1024
+            and not content_type.startswith("video/")
+            and not content_type.startswith("image/")
+            and not content_type.startswith("audio/")
+        )
+        if is_cacheable:
+            cache_key = (resolved, mtime, size)
+            cached = Handler._file_cache.get(resolved)
+            if cached and cached[0] == cache_key:
+                self.wfile.write(cached[1])
+                return
+            with open(path, "rb") as f:
+                data = f.read()
+            # Evict old entry for this path if any
+            if cached:
+                Handler._file_cache_bytes -= len(cached[1])
+            # Evict arbitrary entries until we fit
+            while Handler._file_cache_bytes + len(data) > Handler._FILE_CACHE_LIMIT and Handler._file_cache:
+                _, evicted = Handler._file_cache.popitem()
+                Handler._file_cache_bytes -= len(evicted[1])
+            Handler._file_cache[resolved] = (cache_key, data)
+            Handler._file_cache_bytes += len(data)
+            self.wfile.write(data)
+            return
+
         with open(path, "rb") as f:
             while True:
                 chunk = f.read(65536)
@@ -3152,18 +3431,70 @@ class Handler(BaseHTTPRequestHandler):
     # ---- Routing ----
 
     def do_GET(self):
+        _t0 = time.time()
+        try:
+            return self._do_GET_impl()
+        finally:
+            if lumn_obs:
+                _lat = (time.time() - _t0) * 1000
+                try:
+                    lumn_obs.log_request("GET", self.path,
+                                         getattr(self, "_last_status", 200),
+                                         _lat, None)
+                except Exception:
+                    pass
+
+    def _do_GET_impl(self):
         if not self._check_auth():
             return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
+        if path == "/favicon.ico":
+            # Send transparent 1x1 GIF so the browser stops 404'ing on the
+            # default favicon path. A real file under /public/ can override.
+            fav = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
+            self.send_response(200)
+            self.send_header("Content-Type", "image/gif")
+            self.send_header("Content-Length", str(len(fav)))
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            self.wfile.write(fav)
+            return
+
         if path == "/":
-            # Inject CSRF token meta tag into index.html
+            # In production mode, redirect unauthenticated visitors to /signin
+            # so the landing page isn't a fingerprinting target.
+            if os.environ.get("LUMN_PRODUCTION") == "1" and lumn_db:
+                sid = self._parse_cookie("lumn_sid")
+                if not (sid and lumn_db.get_session_user(sid)):
+                    self.send_response(302)
+                    self.send_header("Location", "/signin")
+                    self.end_headers()
+                    return
+            # Inject CSRF token meta tag into index.html.
+            # Cache the injected body in memory, keyed on file mtime so dev edits still pick up.
             index_path = os.path.join(PROJECT_DIR, "public", "index.html")
-            with open(index_path, "r", encoding="utf-8") as f:
-                html = f.read()
-            html = html.replace("</head>", f'<meta name="csrf-token" content="{_CSRF_TOKEN}"></head>', 1)
-            body = html.encode("utf-8")
+            # Per-session CSRF token: derived from the caller's session
+            # cookie. Unauthenticated callers get an empty token (and won't
+            # be able to mutate anything). Caching is keyed by (mtime, sid)
+            # so different users don't share injected HTML.
+            sid = self._parse_cookie("lumn_sid") or ""
+            csrf_tok = _csrf_for_sid(sid) if sid else ""
+            try:
+                mtime = os.path.getmtime(index_path)
+            except OSError:
+                mtime = 0
+            cache_key = (mtime, csrf_tok)
+            cache = getattr(Handler, "_index_cache", None)
+            if cache and cache[0] == cache_key:
+                body = cache[1]
+            else:
+                with open(index_path, "r", encoding="utf-8") as f:
+                    html = f.read()
+                html = html.replace("</head>", f'<meta name="csrf-token" content="{csrf_tok}"></head>', 1)
+                body = html.encode("utf-8")
+                Handler._index_cache = (cache_key, body)
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.send_header("Content-Length", str(len(body)))
@@ -3175,10 +3506,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send_file(os.path.join(PROJECT_DIR, "public", "landing.html"))
         elif path == "/tb-bear.png":
             self._send_file(os.path.join(PROJECT_DIR, "public", "tb-bear.png"))
-        elif path in ("/bear-light.png", "/bear-dark.png", "/bg-light.png", "/bg-dark.png", "/logo.png", "/landing-light.png", "/landing-dark.png"):
+        elif path in ("/bear-light.png", "/bear-dark.png", "/bg-light.png", "/bg-dark.png", "/logo.png", "/landing-light.png", "/landing-dark.png", "/landing-light.webp", "/landing-dark.webp"):
             self._send_file(os.path.join(PROJECT_DIR, "public", path.lstrip("/")))
         elif path == "/manifesto":
             self._send_file(os.path.join(PROJECT_DIR, "public", "manifesto.html"))
+
+        elif path == "/signin":
+            self._send_file(os.path.join(PROJECT_DIR, "public", "signin.html"))
+
+        elif path == "/admin":
+            # M1: gate the admin page itself on role==admin so it doesn't
+            # leak structure to probes. APIs are already role-gated.
+            _u = self._current_user() or {}
+            if _u.get("role") != "admin":
+                return self.send_error(404)
+            self._send_file(os.path.join(PROJECT_DIR, "public", "admin.html"))
 
         elif path.startswith("/public/"):
             rel = path[len("/public/"):]
@@ -3204,6 +3546,7 @@ class Handler(BaseHTTPRequestHandler):
                     "analysis": gen_state["analysis"],
                     "scenes": gen_state["scenes"],
                     "has_output": gen_state["output_file"] is not None,
+                    "cancel_requested": gen_state.get("cancel_requested", False),
                 }
             self._send_json(data)
 
@@ -3267,17 +3610,42 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/output/"):
             rel = path[len("/output/"):]
             safe = os.path.normpath(rel)
+            # Backwards compat: legacy HTML/JSON references to
+            # /output/prompt_os/<rest> now resolve to
+            # /output/projects/<active-slug>/prompt_os/<rest>. We try the
+            # active project first, then fall back to the literal legacy
+            # path in case any files survived migration.
+            legacy_prefix = "prompt_os" + os.sep
+            if safe == "prompt_os" or safe.startswith(legacy_prefix):
+                try:
+                    active_slug = active_project.get_active_slug()
+                except Exception:
+                    active_slug = active_project.DEFAULT_SLUG
+                rest = safe[len(legacy_prefix):] if safe.startswith(legacy_prefix) else ""
+                remapped = os.path.join("projects", active_slug, "prompt_os", rest) if rest else os.path.join("projects", active_slug, "prompt_os")
+                remapped_full = os.path.realpath(os.path.join(OUTPUT_DIR, remapped))
+                if remapped_full.startswith(os.path.realpath(OUTPUT_DIR)) and os.path.isfile(remapped_full):
+                    self._send_file(remapped_full)
+                    return
+                # Fall through to literal legacy resolution.
             full = os.path.realpath(os.path.join(OUTPUT_DIR, safe))
             if not full.startswith(os.path.realpath(OUTPUT_DIR)):
                 self.send_error(403)
                 return
             self._send_file(full)
 
-        elif path == "/api/project/save":
-            self._handle_project_save()
-
         elif path == "/api/cost":
             self._handle_get_cost()
+
+        elif path == "/api/cost-tracker":
+            # Alias for tools/multi_shot_test.py budget precheck.
+            self._handle_get_cost()
+
+        elif path == "/api/cost/ledger":
+            self._handle_cost_ledger()
+
+        elif path == "/api/cost/export.csv":
+            self._handle_cost_csv()
 
         elif path == "/api/runway/credits":
             self._handle_runway_credits()
@@ -3478,34 +3846,79 @@ class Handler(BaseHTTPRequestHandler):
         # ──── Prompt OS Photo/Preview GET routes ────
         elif re.match(r'^/api/pos/characters/([^/]+)/photo$', path):
             m = re.match(r'^/api/pos/characters/([^/]+)/photo$', path)
-            self._send_file(os.path.join(POS_PHOTOS_CHARS_DIR, m.group(1) + ".jpg"))
+            self._send_file(os.path.join(_pos_photos_dir("char"), m.group(1) + ".jpg"))
 
         elif re.match(r'^/api/pos/costumes/([^/]+)/photo$', path):
             m = re.match(r'^/api/pos/costumes/([^/]+)/photo$', path)
-            self._send_file(os.path.join(POS_PHOTOS_COSTUMES_DIR, m.group(1) + ".jpg"))
+            self._send_file(os.path.join(_pos_photos_dir("costume"), m.group(1) + ".jpg"))
 
         elif re.match(r'^/api/pos/environments/([^/]+)/photo$', path):
             m = re.match(r'^/api/pos/environments/([^/]+)/photo$', path)
-            self._send_file(os.path.join(POS_PHOTOS_ENVS_DIR, m.group(1) + ".jpg"))
+            self._send_file(os.path.join(_pos_photos_dir("env"), m.group(1) + ".jpg"))
+
+        elif re.match(r'^/api/pos/voices/([^/]+)/sample$', path):
+            m = re.match(r'^/api/pos/voices/([^/]+)/sample$', path)
+            vid = m.group(1)
+            sample_path = None
+            for ext in (".mp3", ".wav", ".m4a", ".ogg", ".webm"):
+                candidate = os.path.join(_pos_voices_dir(), f"{vid}{ext}")
+                if os.path.isfile(candidate):
+                    sample_path = candidate
+                    break
+            if sample_path:
+                self._send_file(sample_path)
+            else:
+                self._send_json({"error": "No sample found"}, 404)
 
         elif re.match(r'^/api/pos/characters/([^/]+)/preview$', path):
             m = re.match(r'^/api/pos/characters/([^/]+)/preview$', path)
             cid = m.group(1)
-            # Try sheet first, then regular preview
-            sheet_path = os.path.join(POS_PREVIEWS_CHARS_DIR, f"{cid}_sheet.jpg")
-            reg_path = os.path.join(POS_PREVIEWS_CHARS_DIR, f"{cid}.jpg")
-            self._send_file(sheet_path if os.path.isfile(sheet_path) else reg_path)
+            # Resolve preview from character entity, with fallbacks
+            _char = _prompt_os.get_character(cid)
+            _prev = (_char.get("previewImage", "") or "") if _char else ""
+            _prev_path = None
+            if _prev and not _prev.startswith("/api/"):
+                # Direct file URL like /output/prompt_os/previews/characters/...
+                _cand = os.path.join(os.path.dirname(os.path.abspath(__file__)), _prev.lstrip("/"))
+                if os.path.isfile(_cand):
+                    _prev_path = _cand
+            if not _prev_path:
+                # Legacy fallback: {cid}_sheet.jpg or {cid}.jpg
+                for _ext in (".png", ".jpg", ".jpeg", ".webp"):
+                    for _sfx in ("_sheet", ""):
+                        _cand = os.path.join(_pos_previews_dir("char"), f"{cid}{_sfx}{_ext}")
+                        if os.path.isfile(_cand):
+                            _prev_path = _cand
+                            break
+                    if _prev_path:
+                        break
+            if not _prev_path:
+                # Last resort: find any file matching the cid prefix
+                import glob as _glob_prev
+                _matches = sorted(_glob_prev.glob(os.path.join(_pos_previews_dir("char"), f"{cid}*")),
+                                  key=os.path.getmtime, reverse=True)
+                if _matches:
+                    _prev_path = _matches[0]
+            self._send_file(_prev_path or os.path.join(_pos_previews_dir("char"), f"{cid}.jpg"))
 
         elif re.match(r'^/api/pos/costumes/([^/]+)/preview$', path):
             m = re.match(r'^/api/pos/costumes/([^/]+)/preview$', path)
-            self._send_file(os.path.join(POS_PREVIEWS_COSTUMES_DIR, m.group(1) + ".jpg"))
+            self._send_file(os.path.join(_pos_previews_dir("costume"), m.group(1) + ".jpg"))
 
         elif re.match(r'^/api/pos/environments/([^/]+)/preview$', path):
             m = re.match(r'^/api/pos/environments/([^/]+)/preview$', path)
-            self._send_file(os.path.join(POS_PREVIEWS_ENVS_DIR, m.group(1) + ".jpg"))
+            self._send_file(os.path.join(_pos_previews_dir("env"), m.group(1) + ".jpg"))
 
         elif path == "/api/pos/scenes":
             self._send_json({"scenes": _prompt_os.get_scenes()})
+
+        elif path == "/api/pos/coverage/report":
+            from lib.coverage import coverage_report, VALID_TIERS, TIER_REQUIRED_SIZES
+            self._send_json({
+                "report": coverage_report(_prompt_os.get_scenes()),
+                "valid_tiers": list(VALID_TIERS),
+                "tier_required_sizes": {k: list(v) for k, v in TIER_REQUIRED_SIZES.items()},
+            })
 
         elif re.match(r'^/api/pos/scenes/([^/]+)/assemble$', path):
             m = re.match(r'^/api/pos/scenes/([^/]+)/assemble$', path)
@@ -3520,6 +3933,17 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/pos/scenes/([^/]+)$', path):
             m = re.match(r'^/api/pos/scenes/([^/]+)$', path)
             rec = _prompt_os.get_scene(m.group(1))
+            if rec:
+                self._send_json(rec)
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        elif path == "/api/pos/voices":
+            self._send_json({"voices": _prompt_os.get_voices()})
+
+        elif re.match(r'^/api/pos/voices/([^/]+)$', path):
+            m = re.match(r'^/api/pos/voices/([^/]+)$', path)
+            rec = _prompt_os.get_voice(m.group(1))
             if rec:
                 self._send_json(rec)
             else:
@@ -3581,6 +4005,137 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/api/pipeline/anchors":
             self._handle_pipeline_get_anchors()
+
+        elif path == "/api/v6/anchors":
+            self._handle_v6_get_anchors()
+
+        elif path == "/api/v6/clips":
+            self._handle_v6_get_clips()
+
+        elif re.match(r'^/api/v6/clip-versions/([^/]+)$', path):
+            m = re.match(r'^/api/v6/clip-versions/([^/]+)$', path)
+            self._handle_v6_clip_versions(m.group(1))
+
+        elif re.match(r'^/api/v6/clip-version-file/([^/]+)/v(\d+)\.mp4$', path):
+            m = re.match(r'^/api/v6/clip-version-file/([^/]+)/v(\d+)\.mp4$', path)
+            self._handle_v6_serve_file(os.path.join(OUTPUT_DIR, "pipeline", "clips_v6", "_versions", m.group(1), f"v{m.group(2)}.mp4"))
+
+        elif re.match(r'^/api/v6/anchor-image/(.+)$', path):
+            m = re.match(r'^/api/v6/anchor-image/(.+)$', path)
+            self._handle_v6_serve_file(os.path.join(OUTPUT_DIR, "pipeline", "anchors_v6", m.group(1)))
+
+        elif re.match(r'^/api/v6/clip-video/(.+)$', path):
+            m = re.match(r'^/api/v6/clip-video/(.+)$', path)
+            self._handle_v6_serve_file(os.path.join(OUTPUT_DIR, "pipeline", "clips_v6", m.group(1)))
+
+        elif re.match(r'^/api/v6/final-video/(.+)$', path):
+            m = re.match(r'^/api/v6/final-video/(.+)$', path)
+            self._handle_v6_serve_file(os.path.join(OUTPUT_DIR, "pipeline", m.group(1)))
+
+        elif re.match(r'^/api/v6/render/remotion/status/([A-Za-z0-9_\-]+)$', path):
+            m = re.match(r'^/api/v6/render/remotion/status/([A-Za-z0-9_\-]+)$', path)
+            self._handle_v6_remotion_render_status(m.group(1))
+
+        elif path == "/api/v6/references":
+            self._handle_v6_get_references()
+
+        elif path == "/api/templates":
+            from lib.project_templates import list_templates
+            self._send_json({"templates": list_templates()})
+
+        elif path == "/api/v6/timeline":
+            self._handle_v6_timeline_preview()
+
+        elif path == "/api/auth/me":
+            self._handle_auth_me()
+
+        elif path == "/api/fal/balance":
+            self._handle_fal_balance()
+
+        elif path == "/api/metrics":
+            # Admin-only in-process metrics snapshot.
+            _u = self._current_user() or {}
+            if _u.get("role") != "admin":
+                return self._send_json({"error": "admin only"}, 403)
+            if lumn_obs:
+                return self._send_json(lumn_obs.snapshot())
+            return self._send_json({"error": "obs disabled"}, 503)
+
+        elif path.startswith("/api/jobs/"):
+            # GET /api/jobs/<job_id>  → job status + result (when done)
+            # GET /api/jobs/<job_id>/stream → SSE stream of stages
+            tail = path[len("/api/jobs/"):]
+            stream = tail.endswith("/stream")
+            jid = tail[:-len("/stream")] if stream else tail
+            if not jid or "/" in jid:
+                return self._send_json({"error": "bad job id"}, 400)
+            if not lumn_db:
+                return self._send_json({"error": "db unavailable"}, 503)
+            row = lumn_db.get_job(jid)
+            if not row:
+                return self._send_json({"error": "not found"}, 404)
+            # Owner-only access (admins can see all)
+            cu = self._current_user() or {}
+            if cu.get("role") != "admin" and int(cu.get("id", 0) or 0) != int(row["user_id"]):
+                return self._send_json({"error": "forbidden"}, 403)
+            if stream:
+                return self._stream_job(jid)
+            return self._send_json(self._serialize_job(row))
+
+        elif path == "/api/admin/users":
+            _u = self._current_user() or {}
+            if _u.get("role") != "admin":
+                return self._send_json({"error": "admin only"}, 403)
+            return self._send_json({"users": lumn_db.list_users(limit=200)})
+
+        elif path == "/api/admin/spend":
+            _u = self._current_user() or {}
+            if _u.get("role") != "admin":
+                return self._send_json({"error": "admin only"}, 403)
+            window = int((urllib.parse.parse_qs(parsed.query).get("window", ["86400"]))[0])
+            return self._send_json(lumn_db.spend_summary(window))
+
+        elif path == "/api/admin/feedback":
+            _u = self._current_user() or {}
+            if _u.get("role") != "admin":
+                return self._send_json({"error": "admin only"}, 403)
+            qs = urllib.parse.parse_qs(parsed.query)
+            return self._send_json({"feedback": lumn_db.list_feedback(
+                limit=int(qs.get("limit", ["100"])[0]),
+                unresolved_only=qs.get("unresolved", ["0"])[0] == "1",
+            )})
+
+        elif path == "/api/v6/identity-gate":
+            from lib.identity_gate import load_state
+            self._send_json(load_state())
+
+        elif path == "/api/v6/staleness":
+            self._handle_v6_staleness_check()
+
+        elif path == "/api/v6/audio/beats":
+            self._handle_v6_audio_beats()
+
+        elif path == "/api/v6/song/timing":
+            self._handle_v6_song_timing()
+
+        elif path == "/api/v6/shots/gates":
+            self._handle_v6_shot_gates_get()
+
+        elif path == "/api/v6/project/export/fcpxml":
+            self._handle_v6_export_fcpxml()
+
+        elif re.match(r'^/api/templates/([a-z_]+)$', path):
+            from lib.project_templates import get_template
+            m = re.match(r'^/api/templates/([a-z_]+)$', path)
+            tpl = get_template(m.group(1))
+            if tpl:
+                self._send_json(tpl)
+            else:
+                self._send_json({"error": "Template not found"}, 404)
+
+        elif re.match(r'^/api/v6/reference-image/(.+)$', path):
+            m = re.match(r'^/api/v6/reference-image/(.+)$', path)
+            self._handle_v6_serve_file(os.path.join(OUTPUT_DIR, "pipeline", "references_v6", m.group(1)))
 
         # ──── Preproduction GET routes ────
         elif path == "/api/preproduction/packages":
@@ -3757,15 +4312,26 @@ class Handler(BaseHTTPRequestHandler):
             result = validate_scene_continuity(shots, scene_data)
             self._send_json(result)
 
-        # ──── Feature 1: Project Browser ────
+        # ──── Multi-project registry (new API) ────
         elif path == "/api/projects":
-            projects = _project_mgr.list_projects()
-            current = _project_mgr.get_current_project()
-            self._send_json({"projects": projects, "current": current})
+            try:
+                projects = active_project.list_projects()
+                active_slug = active_project.get_active_slug()
+                self._send_json({"projects": projects, "active": active_slug})
+            except Exception as _e:
+                self._send_json({"error": str(_e)}, 500)
 
         elif path == "/api/projects/current":
-            current = _project_mgr.get_current_project()
-            self._send_json({"current": current})
+            # Back-compat alias → returns the active project's meta.
+            try:
+                active_slug = active_project.get_active_slug()
+                current = next(
+                    (p for p in active_project.list_projects() if p["slug"] == active_slug),
+                    None,
+                )
+                self._send_json({"current": current, "active": active_slug})
+            except Exception as _e:
+                self._send_json({"error": str(_e)}, 500)
 
         elif re.match(r'^/api/projects/([^/]+)/thumbnail$', path):
             m = re.match(r'^/api/projects/([^/]+)/thumbnail$', path)
@@ -3814,11 +4380,6 @@ class Handler(BaseHTTPRequestHandler):
             from lib.roadmap_features import get_analytics
             self._send_json(get_analytics(OUTPUT_DIR))
 
-        # Version history
-        elif path == "/api/versions":
-            from lib.roadmap_features import list_versions
-            self._send_json({"versions": list_versions(OUTPUT_DIR)})
-
         # ---- Director Brain ----
         elif path == "/api/director-brain/status":
             from lib.director_brain import get_brain
@@ -3859,14 +4420,16 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json([])
 
-        # ---- POS: Props ----
-        elif path == "/api/pos/props":
-            props = _prompt_os.get_props()
-            self._send_json({"props": props or []})
+        # ---- POS: References (formerly Props) ----
+        elif path == "/api/pos/references" or path == "/api/pos/props":
+            refs = _prompt_os.get_references()
+            # Keep legacy "props" key alongside the new "references" key for any
+            # in-flight UI code still expecting the old response shape.
+            self._send_json({"references": refs or [], "props": refs or []})
 
         # ---- POS: Continuity Rules ----
         elif path == "/api/pos/continuity-rules":
-            rules_path = os.path.join(PROMPT_OS_DATA_DIR, "continuity_rules.json")
+            rules_path = os.path.join(_prompt_os_data_dir(), "continuity_rules.json")
             if os.path.isfile(rules_path):
                 with open(rules_path, "r") as f:
                     self._send_json(json.load(f))
@@ -3875,7 +4438,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # ---- POS: Project Style ----
         elif path == "/api/pos/project-style":
-            style_path = os.path.join(PROMPT_OS_DATA_DIR, "project_style.json")
+            style_path = os.path.join(_prompt_os_data_dir(), "project_style.json")
             if os.path.isfile(style_path):
                 with open(style_path, "r") as f:
                     self._send_json(json.load(f))
@@ -3916,15 +4479,49 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
+        _t0 = time.time()
+        try:
+            return self._do_POST_impl()
+        finally:
+            if lumn_obs:
+                _lat = (time.time() - _t0) * 1000
+                try:
+                    lumn_obs.log_request("POST", self.path,
+                                         getattr(self, "_last_status", 200),
+                                         _lat, None)
+                except Exception:
+                    pass
+
+    def _do_POST_impl(self):
         if not self._check_auth():
             return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/")
-        # CSRF check for API routes
-        csrf = self.headers.get("X-CSRF-Token", "")
-        if csrf != _CSRF_TOKEN and path.startswith("/api/"):
-            self._send_json({"error": "Invalid CSRF token"}, 403)
-            return
+        # CSRF check for API routes — exempt auth endpoints since the caller
+        # won't have a CSRF cookie until after login. Token is now per-session
+        # HMAC-derived (see C1 fix), so a bearer-token external client must
+        # skip CSRF — bearer already proves possession of the API token.
+        AUTH_EXEMPT = {"/api/auth/signup", "/api/auth/login", "/api/auth/logout",
+                       "/api/feedback"}
+        if path.startswith("/api/") and path not in AUTH_EXEMPT:
+            bearer = self.headers.get("Authorization", "").replace("Bearer ", "")
+            if bearer and hmac.compare_digest(bearer, _API_TOKEN):
+                pass  # external API caller — CSRF not applicable
+            else:
+                sid = self._parse_cookie("lumn_sid") or ""
+                csrf = self.headers.get("X-CSRF-Token", "")
+                if not _verify_csrf(sid, csrf):
+                    self._send_json({"error": "Invalid CSRF token"}, 403)
+                    return
+        # X-Lumn-Project header parity: applies to POS / vault / project
+        # mutation routes. Auth endpoints are exempt so signin still works
+        # across a project switch. The /api/projects POST (create) is also
+        # exempt since it doesn't touch an existing project.
+        if _is_project_scoped_mutation(path):
+            mismatch = _check_project_header(self)
+            if mismatch:
+                self._send_json(mismatch[1], mismatch[0])
+                return
         if path == "/api/upload":
             self._handle_upload()
 
@@ -3946,6 +4543,9 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/api/suggest-style":
             self._handle_suggest_style()
+
+        elif path == "/api/ai-autofill":
+            self._handle_ai_autofill()
 
         elif path == "/api/manual/scene":
             self._handle_manual_create_scene()
@@ -4001,9 +4601,6 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/manual/scene/([^/]+)/upscale$', path):
             m = re.match(r'^/api/manual/scene/([^/]+)/upscale$', path)
             self._handle_upscale_scene(m.group(1))
-
-        elif path == "/api/project/load":
-            self._handle_project_load()
 
         elif path == "/api/storyboard":
             self._handle_generate_storyboard()
@@ -4115,10 +4712,6 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r'^/api/manual/scene/([^/]+)/export-gif$', path)
             self._handle_export_gif(m.group(1))
 
-        # Item 34: Export best GIFs
-        elif path == "/api/export-best-gifs":
-            self._handle_export_best_gifs()
-
         # Item 42: Template library - save and load
         elif path == "/api/templates/save":
             self._handle_save_template()
@@ -4134,14 +4727,6 @@ class Handler(BaseHTTPRequestHandler):
         elif re.match(r'^/api/manual/scene/([^/]+)/reverse$', path):
             m = re.match(r'^/api/manual/scene/([^/]+)/reverse$', path)
             self._handle_reverse_clip(m.group(1))
-
-        # Roadmap: QR code
-        elif path == "/api/qr-code":
-            self._handle_qr_code()
-
-        # Roadmap: Version history save
-        elif path == "/api/versions/save":
-            self._handle_save_version()
 
         # Roadmap: Enhanced prompt
         elif path == "/api/enhance-prompt-context":
@@ -4168,14 +4753,6 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r'^/api/manual/scene/([^/]+)/frames$', path)
             self._handle_extract_frames(m.group(1))
 
-        # Roadmap: Storyboard PDF
-        elif path == "/api/storyboard-pdf":
-            self._handle_storyboard_pdf()
-
-        # Roadmap: Embed code
-        elif path == "/api/embed-code":
-            self._handle_embed_code()
-
         # ──── Director Mode ────
         elif path == "/api/director/generate-plan":
             self._handle_director_generate_plan()
@@ -4200,7 +4777,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/auto-director/generate":
             self._handle_auto_director_generate()
 
-        elif path == "/api/auto-director/restitch":
+        elif path == "/api/auto-director/restitch" or path == "/api/auto-director/stitch":
             self._handle_auto_director_restitch()
 
         elif path == "/api/auto-director/to-manual":
@@ -4209,6 +4786,9 @@ class Handler(BaseHTTPRequestHandler):
         # ──── Movie Planner POST routes ────
         elif path == "/api/auto-director/movie-plan":
             self._handle_movie_plan()
+
+        elif path == "/api/auto-director/import-shots":
+            self._handle_import_shots()
 
         elif re.match(r'^/api/auto-director/scene/(\d+)/edit$', path):
             m = re.match(r'^/api/auto-director/scene/(\d+)/edit$', path)
@@ -4314,6 +4894,142 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/api/pipeline/reset":
             self._handle_pipeline_reset()
+
+        elif path == "/api/templates/apply":
+            self._handle_template_apply()
+
+        elif path == "/api/screenplay/parse":
+            self._handle_screenplay_parse()
+
+        elif path == "/api/v6/project/autosave":
+            self._handle_v6_project_autosave()
+
+        # ──── Beta feedback + shot ratings ────
+        elif path == "/api/feedback":
+            self._handle_feedback_submit()
+
+        elif path == "/api/shot/rate":
+            self._handle_shot_rate()
+
+        # ──── Auth: signup / login / logout ────
+        elif path == "/api/auth/signup":
+            self._handle_auth_signup()
+
+        elif path == "/api/auth/login":
+            self._handle_auth_login()
+
+        elif path == "/api/auth/logout":
+            self._handle_auth_logout()
+
+        # ──── V6 Pipeline: Gemini anchors + Kling clips via fal.ai ────
+        elif path == "/api/v6/prompt/assemble":
+            self._handle_v6_prompt_assemble()
+
+        elif path == "/api/v6/prompt/lint":
+            self._handle_v6_prompt_lint()
+
+        elif path == "/api/v6/brief/expand":
+            self._handle_v6_brief_expand()
+
+        elif path == "/api/v6/director/storyplan":
+            self._handle_v6_director_storyplan()
+
+        elif path == "/api/v6/director/scene":
+            self._handle_v6_director_scene()
+
+        elif path == "/api/v6/director/kling_prompt":
+            self._handle_v6_director_kling_prompt()
+
+        elif path == "/api/v6/director/critique":
+            self._handle_v6_director_critique()
+
+        elif path == "/api/v6/director/direct-shot":
+            self._handle_v6_director_direct_shot()
+
+        elif path == "/api/v6/director/direct-all":
+            self._handle_v6_director_direct_all()
+
+        elif path == "/api/v6/director/variety-check":
+            self._handle_v6_director_variety_check()
+
+        elif path == "/api/v6/anchor/audit_full":
+            self._handle_v6_anchor_audit_full()
+
+        elif path == "/api/v6/anchor/audit_meta":
+            self._handle_v6_anchor_audit_meta()
+
+        elif path == "/api/v6/identity-gate/lock":
+            self._handle_v6_identity_lock()
+
+        elif path == "/api/v6/identity-gate/unlock":
+            self._handle_v6_identity_unlock()
+
+        elif path == "/api/v6/anchor/generate":
+            self._handle_v6_anchor_generate()
+
+        elif path == "/api/v6/clip/generate":
+            self._handle_v6_clip_generate()
+
+        elif path == "/api/v6/anchor/generate_async":
+            self._handle_v6_anchor_generate_async()
+
+        elif path == "/api/v6/clip/generate_async":
+            self._handle_v6_clip_generate_async()
+
+        elif path == "/api/v6/stitch":
+            self._handle_v6_stitch()
+
+        elif path == "/api/v6/stitch/beat-plan":
+            self._handle_v6_beat_plan()
+
+        elif path == "/api/v6/stitch/beat-snap":
+            self._handle_v6_beat_snap()
+
+        elif path == "/api/v6/render/remotion":
+            self._handle_v6_remotion_render()
+
+        elif path == "/api/v6/clips/drag-scan":
+            self._handle_v6_clips_drag_scan()
+        elif path == "/api/v6/clips/cut-drift":
+            self._handle_v6_clips_cut_drift()
+        elif path == "/api/v6/clips/motion-audit":
+            self._handle_v6_clips_motion_audit()
+        elif path == "/api/v6/pacing-arc":
+            self._handle_v6_pacing_arc()
+        elif path == "/api/v6/shots/plan-durations":
+            self._handle_v6_shots_plan_durations()
+
+        elif path == "/api/v6/sonnet/select":
+            self._handle_v6_sonnet_select()
+        elif path == "/api/v6/sonnet/override":
+            self._handle_v6_sonnet_override()
+
+        elif path == "/api/v6/sonnet/review":
+            self._handle_v6_sonnet_review()
+
+        elif path == "/api/v6/sonnet/audit-prompt":
+            self._handle_v6_sonnet_audit_prompt()
+
+        elif path == "/api/v6/anchor/audit":
+            self._handle_v6_anchor_audit()
+
+        elif path == "/api/v6/anchors/audit-batch":
+            self._handle_v6_anchors_audit_batch()
+
+        elif path == "/api/v6/song/analyze":
+            self._handle_v6_song_analyze()
+
+        elif path == "/api/v6/shots/gates/sync":
+            self._handle_v6_shot_gates_sync()
+
+        elif path == "/api/v6/shots/gates/set":
+            self._handle_v6_shot_gates_set()
+
+        elif path == "/api/v6/shots/gates/audit-all":
+            self._handle_v6_shot_gates_audit_all()
+
+        elif path == "/api/v6/reference/upload":
+            self._handle_v6_reference_upload()
 
         # ──── Preproduction POST routes ────
         elif path == "/api/preproduction/package/create":
@@ -4706,6 +5422,15 @@ class Handler(BaseHTTPRequestHandler):
             rec = _prompt_os.create_environment(body)
             self._send_json({"ok": True, "environment": rec})
 
+        elif path == "/api/pos/references" or path == "/api/pos/props":
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
+            rec = _prompt_os.create_reference(body)
+            self._send_json({"ok": True, "reference": rec, "prop": rec})
+
         elif path == "/api/pos/scenes":
             try:
                 body = json.loads(self._read_body())
@@ -4714,6 +5439,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             rec = _prompt_os.create_scene(body)
             self._send_json({"ok": True, "scene": rec})
+
+        elif path == "/api/pos/voices":
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
+            rec = _prompt_os.create_voice(body)
+            self._send_json({"ok": True, "voice": rec})
 
         elif re.match(r'^/api/pos/scenes/([^/]+)/export/text$', path):
             m = re.match(r'^/api/pos/scenes/([^/]+)/export/text$', path)
@@ -4756,6 +5490,10 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r'^/api/pos/environments/([^/]+)/photo$', path)
             self._handle_pos_photo_upload(m.group(1), "environments")
 
+        elif re.match(r'^/api/pos/voices/([^/]+)/sample$', path):
+            m = re.match(r'^/api/pos/voices/([^/]+)/sample$', path)
+            self._handle_pos_voice_sample_upload(m.group(1))
+
         # ──── Auto-describe from photo ────
         elif re.match(r'^/api/pos/characters/([^/]+)/describe$', path):
             m = re.match(r'^/api/pos/characters/([^/]+)/describe$', path)
@@ -4787,28 +5525,256 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r'^/api/pos/characters/([^/]+)/generate-sheet$', path)
             self._handle_pos_generate_character_sheet(m.group(1))
 
-        # ──── Feature 1: Project Browser ────
-        elif path == "/api/projects":
+        # ──── Unified POS Sheet Generation (fal.ai Gemini) ────
+        elif path == "/api/pos/sheets/generate":
+            self._handle_pos_sheet_generate_fal()
+
+        # ──── Style Transfer (convert ref photo to target art style) ────
+        elif re.match(r'^/api/pos/characters/([^/]+)/style-transfer$', path):
+            m = re.match(r'^/api/pos/characters/([^/]+)/style-transfer$', path)
+            self._handle_style_transfer(m.group(1))
+
+        # ──── Sheet Approval ────
+        elif path == "/api/pos/sheets/approve":
             try:
                 body = json.loads(self._read_body())
             except (json.JSONDecodeError, ValueError):
                 self._send_json({"error": "Invalid JSON"}, 400)
                 return
-            name = body.get("name", "Untitled Project")
-            meta = _project_mgr.create_project(name)
+            asset_type = (body.get("assetType") or "").lower()
+            asset_id = body.get("assetId") or ""
+            sheet_url = body.get("sheetUrl") or ""
+            slot = body.get("slot") or "approvedSheet"
+            is_unapprove = body.get("unapprove", False)
+            if not asset_type or not asset_id:
+                self._send_json({"error": "assetType and assetId required"}, 400)
+                return
+            if not is_unapprove and not sheet_url:
+                self._send_json({"error": "sheetUrl required (or set unapprove: true)"}, 400)
+                return
+            updaters = {
+                "character":   _prompt_os.update_character,
+                "costume":     _prompt_os.update_costume,
+                "environment": _prompt_os.update_environment,
+                "reference":   _prompt_os.update_reference,
+                "prop":        _prompt_os.update_reference,  # legacy alias
+            }
+            updater = updaters.get(asset_type)
+            if not updater:
+                self._send_json({"error": f"Unknown assetType: {asset_type}"}, 400)
+                return
+            if is_unapprove:
+                updates = {slot: "", "approvalState": "generated"}
+                action = "unapproved"
+            else:
+                updates = {slot: sheet_url}
+                if slot == "approvedSheet":
+                    updates["approvalState"] = "approved"
+                    updates["previewImage"] = sheet_url
+                action = "approved"
+            result = updater(asset_id, updates)
+            if not result:
+                self._send_json({"error": f"{asset_type} {asset_id} not found"}, 404)
+                return
+            print(f"[SHEET_APPROVE] {asset_type}/{asset_id} → {action} {slot}")
+            self._send_json({"ok": True, "slot": slot, "action": action})
+
+        elif path == "/api/pos/sheets/delete":
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
+            asset_type = (body.get("assetType") or "").lower()
+            asset_id = body.get("assetId") or ""
+            sheet_url = body.get("sheetUrl") or ""
+            delete_file = bool(body.get("deleteFile", True))
+            if not asset_type or not asset_id or not sheet_url:
+                self._send_json({"error": "assetType, assetId, sheetUrl required"}, 400)
+                return
+            result = _prompt_os.remove_sheet_image(asset_type, asset_id, sheet_url)
+            if isinstance(result, dict) and result.get("error"):
+                self._send_json(result, 404)
+                return
+            removed_file = False
+            removed_companions = []
+            if delete_file:
+                base = os.path.dirname(os.path.abspath(__file__))
+                for candidate in (
+                    os.path.join(base, "public", sheet_url.lstrip("/")),
+                    os.path.join(base, sheet_url.lstrip("/")),
+                ):
+                    if os.path.isfile(candidate):
+                        try:
+                            os.remove(candidate)
+                            removed_file = True
+                            stem, _ = os.path.splitext(candidate)
+                            for comp in (stem + "_preview.jpg", stem + "_preview.png", stem + ".jpg"):
+                                if os.path.isfile(comp):
+                                    try:
+                                        os.remove(comp)
+                                        removed_companions.append(os.path.basename(comp))
+                                    except OSError as ce:
+                                        print(f"[SHEET_DELETE] could not remove companion {comp}: {ce}")
+                            break
+                        except OSError as e:
+                            print(f"[SHEET_DELETE] could not remove {candidate}: {e}")
+            print(f"[SHEET_DELETE] {asset_type}/{asset_id} → removed {sheet_url} (file={removed_file}, companions={removed_companions})")
+            self._send_json({"ok": True, "removed_file": removed_file, "removed_companions": removed_companions})
+
+        elif path == "/api/pos/sheets/duplicate":
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
+            asset_type = (body.get("assetType") or "").lower()
+            asset_id = body.get("assetId") or ""
+            sheet_url = body.get("sheetUrl") or ""
+            if not asset_type or not asset_id or not sheet_url:
+                self._send_json({"error": "assetType, assetId, sheetUrl required"}, 400)
+                return
+            server_root = os.path.dirname(os.path.abspath(__file__))
+            result = _prompt_os.duplicate_sheet_image(asset_type, asset_id, sheet_url, server_root)
+            if isinstance(result, dict) and result.get("error"):
+                self._send_json(result, 404)
+                return
+            print(f"[SHEET_DUPLICATE] {asset_type}/{asset_id} → {sheet_url} copied to {result.get('new_url')}")
+            self._send_json({"ok": True, "new_url": result.get("new_url"), "asset": result.get("asset")})
+
+        # ──── Asset Lock / Unlock ────
+        elif path == "/api/pos/assets/lock":
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
+            asset_type = (body.get("assetType") or "").lower()
+            asset_id = body.get("assetId") or ""
+            action = body.get("action") or "lock"  # "lock" or "unlock"
+            if not asset_type or not asset_id:
+                self._send_json({"error": "assetType and assetId required"}, 400)
+                return
+            if action == "unlock":
+                result = _prompt_os.unlock_asset(asset_type, asset_id)
+            else:
+                result = _prompt_os.lock_asset(asset_type, asset_id)
+            if result and result.get("error"):
+                self._send_json(result, 400)
+                return
+            print(f"[ASSET_LOCK] {asset_type}/{asset_id} → {action}")
+            self._send_json({"ok": True, "action": action, "asset": result})
+
+        # ──── Multi-project registry (new API) ────
+        elif path == "/api/projects":
+            # POST /api/projects — create a new project.
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
+            name = (body.get("name") or "").strip()
+            slug = body.get("slug")
+            if not name:
+                self._send_json({"error": "name is required"}, 400)
+                return
+            try:
+                meta = active_project.create_project(name, slug)
+            except ValueError as _ve:
+                msg = str(_ve)
+                status = 409 if "already exists" in msg else 400
+                self._send_json({"error": msg}, status)
+                return
+            except Exception as _e:
+                self._send_json({"error": str(_e)}, 500)
+                return
             self._send_json({"ok": True, "project": meta})
 
+        elif path == "/api/projects/active":
+            # POST /api/projects/active — switch active project.
+            mismatch = _check_project_header(self)
+            if mismatch:
+                self._send_json(mismatch[1], mismatch[0])
+                return
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
+            slug = (body.get("slug") or "").strip()
+            if not slug:
+                self._send_json({"error": "slug is required"}, 400)
+                return
+            known = {p["slug"] for p in active_project.list_projects()}
+            if slug not in known:
+                self._send_json({"error": f"unknown slug '{slug}'"}, 404)
+                return
+            try:
+                active_project.set_active_slug(slug)
+            except Exception as _e:
+                self._send_json({"error": str(_e)}, 500)
+                return
+            self._send_json({"ok": True, "active": slug})
+
+        elif re.match(r'^/api/projects/([^/]+)/rename$', path):
+            mismatch = _check_project_header(self)
+            if mismatch:
+                self._send_json(mismatch[1], mismatch[0])
+                return
+            m = re.match(r'^/api/projects/([^/]+)/rename$', path)
+            slug = m.group(1)
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
+            new_name = (body.get("name") or "").strip()
+            if not new_name:
+                self._send_json({"error": "name is required"}, 400)
+                return
+            try:
+                meta = active_project.rename_project(slug, new_name)
+            except ValueError as _ve:
+                self._send_json({"error": str(_ve)}, 404)
+                return
+            except Exception as _e:
+                self._send_json({"error": str(_e)}, 500)
+                return
+            self._send_json({"ok": True, "project": meta})
+
+        elif re.match(r'^/api/projects/([^/]+)/snapshot$', path):
+            mismatch = _check_project_header(self)
+            if mismatch:
+                self._send_json(mismatch[1], mismatch[0])
+                return
+            m = re.match(r'^/api/projects/([^/]+)/snapshot$', path)
+            slug = m.group(1)
+            try:
+                counts = active_project.snapshot_project_to_vault(slug)
+            except ValueError as _ve:
+                self._send_json({"error": str(_ve)}, 404)
+                return
+            except Exception as _e:
+                self._send_json({"error": str(_e)}, 500)
+                return
+            self._send_json({"ok": True, "counts": counts})
+
+        # ──── Legacy project endpoints (retired) ────
+        # /api/projects/<id>/load and /api/projects/<id>/save were the old
+        # copy-in/copy-out workspace model. Under the new architecture every
+        # project is always live on disk — switching is just set_active_slug.
+        # We keep the paths here to return a helpful 410 so callers update.
         elif re.match(r'^/api/projects/([^/]+)/load$', path):
-            m = re.match(r'^/api/projects/([^/]+)/load$', path)
-            meta = _project_mgr.load_project(m.group(1))
-            if meta:
-                self._send_json({"ok": True, "project": meta})
-            else:
-                self._send_json({"error": "Project not found"}, 404)
+            self._send_json({
+                "error": "endpoint retired",
+                "hint": "POST /api/projects/active with {\"slug\": \"...\"} instead",
+            }, 410)
 
         elif re.match(r'^/api/projects/([^/]+)/save$', path):
-            _project_mgr.save_current()
-            self._send_json({"ok": True})
+            self._send_json({
+                "error": "endpoint retired",
+                "hint": "projects are always live on disk; use /api/projects/<slug>/snapshot to export to the vault",
+            }, 410)
 
         # ──── Feature 2+10: Batch Generation Queue ────
         elif path == "/api/manual/generate-queue":
@@ -4929,6 +5895,12 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/generate-approved":
             self._handle_generate_approved()
 
+        elif path == "/api/generate/cancel":
+            with gen_lock:
+                was_running = gen_state.get("running", False)
+                gen_state["cancel_requested"] = True
+            self._send_json({"ok": True, "was_running": was_running})
+
         # ---- Keyframe endpoints (POST) ----
         elif re.match(r'^/api/scenes/(\d+)/keyframes$', path):
             m = re.match(r'^/api/scenes/(\d+)/keyframes$', path)
@@ -5034,7 +6006,7 @@ class Handler(BaseHTTPRequestHandler):
             except (json.JSONDecodeError, ValueError):
                 self._send_json({"error": "Invalid JSON"}, 400)
                 return
-            rules_path = os.path.join(PROMPT_OS_DATA_DIR, "continuity_rules.json")
+            rules_path = os.path.join(_prompt_os_data_dir(), "continuity_rules.json")
             rules = []
             if os.path.isfile(rules_path):
                 with open(rules_path, "r") as f:
@@ -5051,7 +6023,7 @@ class Handler(BaseHTTPRequestHandler):
             except (json.JSONDecodeError, ValueError):
                 self._send_json({"error": "Invalid JSON"}, 400)
                 return
-            style_path = os.path.join(PROMPT_OS_DATA_DIR, "project_style.json")
+            style_path = os.path.join(_prompt_os_data_dir(), "project_style.json")
             with open(style_path, "w") as f:
                 json.dump(body, f)
             self._send_json({"ok": True})
@@ -5074,11 +6046,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/")
-        # CSRF check for API routes
-        csrf = self.headers.get("X-CSRF-Token", "")
-        if csrf != _CSRF_TOKEN and path.startswith("/api/"):
-            self._send_json({"error": "Invalid CSRF token"}, 403)
-            return
+        # CSRF check for API routes (per-session; bearer-token callers exempt)
+        if path.startswith("/api/"):
+            bearer = self.headers.get("Authorization", "").replace("Bearer ", "")
+            if not (bearer and hmac.compare_digest(bearer, _API_TOKEN)):
+                sid = self._parse_cookie("lumn_sid") or ""
+                csrf = self.headers.get("X-CSRF-Token", "")
+                if not _verify_csrf(sid, csrf):
+                    self._send_json({"error": "Invalid CSRF token"}, 403)
+                    return
+        # X-Lumn-Project header parity on project-scoped mutations.
+        if _is_project_scoped_mutation(path):
+            mismatch = _check_project_header(self)
+            if mismatch:
+                self._send_json(mismatch[1], mismatch[0])
+                return
 
         if re.match(r'^/api/manual/scene/([^/]+)$', path):
             m = re.match(r'^/api/manual/scene/([^/]+)$', path)
@@ -5139,6 +6121,19 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": "Not found"}, 404)
 
+        elif re.match(r'^/api/pos/(references|props)/([^/]+)$', path):
+            m = re.match(r'^/api/pos/(references|props)/([^/]+)$', path)
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
+            rec = _prompt_os.update_reference(m.group(2), body)
+            if rec:
+                self._send_json({"ok": True, "reference": rec, "prop": rec})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
         elif re.match(r'^/api/pos/scenes/([^/]+)$', path):
             m = re.match(r'^/api/pos/scenes/([^/]+)$', path)
             try:
@@ -5152,6 +6147,19 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": "Not found"}, 404)
 
+        elif re.match(r'^/api/pos/voices/([^/]+)$', path):
+            m = re.match(r'^/api/pos/voices/([^/]+)$', path)
+            try:
+                body = json.loads(self._read_body())
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "Invalid JSON"}, 400)
+                return
+            rec = _prompt_os.update_voice(m.group(1), body)
+            if rec:
+                self._send_json({"ok": True, "voice": rec})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
         else:
             self.send_error(404)
 
@@ -5160,11 +6168,24 @@ class Handler(BaseHTTPRequestHandler):
             return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/")
-        # CSRF check for API routes
-        csrf = self.headers.get("X-CSRF-Token", "")
-        if csrf != _CSRF_TOKEN and path.startswith("/api/"):
-            self._send_json({"error": "Invalid CSRF token"}, 403)
-            return
+        # CSRF check for API routes (per-session; bearer-token callers exempt)
+        if path.startswith("/api/"):
+            bearer = self.headers.get("Authorization", "").replace("Bearer ", "")
+            if not (bearer and hmac.compare_digest(bearer, _API_TOKEN)):
+                sid = self._parse_cookie("lumn_sid") or ""
+                csrf = self.headers.get("X-CSRF-Token", "")
+                if not _verify_csrf(sid, csrf):
+                    self._send_json({"error": "Invalid CSRF token"}, 403)
+                    return
+        # X-Lumn-Project header parity on project-scoped mutations.
+        # /api/projects/<slug> (DELETE a project) is handled per-route so the
+        # client can still delete inactive projects without matching the
+        # active slug. _is_project_scoped_mutation() returns False for those.
+        if _is_project_scoped_mutation(path):
+            mismatch = _check_project_header(self)
+            if mismatch:
+                self._send_json(mismatch[1], mismatch[0])
+                return
 
         if re.match(r'^/api/manual/scene/([^/]+)$', path):
             m = re.match(r'^/api/manual/scene/([^/]+)$', path)
@@ -5202,6 +6223,13 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": "Not found"}, 404)
 
+        elif re.match(r'^/api/pos/(references|props)/([^/]+)$', path):
+            m = re.match(r'^/api/pos/(references|props)/([^/]+)$', path)
+            if _prompt_os.delete_reference(m.group(2)):
+                self._send_json({"ok": True})
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
         elif re.match(r'^/api/pos/scenes/([^/]+)$', path):
             m = re.match(r'^/api/pos/scenes/([^/]+)$', path)
             if _prompt_os.delete_scene(m.group(1)):
@@ -5209,19 +6237,39 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": "Not found"}, 404)
 
-        # ──── Feature 1: Delete Project ────
-        elif re.match(r'^/api/projects/([^/]+)$', path):
-            m = re.match(r'^/api/projects/([^/]+)$', path)
-            if _project_mgr.delete_project(m.group(1)):
+        elif re.match(r'^/api/pos/voices/([^/]+)$', path):
+            m = re.match(r'^/api/pos/voices/([^/]+)$', path)
+            if _prompt_os.delete_voice(m.group(1)):
                 self._send_json({"ok": True})
             else:
                 self._send_json({"error": "Not found"}, 404)
+
+        # ──── Multi-project registry: DELETE a project ────
+        elif re.match(r'^/api/projects/([^/]+)$', path):
+            mismatch = _check_project_header(self)
+            if mismatch:
+                self._send_json(mismatch[1], mismatch[0])
+                return
+            m = re.match(r'^/api/projects/([^/]+)$', path)
+            slug = m.group(1)
+            try:
+                active_project.delete_project(slug)
+            except ValueError as _ve:
+                msg = str(_ve)
+                # Active slug / default slug / missing slug are all user-fixable.
+                status = 400 if ("active" in msg or "default" in msg) else 404
+                self._send_json({"error": msg}, status)
+                return
+            except Exception as _e:
+                self._send_json({"error": str(_e)}, 500)
+                return
+            self._send_json({"ok": True})
 
         # ──── Delete Continuity Rule ────
         elif re.match(r'^/api/pos/continuity-rules/(\d+)$', path):
             m = re.match(r'^/api/pos/continuity-rules/(\d+)$', path)
             idx = int(m.group(1))
-            rules_path = os.path.join(PROMPT_OS_DATA_DIR, "continuity_rules.json")
+            rules_path = os.path.join(_prompt_os_data_dir(), "continuity_rules.json")
             rules = []
             if os.path.isfile(rules_path):
                 with open(rules_path, "r") as f:
@@ -5295,7 +6343,47 @@ class Handler(BaseHTTPRequestHandler):
         with open(dest, "wb") as f:
             f.write(file_data)
 
-        self._send_json({"ok": True, "filename": filename, "size": len(file_data)})
+        # F2: kick off music-grid analysis in background for audio uploads so
+        # timing.json is ready by the time the scene planner asks for it.
+        # Lyrics are skipped here (Whisper costs $) — user can re-run via
+        # POST /api/v6/song/analyze { include_lyrics: true } when desired.
+        audio_exts = {'.mp3', '.wav', '.m4a', '.ogg', '.flac'}
+        analysis_queued = False
+        if os.path.splitext(filename)[1].lower() in audio_exts:
+            try:
+                import threading
+                def _bg_analyze(song_path: str):
+                    try:
+                        from lib.song_timing import analyze_song, save_timing
+                    except Exception as e:
+                        print(f"[upload-analyze] import failed: {e}", flush=True)
+                        return
+                    try:
+                        timing = analyze_song(song_path, include_lyrics=False)
+                    except Exception as e:
+                        print(f"[upload-analyze] analyze_song failed: {e}", flush=True)
+                        return
+                    try:
+                        project_dir = os.path.join(OUTPUT_DIR, "projects", "default")
+                        out_path = save_timing(project_dir, timing)
+                        bpm = timing.get("tempo", {}).get("bpm")
+                        dbs = len(timing.get("downbeats", []))
+                        print(f"[upload-analyze] timing saved -> {out_path} "
+                              f"(bpm={bpm}, downbeats={dbs})", flush=True)
+                    except Exception as e:
+                        print(f"[upload-analyze] save failed: {e}", flush=True)
+                t = threading.Thread(target=_bg_analyze, args=(dest,), daemon=True)
+                t.start()
+                analysis_queued = True
+            except Exception as e:
+                print(f"[upload-analyze] spawn failed: {e}", flush=True)
+
+        self._send_json({
+            "ok": True,
+            "filename": filename,
+            "size": len(file_data),
+            "analysis_queued": analysis_queued,
+        })
 
     def _handle_generate(self):
         """Start video generation."""
@@ -5313,6 +6401,22 @@ class Handler(BaseHTTPRequestHandler):
 
         style = params.get("style", "cinematic, atmospheric")
         filename = params.get("filename", "")
+
+        # SECURITY (H1): moderate user-supplied style text before it flows
+        # into scene plans and fal.ai. fail-closed on exception.
+        try:
+            from lib.moderation import moderate_prompt_strict
+            _mod = moderate_prompt_strict(style or "", nsfw_allowed=False)
+            if not _mod["allowed"]:
+                return self._send_json({
+                    "error": "moderation_blocked",
+                    "severity": _mod["severity"],
+                    "reasons": _mod["reasons"],
+                }, 451)
+            if _mod["severity"] == "warn":
+                style = _mod["redacted_prompt"]
+        except Exception as _e:
+            return self._send_json({"error": "moderation unavailable"}, 500)
 
         if not filename:
             self._send_json({"error": "No filename specified"}, 400)
@@ -6146,6 +7250,22 @@ class Handler(BaseHTTPRequestHandler):
             if "effect_intensity" in params:
                 scene["effect_intensity"] = params["effect_intensity"]
 
+        # SECURITY (H1): moderate user-supplied prompt before it can reach
+        # fal.ai via the downstream manual-generate path. fail-closed.
+        try:
+            from lib.moderation import moderate_prompt_strict
+            _mod = moderate_prompt_strict(scene.get("prompt", ""), nsfw_allowed=False)
+            if not _mod["allowed"]:
+                return self._send_json({
+                    "error": "moderation_blocked",
+                    "severity": _mod["severity"],
+                    "reasons": _mod["reasons"],
+                }, 451)
+            if _mod["severity"] == "warn":
+                scene["prompt"] = _mod["redacted_prompt"]
+        except Exception:
+            return self._send_json({"error": "moderation unavailable"}, 500)
+
         plan["scenes"].append(scene)
         _save_manual_plan(plan)
         self._send_json({"ok": True, "scene": scene})
@@ -6158,6 +7278,22 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._send_json({"error": "Invalid JSON"}, 400)
             return
+
+        # SECURITY (H1): moderate any updated prompt.
+        if "prompt" in params:
+            try:
+                from lib.moderation import moderate_prompt_strict
+                _mod = moderate_prompt_strict(params.get("prompt") or "", nsfw_allowed=False)
+                if not _mod["allowed"]:
+                    return self._send_json({
+                        "error": "moderation_blocked",
+                        "severity": _mod["severity"],
+                        "reasons": _mod["reasons"],
+                    }, 451)
+                if _mod["severity"] == "warn":
+                    params["prompt"] = _mod["redacted_prompt"]
+            except Exception:
+                return self._send_json({"error": "moderation unavailable"}, 500)
 
         plan = _load_manual_plan()
         for s in plan["scenes"]:
@@ -6197,9 +7333,17 @@ class Handler(BaseHTTPRequestHandler):
                         s["effect_intensity"] = max(0.1, min(1.0, float(params["effect_intensity"])))
                     except (ValueError, TypeError):
                         s["effect_intensity"] = 0.5
-                # Prompt OS entity links
+                # Prompt OS entity links — accept both array and singular forms
+                if "characterIds" in params:
+                    s["characterIds"] = list(params["characterIds"] or [])
                 if "characterId" in params:
                     s["characterId"] = params["characterId"] or None
+                    if s.get("characterIds") is None:
+                        s["characterIds"] = []
+                    if params["characterId"] and params["characterId"] not in s["characterIds"]:
+                        s["characterIds"].append(params["characterId"])
+                if "costumeIds" in params:
+                    s["costumeIds"] = list(params["costumeIds"] or [])
                 if "costumeId" in params:
                     s["costumeId"] = params["costumeId"] or None
                 if "environmentId" in params:
@@ -6630,6 +7774,74 @@ class Handler(BaseHTTPRequestHandler):
 
         self._send_json({"ok": True, "suggestion": suggestion})
 
+    def _handle_ai_autofill(self):
+        """Generic Claude completion endpoint used by Guided 'Make my movie',
+        _aiAutoFillForm, _aiAutoFillScene. Accepts:
+          {prompt, system?, max_tokens?, fieldKeys?, userIdea?, formType?}
+        Returns:
+          text completion: {ok, result, text, content}
+          form autofill:   {ok, fields: {key:val,...}, result, text, content}
+        """
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        prompt = (body.get("prompt") or "").strip()
+        if not prompt:
+            self._send_json({"error": "prompt is required"}, 400)
+            return
+        system = body.get("system") or ""
+        try:
+            max_tokens = int(body.get("max_tokens", 2000))
+        except (TypeError, ValueError):
+            max_tokens = 2000
+        max_tokens = max(128, min(max_tokens, 4000))
+        field_keys = body.get("fieldKeys") or body.get("field_keys")
+
+        est_cost = 0.02
+        ok, reason, _t = _check_budget_gate(est_cost)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason, "est": est_cost}, 402)
+            return
+
+        try:
+            from lib.claude_client import call_text, call_json
+        except Exception as e:
+            self._send_json({"error": f"Claude client unavailable: {e}"}, 503)
+            return
+
+        if field_keys and isinstance(field_keys, list) and field_keys:
+            json_system = system or ("You are a pre-production helper for an AI film studio. "
+                                     "Fill in each requested field with rich cinematic detail. "
+                                     "Return JSON only with no preamble.")
+            json_prompt = prompt + "\n\nReturn strict JSON with these keys: " + ", ".join(field_keys)
+            try:
+                result = call_json(json_prompt, system=json_system, max_tokens=max_tokens)
+                fields = result if isinstance(result, dict) else {}
+                payload = json.dumps(fields)
+                self._send_json({
+                    "ok": True,
+                    "fields": fields,
+                    "result": payload,
+                    "text": payload,
+                    "content": payload,
+                })
+            except Exception as e:
+                self._send_json({"error": f"Claude call failed: {e}"}, 500)
+            return
+
+        try:
+            text = call_text(prompt, system=system, max_tokens=max_tokens)
+            self._send_json({
+                "ok": True,
+                "result": text,
+                "text": text,
+                "content": text,
+            })
+        except Exception as e:
+            self._send_json({"error": f"Claude call failed: {e}"}, 500)
+
     # ---- Transition update endpoints ----
 
     def _handle_update_scene_transition(self, index: int):
@@ -6718,63 +7930,6 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"error": "Scene not found"}, 404)
 
     # ---- Feature 12: Project Save/Load ----
-
-    def _handle_project_save(self):
-        """Save entire project state to a JSON file."""
-        plan = _load_manual_plan()
-        auto_plan = _load_scene_plan()
-        tracker = _load_cost_tracker()
-
-        project = {
-            "version": 1,
-            "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "manual_plan": plan,
-            "auto_plan": auto_plan,
-            "cost_tracker": tracker,
-            "style": "",
-        }
-
-        clip_files = {}
-        for s in plan.get("scenes", []):
-            cp = s.get("clip_path", "")
-            if cp and os.path.isfile(cp):
-                clip_files[s["id"]] = os.path.basename(cp)
-        project["existing_clips"] = clip_files
-
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = f"project_{timestamp}.json"
-        filepath = os.path.join(PROJECTS_DIR, filename)
-        with open(filepath, "w") as f:
-            json.dump(project, f, indent=2)
-
-        self._send_json({
-            "ok": True,
-            "filename": filename,
-            "path": filepath,
-            "project": project,
-        })
-
-    def _handle_project_load(self):
-        """Load a project from uploaded JSON."""
-        body = self._read_body()
-        try:
-            project = json.loads(body)
-        except json.JSONDecodeError:
-            self._send_json({"error": "Invalid JSON"}, 400)
-            return
-
-        if "manual_plan" in project and project["manual_plan"]:
-            _save_manual_plan(project["manual_plan"])
-
-        if "auto_plan" in project and project["auto_plan"]:
-            with _plan_file_lock:
-                with open(SCENE_PLAN_PATH, "w") as f:
-                    json.dump(project["auto_plan"], f, indent=2)
-
-        if "cost_tracker" in project and project["cost_tracker"]:
-            _save_cost_tracker(project["cost_tracker"])
-
-        self._send_json({"ok": True, "message": "Project loaded"})
 
     # ---- Generate from Photo ----
 
@@ -6975,7 +8130,50 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_get_cost(self):
         """Return current cost tracking data."""
         tracker = _load_cost_tracker()
-        self._send_json(tracker)
+        # Trim the ledger in the summary response for payload size
+        summary = dict(tracker)
+        gens = summary.get("generations", [])
+        summary["generation_count"] = len(gens)
+        summary["generations"] = gens[-20:]  # most-recent 20 only
+        self._send_json(summary)
+
+    def _handle_cost_ledger(self):
+        """Return the full generation ledger."""
+        tracker = _load_cost_tracker()
+        self._send_json({
+            "budget": tracker.get("budget", DEFAULT_BUDGET),
+            "total_cost": tracker.get("total_cost", 0),
+            "generations": tracker.get("generations", []),
+        })
+
+    def _handle_cost_csv(self):
+        """Export the ledger as CSV for producer hand-off."""
+        import io as _io
+        import csv as _csv
+        tracker = _load_cost_tracker()
+        buf = _io.StringIO()
+        w = _csv.writer(buf)
+        w.writerow(["timestamp", "shot_id", "type", "engine", "tier", "duration_s", "est_cost", "actual_cost", "billed", "status"])
+        for g in tracker.get("generations", []):
+            w.writerow([
+                time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(g.get("ts", 0))),
+                g.get("shot_id", ""),
+                g.get("type", ""),
+                g.get("engine", ""),
+                g.get("tier", ""),
+                g.get("duration", ""),
+                g.get("est", ""),
+                g.get("actual", ""),
+                g.get("billed", ""),
+                g.get("status", ""),
+            ])
+        body = buf.getvalue().encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Disposition", 'attachment; filename="lumn_cost_ledger.csv"')
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _handle_runway_credits(self):
         """Fetch remaining Runway API credits from /v1/organization."""
@@ -7075,9 +8273,9 @@ class Handler(BaseHTTPRequestHandler):
 
             # Determine output directory and entity getter/updater
             dirs_map = {
-                "characters": POS_PHOTOS_CHARS_DIR,
-                "costumes": POS_PHOTOS_COSTUMES_DIR,
-                "environments": POS_PHOTOS_ENVS_DIR,
+                "characters": _pos_photos_dir("char"),
+                "costumes": _pos_photos_dir("costume"),
+                "environments": _pos_photos_dir("env"),
             }
             out_dir = dirs_map[entity_type]
             os.makedirs(out_dir, exist_ok=True)  # Ensure dir exists after resets
@@ -7107,6 +8305,51 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
+    def _handle_pos_voice_sample_upload(self, voice_id):
+        """Handle audio sample upload for a POS voice record."""
+        try:
+            if not _prompt_os.get_voice(voice_id):
+                self._send_json({"error": "Voice not found"}, 404)
+                return
+            ct = self.headers.get("Content-Type", "")
+            if "multipart" not in ct:
+                self._send_json({"error": "Expected multipart upload"}, 400)
+                return
+            boundary = ct.split("boundary=")[-1].encode()
+            body = self._read_body()
+            parts = self._parse_multipart(body, boundary)
+            file_part = None
+            for p in parts:
+                if p.get("filename"):
+                    file_part = p
+                    break
+            if not file_part or not file_part["data"]:
+                self._send_json({"error": "No file uploaded"}, 400)
+                return
+
+            os.makedirs(_pos_voices_dir(), exist_ok=True)
+            filename = file_part.get("filename") or ""
+            ext = os.path.splitext(filename)[1].lower()
+            if ext not in (".mp3", ".wav", ".m4a", ".ogg", ".webm"):
+                ext = ".mp3"
+            # Remove any existing sample for this voice across supported exts
+            for old_ext in (".mp3", ".wav", ".m4a", ".ogg", ".webm"):
+                old_path = os.path.join(_pos_voices_dir(), f"{voice_id}{old_ext}")
+                if os.path.isfile(old_path):
+                    try:
+                        os.remove(old_path)
+                    except OSError:
+                        pass
+            out_path = os.path.join(_pos_voices_dir(), f"{voice_id}{ext}")
+            with open(out_path, "wb") as f:
+                f.write(file_part["data"])
+
+            sample_url = f"/api/pos/voices/{voice_id}/sample"
+            _prompt_os.update_voice(voice_id, {"sampleAudioPath": sample_url})
+            self._send_json({"ok": True, "sample_url": sample_url})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     def _handle_pos_auto_describe(self, entity_id, entity_type):
         """Auto-describe a character or environment from its reference photo using vision AI.
         Returns structured JSON with all form fields populated."""
@@ -7115,11 +8358,11 @@ class Handler(BaseHTTPRequestHandler):
 
             # Find the photo file
             if entity_type == "characters":
-                photo_dir = POS_PHOTOS_CHARS_DIR
+                photo_dir = _pos_photos_dir("char")
             elif entity_type == "costumes":
-                photo_dir = POS_PHOTOS_COSTUMES_DIR
+                photo_dir = _pos_photos_dir("costume")
             elif entity_type == "environments":
-                photo_dir = POS_PHOTOS_ENVS_DIR
+                photo_dir = _pos_photos_dir("env")
             else:
                 self._send_json({"error": f"Unsupported type: {entity_type}"}, 400)
                 return
@@ -7318,8 +8561,8 @@ class Handler(BaseHTTPRequestHandler):
                 m = _re2.search(r"/api/pos/(?:characters|environments|costumes)/([^/]+)/photo", ref_photo)
                 if m:
                     eid = m.group(1)
-                    photo_dirs = {"characters": POS_PHOTOS_CHARS_DIR, "costumes": POS_PHOTOS_COSTUMES_DIR, "environments": POS_PHOTOS_ENVS_DIR}
-                    pdir = photo_dirs.get(entity_type, POS_PHOTOS_CHARS_DIR)
+                    photo_dirs = {"characters": _pos_photos_dir("char"), "costumes": _pos_photos_dir("costume"), "environments": _pos_photos_dir("env")}
+                    pdir = photo_dirs.get(entity_type, _pos_photos_dir("char"))
                     for ext in (".jpg", ".jpeg", ".png", ".webp"):
                         candidate = os.path.join(pdir, f"{eid}{ext}")
                         if os.path.isfile(candidate):
@@ -7332,7 +8575,7 @@ class Handler(BaseHTTPRequestHandler):
             # This avoids Grok generating a different-looking person
             if ref_photo_path and entity_type == "characters":
                 import shutil as _sh2
-                preview_path = os.path.join(POS_PREVIEWS_CHARS_DIR, f"{entity_id}.jpg")
+                preview_path = os.path.join(_pos_previews_dir("char"), f"{entity_id}.jpg")
                 _sh2.copy2(ref_photo_path, preview_path)
                 preview_url = f"/api/pos/{entity_type}/{entity_id}/preview"
                 _prompt_os.update_character(entity_id, {"previewImage": preview_url})
@@ -7342,7 +8585,7 @@ class Handler(BaseHTTPRequestHandler):
             # For environments with a reference photo: USE THE PHOTO as the preview
             if ref_photo_path and entity_type == "environments":
                 import shutil as _sh3
-                preview_path = os.path.join(POS_PREVIEWS_ENVS_DIR, f"{entity_id}.jpg")
+                preview_path = os.path.join(_pos_previews_dir("env"), f"{entity_id}.jpg")
                 _sh3.copy2(ref_photo_path, preview_path)
                 preview_url = f"/api/pos/{entity_type}/{entity_id}/preview"
                 _prompt_os.update_environment(entity_id, {"previewImage": preview_url})
@@ -7353,11 +8596,11 @@ class Handler(BaseHTTPRequestHandler):
                 # Use the uploaded photo AS the preview (no need to generate)
                 import shutil as _sh
                 preview_dirs = {
-                    "characters": POS_PREVIEWS_CHARS_DIR,
-                    "costumes": POS_PREVIEWS_COSTUMES_DIR,
-                    "environments": POS_PREVIEWS_ENVS_DIR,
+                    "characters": _pos_previews_dir("char"),
+                    "costumes": _pos_previews_dir("costume"),
+                    "environments": _pos_previews_dir("env"),
                 }
-                preview_dir = preview_dirs.get(entity_type, POS_PREVIEWS_CHARS_DIR)
+                preview_dir = preview_dirs.get(entity_type, _pos_previews_dir("char"))
                 preview_path = os.path.join(preview_dir, f"{entity_id}.jpg")
                 _sh.copy2(ref_photo_path, preview_path)
                 entity["previewImage"] = preview_path
@@ -7388,9 +8631,9 @@ class Handler(BaseHTTPRequestHandler):
                                    "veo3", "veo3_1", "veo3_1_fast", "luma", "runway"}
 
             preview_dirs = {
-                "characters": POS_PREVIEWS_CHARS_DIR,
-                "costumes": POS_PREVIEWS_COSTUMES_DIR,
-                "environments": POS_PREVIEWS_ENVS_DIR,
+                "characters": _pos_previews_dir("char"),
+                "costumes": _pos_previews_dir("costume"),
+                "environments": _pos_previews_dir("env"),
             }
             preview_path = os.path.join(preview_dirs[entity_type], entity_id + ".jpg")
 
@@ -7545,7 +8788,7 @@ class Handler(BaseHTTPRequestHandler):
                 if m:
                     eid = m.group(1)
                     for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                        candidate = os.path.join(POS_PHOTOS_CHARS_DIR, f"{eid}{ext}")
+                        candidate = os.path.join(_pos_photos_dir("char"), f"{eid}{ext}")
                         if os.path.isfile(candidate):
                             ref_photo_path = candidate
                             break
@@ -7567,7 +8810,7 @@ class Handler(BaseHTTPRequestHandler):
             import base64 as _b64
 
             api_key = _get_api_key()
-            preview_path = os.path.join(POS_PREVIEWS_CHARS_DIR, f"{char_id}_sheet.jpg")
+            preview_path = os.path.join(_pos_previews_dir("char"), f"{char_id}_sheet.jpg")
             os.makedirs(os.path.dirname(preview_path), exist_ok=True)
 
             # Step 1: If photo exists, use Vision API to get a hyper-detailed description
@@ -7678,6 +8921,659 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             print(f"[CHAR_SHEET] Error: {e}")
             self._send_json({"error": str(e)}, 500)
+
+    def _handle_style_transfer(self, char_id):
+        """POST /api/pos/characters/<id>/style-transfer
+        Convert a character's reference photo into the target art style
+        (detected from physicalDescription). The result becomes a styled
+        reference that sheet generation uses instead of the raw photo,
+        solving the problem where Gemini edit mode locks to the ref's
+        original style.
+
+        Body: {mode?: "edit"|"generate"}
+          - edit: Gemini edit with the ref + strong style-override prompt
+          - generate: text-only Gemini generation describing the character
+                      in the target style (no ref → no style contamination)
+          Default: "edit" first; if style detection indicates the ref style
+          will dominate, falls back to "generate" automatically.
+        """
+        try:
+            body = json.loads(self._read_body()) if self.headers.get("Content-Length") else {}
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+
+        mode = (body.get("mode") or "edit").lower()
+        custom_style = (body.get("stylePrompt") or "").strip()
+
+        entity = _prompt_os.get_character(char_id)
+        if not entity:
+            self._send_json({"error": "Character not found"}, 404)
+            return
+
+        # Resolve reference photo path
+        ref_photo = entity.get("referencePhoto") or entity.get("referenceImagePath") or ""
+        ref_photo_path = None
+        if ref_photo:
+            pdir = _pos_photos_dir("char")
+            m = re.search(r"/api/pos/characters/([^/]+)/photo", ref_photo)
+            if m:
+                for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                    candidate = os.path.join(pdir, f"{m.group(1)}{ext}")
+                    if os.path.isfile(candidate):
+                        ref_photo_path = candidate
+                        break
+            elif os.path.isfile(ref_photo):
+                ref_photo_path = ref_photo
+
+        if not ref_photo_path:
+            self._send_json({"error": "No reference photo found for this character"}, 400)
+            return
+
+        # Detect target style from physicalDescription OR use custom prompt
+        phys_desc = entity.get("physicalDescription", "")
+        phys_lower = phys_desc.lower() if phys_desc else ""
+        name = entity.get("name", "character")
+
+        # Build identity feature list (everything EXCEPT style keywords)
+        identity_fields = []
+        for f in ("hair", "distinguishingFeatures", "accessories", "outfitDescription"):
+            v = entity.get(f)
+            if v:
+                if isinstance(v, list):
+                    identity_fields.append(", ".join(str(a) for a in v if a))
+                else:
+                    identity_fields.append(str(v))
+        identity_desc = "; ".join(identity_fields) if identity_fields else ""
+
+        # If user provided a custom style prompt, use it directly
+        if custom_style:
+            style_prompt_edit = (
+                f"COMPLETELY REDRAW this image in this style: {custom_style}. "
+                f"Transform the entire image into this art style — do NOT preserve the original medium. "
+                f"Keep the character's key identifying features recognizable ({identity_desc}). "
+                f"Single character portrait, medium shot, clean background."
+            )
+            style_prompt_gen = (
+                f"Character illustration in this style: {custom_style}. "
+                f"Character: {name}. {phys_desc} "
+                f"Identity features: {identity_desc}. "
+                f"Single character portrait, medium shot, clean simple background. "
+                f"Professional character design, high detail, consistent proportions."
+            )
+            detected_style = "custom"
+        elif any(kw in phys_lower for kw in ("anime", "shinkai", "ghibli", "animated", "manga", "cel-shaded")):
+            # Extract the first sentence of physicalDescription as the detailed style cue
+            detected_style = "anime"
+            style_detail = phys_desc.split(".")[0] if phys_desc else "anime realism"
+            style_prompt_edit = (
+                f"COMPLETELY REDRAW this image as a high-end anime illustration. "
+                f"Target style: {style_detail}. "
+                f"This must look like hand-drawn 2D anime artwork — NOT a photograph, NOT a 3D render, "
+                f"NOT a figurine. Transform every element into anime art: large expressive eyes, "
+                f"clean linework, soft cel shading, vibrant anime color palette, flat 2D backgrounds. "
+                f"Keep the character's key identifying features recognizable ({identity_desc}). "
+                f"Single character portrait, medium shot, clean background. "
+                f"The output must be indistinguishable from a frame of a Makoto Shinkai or high-budget anime film."
+            )
+            style_prompt_gen = (
+                f"High-end anime character illustration in the style of {style_detail}. "
+                f"Character: {name}. {phys_desc} "
+                f"Identity features: {identity_desc}. "
+                f"Single character portrait, medium shot, clean simple background. "
+                f"2D anime artwork, cel shading, expressive eyes, vibrant colors. "
+                f"Must look like a frame from a Makoto Shinkai or high-budget anime film. "
+                f"Professional anime character design, high detail, consistent proportions."
+            )
+        elif any(kw in phys_lower for kw in ("noir", "dark", "gritty")):
+            detected_style = "noir"
+            style_prompt_edit = (
+                f"COMPLETELY REDRAW this image in cinematic noir style. "
+                f"Dramatic high-contrast lighting, deep shadows, film grain, muted color palette. "
+                f"Keep the character's key identifying features ({identity_desc}). "
+                f"Single character portrait, medium shot. Must look like a frame from a noir film."
+            )
+            style_prompt_gen = (
+                f"Cinematic noir character portrait. Character: {name}. {phys_desc} "
+                f"Identity: {identity_desc}. Dramatic lighting, deep shadows, film grain, "
+                f"muted palette. Professional illustration, single portrait, medium shot."
+            )
+        elif any(kw in phys_lower for kw in ("cartoon", "pixar", "3d render")):
+            detected_style = "cartoon"
+            style_prompt_edit = (
+                f"COMPLETELY REDRAW this image as a stylized 3D character render. "
+                f"Clean shading, appealing proportions, Pixar-quality character design. "
+                f"Keep the character's key identifying features ({identity_desc}). "
+                f"Single character portrait, medium shot, clean background."
+            )
+            style_prompt_gen = (
+                f"Stylized 3D character render, Pixar quality. Character: {name}. {phys_desc} "
+                f"Identity: {identity_desc}. Clean shading, appealing proportions, "
+                f"professional character design. Single portrait, medium shot, clean background."
+            )
+        else:
+            self._send_json({"error": "No style detected. Enter a style in the prompt dialog, or add "
+                            "style keywords (anime, noir, cartoon) to the Physical Description field."}, 400)
+            return
+
+        # Output path
+        os.makedirs(_pos_previews_dir("char"), exist_ok=True)
+        out_filename = f"{char_id}_styled_{int(time.time())}.png"
+        out_path = os.path.join(_pos_previews_dir("char"), out_filename)
+
+        try:
+            from lib.fal_client import gemini_generate_image, gemini_edit_image
+            import shutil as _shutil_st
+
+            if mode == "edit":
+                print(f"[STYLE_TRANSFER] {char_id} → Gemini edit (strong style override)")
+                paths = gemini_edit_image(
+                    prompt=style_prompt_edit,
+                    reference_image_paths=[ref_photo_path],
+                    resolution="1K",
+                    num_images=1,
+                )
+            else:
+                # Text-only: no ref photo contamination, pure style from prompt
+                print(f"[STYLE_TRANSFER] {char_id} → Gemini generate (text-only, no ref)")
+                paths = gemini_generate_image(
+                    prompt=style_prompt_gen,
+                    resolution="1K",
+                    aspect_ratio="1:1",
+                    num_images=1,
+                )
+
+            if not paths or not os.path.isfile(paths[0]):
+                self._send_json({"error": "Style transfer returned no image"}, 500)
+                return
+
+            _shutil_st.move(paths[0], out_path)
+            _record_cost(f"style_transfer_{char_id}", "image")
+
+        except Exception as e:
+            print(f"[STYLE_TRANSFER] Error: {e}")
+            self._send_json({"error": f"Style transfer failed: {e}"}, 500)
+            return
+
+        _repo_base = os.path.dirname(os.path.abspath(__file__))
+        _rel = os.path.relpath(out_path, _repo_base).replace(os.sep, "/")
+        styled_url = "/" + _rel
+
+        # Save as styledReference on the character — sheet gen will prefer this
+        _prompt_os.update_character(char_id, {"styledReference": styled_url})
+
+        print(f"[STYLE_TRANSFER] Saved styled reference: {styled_url}")
+        self._send_json({
+            "ok": True,
+            "styled_url": styled_url,
+            "mode": mode,
+            "style_detected": detected_style,
+        })
+
+    def _handle_pos_sheet_generate_fal(self):
+        """POST /api/pos/sheets/generate
+        Unified sheet generator for POS assets (characters, costumes, environments, references).
+        Uses fal.ai Gemini 3.1 Flash image (edit with ref photo if present, else text-to-image).
+        Body: {assetType, assetId, sheetType?}
+        """
+        try:
+            body = json.loads(self._read_body()) if self.headers.get("Content-Length") else {}
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        asset_type = (body.get("assetType") or "").lower()
+        if asset_type == "prop":
+            asset_type = "reference"  # legacy alias
+        asset_id = body.get("assetId") or ""
+        sheet_type = body.get("sheetType") or "full"
+        use_approved_as_ref = bool(body.get("useApprovedAsRef", False))
+        edit_instruction = (body.get("editInstruction") or "").strip()
+
+        if asset_type not in ("character", "costume", "environment", "reference"):
+            self._send_json({"error": f"Unknown assetType: {asset_type}"}, 400)
+            return
+        if not asset_id:
+            self._send_json({"error": "assetId required"}, 400)
+            return
+
+        # Fetch entity
+        getters = {
+            "character":   _prompt_os.get_character,
+            "costume":     _prompt_os.get_costume,
+            "environment": _prompt_os.get_environment,
+            "reference":   _prompt_os.get_reference,
+        }
+        entity = getters[asset_type](asset_id)
+        if not entity:
+            self._send_json({"error": f"{asset_type} not found"}, 404)
+            return
+
+        # Resolve reference images (forward-slash URL → disk path) FIRST, so the
+        # prompt builder can switch to refs-not-text mode when a real ref exists.
+        #
+        # Priority for character sheet follow-ups (face_closeup, side, etc.):
+        #   1. approvedSheet (the locked identity anchor — 6-angle turnaround)
+        #   2. styledReference (anime-styled version of original photo)
+        #   3. referencePhoto (raw photo)
+        # For the initial 'full' sheet, skip approvedSheet (we're regenerating it).
+        ref_photo_paths = []
+
+        def _resolve_url_to_disk(url):
+            if not url:
+                return None
+            base = os.path.dirname(os.path.abspath(__file__))
+            for candidate in (
+                os.path.join(base, "public", url.lstrip("/")),
+                os.path.join(base, url.lstrip("/")),
+            ):
+                if os.path.isfile(candidate):
+                    return candidate
+            return None
+
+        if asset_type == "character" and (sheet_type != "full" or use_approved_as_ref):
+            approved_sheet = entity.get("approvedSheet", "")
+            approved_disk = _resolve_url_to_disk(approved_sheet)
+            if approved_disk:
+                ref_photo_paths.append(approved_disk)
+                tag = "surgical-edit anchor" if use_approved_as_ref else "identity anchor"
+                print(f"[POS_SHEET] Using approved sheet as {tag}: {approved_disk}")
+
+        styled_ref = entity.get("styledReference", "") if asset_type == "character" else ""
+        styled_disk = _resolve_url_to_disk(styled_ref)
+        if styled_disk:
+            ref_photo_paths.append(styled_disk)
+            print(f"[POS_SHEET] Using styled reference: {styled_disk}")
+
+        # Fallback to raw referencePhoto if nothing else resolved
+        if not ref_photo_paths:
+            ref_photo = entity.get("referencePhoto") or entity.get("referenceImagePath") or ""
+            if ref_photo:
+                photo_dirs = {
+                    "character":   _pos_photos_dir("char"),
+                    "costume":     _pos_photos_dir("costume"),
+                    "environment": _pos_photos_dir("env"),
+                }
+                pdir = photo_dirs.get(asset_type)
+                if pdir:
+                    m = re.search(r"/api/pos/(?:characters|costumes|environments)/([^/]+)/photo", ref_photo)
+                    if m:
+                        for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                            candidate = os.path.join(pdir, f"{m.group(1)}{ext}")
+                            if os.path.isfile(candidate):
+                                ref_photo_paths.append(candidate)
+                                break
+                    elif os.path.isfile(ref_photo):
+                        ref_photo_paths.append(ref_photo)
+
+        ref_photo_path = ref_photo_paths[0] if ref_photo_paths else None
+
+        # Build type-specific prompt — if a ref photo is present, the builder
+        # suppresses facial/body description (the refs carry identity).
+        prompt = self._build_pos_sheet_prompt(asset_type, entity, sheet_type, has_ref_photo=bool(ref_photo_path))
+
+        # Surgical-edit mode: prepend a keep-everything-else-identical directive
+        # so Gemini applies only the targeted delta to the approved reference.
+        if use_approved_as_ref and edit_instruction and asset_type == "character":
+            prompt = (
+                "SURGICAL EDIT MODE — Apply ONLY the following targeted change "
+                "to the reference character sheet. Keep EVERY other pixel identical: "
+                "same pose, same composition, same panel layout, same proportions, "
+                "same art style, same lighting, same wardrobe, same accessories, "
+                "same emblem shape/color/placement, same background. Do NOT redesign, "
+                "recompose, restyle, or re-render from scratch. The reference image "
+                "is the authoritative starting point — preserve it in full except "
+                f"for the specified edit. EDIT: {edit_instruction}\n\n" + prompt
+            )
+            print(f"[POS_SHEET] Surgical edit prompt: {edit_instruction[:120]}")
+
+        # Resolve preview output dir
+        preview_dirs = {
+            "character":   _pos_previews_dir("char"),
+            "costume":     _pos_previews_dir("costume"),
+            "environment": _pos_previews_dir("env"),
+            "reference":   _pos_previews_dir("reference"),
+        }
+        preview_dir = preview_dirs[asset_type]
+        os.makedirs(preview_dir, exist_ok=True)
+        out_filename = f"{asset_id}_{sheet_type}_{int(time.time())}.png"
+        out_path = os.path.join(preview_dir, out_filename)
+
+        # Call fal.ai Gemini
+        try:
+            from lib.fal_client import gemini_generate_image, gemini_edit_image
+            if ref_photo_path:
+                # Character full sheets bake in 7 views (6 body + face inset) — need
+                # enough pixels per tile to survive downstream cropping. 2K portrait
+                # gives ~1536×2048 total, ~512×683 per body tile.
+                is_char_full_sheet = (asset_type == "character" and sheet_type == "full")
+                is_reference = (asset_type == "reference")
+                sheet_resolution = "2K" if (is_char_full_sheet or is_reference) else "1K"
+                if is_char_full_sheet:
+                    sheet_aspect = "3:4"
+                elif is_reference:
+                    sheet_aspect = "1:1"
+                else:
+                    sheet_aspect = None
+                print(f"[POS_SHEET] {asset_type}/{asset_id} → fal.ai Gemini edit w/ {len(ref_photo_paths)} ref(s), {sheet_resolution} {sheet_aspect or 'auto'}")
+                paths = gemini_edit_image(
+                    prompt=prompt,
+                    reference_image_paths=ref_photo_paths,
+                    resolution=sheet_resolution,
+                    num_images=1,
+                    aspect_ratio=sheet_aspect,
+                )
+            else:
+                is_char_full_sheet = (asset_type == "character" and sheet_type == "full")
+                is_reference = (asset_type == "reference")
+                sheet_resolution = "2K" if (is_char_full_sheet or is_reference) else "1K"
+                if is_char_full_sheet:
+                    sheet_aspect = "3:4"
+                elif is_reference:
+                    sheet_aspect = "1:1"
+                else:
+                    sheet_aspect = "16:9"
+                print(f"[POS_SHEET] {asset_type}/{asset_id} → fal.ai Gemini generate {sheet_resolution} {sheet_aspect}")
+                paths = gemini_generate_image(
+                    prompt=prompt,
+                    resolution=sheet_resolution,
+                    aspect_ratio=sheet_aspect,
+                    num_images=1,
+                )
+        except Exception as e:
+            print(f"[POS_SHEET] fal.ai error: {e}")
+            self._send_json({"error": f"fal.ai Gemini failed: {e}"}, 500)
+            return
+
+        if not paths or not os.path.isfile(paths[0]):
+            self._send_json({"error": "fal.ai returned no image"}, 500)
+            return
+
+        # Move the fal temp file into our preview dir
+        import shutil as _shutil
+        _shutil.move(paths[0], out_path)
+
+        _record_cost(f"pos_sheet_{asset_type}_{asset_id}", "image")
+
+        # Build the public URL from the actual disk path so it matches
+        # wherever _pos_previews_dir wrote the file (char_previews/, etc.)
+        _repo_base = os.path.dirname(os.path.abspath(__file__))
+        _rel = os.path.relpath(out_path, _repo_base).replace(os.sep, "/")
+        sheet_url = "/" + _rel
+        sheet_data = {
+            "url": sheet_url,
+            "type": sheet_type,
+            "model": "fal-gemini-3.1-flash",
+            "generatedAt": time.time(),
+        }
+        _prompt_os.add_sheet_image(asset_type, asset_id, sheet_data)
+
+        # Also drop into previewImage for thumbnail use
+        updates = {"previewImage": sheet_url}
+        if asset_type == "character":
+            _prompt_os.update_character(asset_id, updates)
+        elif asset_type == "costume":
+            _prompt_os.update_costume(asset_id, updates)
+        elif asset_type == "environment":
+            _prompt_os.update_environment(asset_id, updates)
+        elif asset_type == "reference":
+            _prompt_os.update_reference(asset_id, updates)
+
+        self._send_json({
+            "ok": True,
+            "sheet_url": sheet_url,
+            "preview_url": sheet_url,
+            "engine": "fal-gemini-3.1-flash",
+            "used_ref_photo": bool(ref_photo_path),
+        })
+
+    def _build_pos_sheet_prompt(self, asset_type, entity, sheet_type, has_ref_photo=False):
+        """Assemble a type-specific sheet prompt from POS entity fields.
+
+        When has_ref_photo=True, facial/body description is suppressed — the
+        refs carry identity, the prompt carries only camera/pose/wardrobe.
+        See memory: feedback_refs_not_text.
+        """
+        name = entity.get("name", "")
+        if asset_type == "character":
+            # Fields that describe the subject's body/face — suppressed when refs present
+            identity_fields = ("physicalDescription", "hair", "skinTone", "bodyType",
+                               "ageRange", "distinguishingFeatures", "defaultExpression")
+            # Fields that describe wardrobe/pose — kept regardless (action-driven)
+            wardrobe_fields = ("posture", "outfitDescription")
+
+            # Identity-mark detection (for callout panel + vertical-angle row).
+            # Explicit field wins; otherwise scan body-copy for emblem keywords.
+            identity_mark = (entity.get("identityMark") or "").strip()
+            if not identity_mark:
+                haystack = " ".join(str(entity.get(f, "")) for f in
+                                    ("physicalDescription", "distinguishingFeatures")).lower()
+                mark_keywords = ("emblem", "crescent", "moon mark", "tattoo", "birthmark",
+                                 "scar", "sigil", "insignia", "brand", "signet")
+                if any(k in haystack for k in mark_keywords):
+                    # Pull the sentence containing the first keyword for the callout.
+                    raw = " ".join(str(entity.get(f, "")) for f in
+                                   ("physicalDescription", "distinguishingFeatures"))
+                    for sent in raw.replace(";", ".").split("."):
+                        sl = sent.lower()
+                        if any(k in sl for k in mark_keywords):
+                            identity_mark = sent.strip()
+                            break
+            has_identity_mark = bool(identity_mark)
+
+            parts = []
+            if not has_ref_photo:
+                for f in identity_fields:
+                    v = entity.get(f)
+                    if v:
+                        parts.append(str(v))
+            for f in wardrobe_fields:
+                v = entity.get(f)
+                if v:
+                    parts.append(str(v))
+            acc = entity.get("accessories")
+            if acc:
+                if isinstance(acc, list):
+                    acc = ", ".join(str(a) for a in acc if a)
+                parts.append(str(acc))
+            desc = ", ".join(p for p in parts if p)
+
+            if has_ref_photo:
+                # Refs-anchored: describe camera/pose/lighting only. The reference
+                # image preserves identity (face, proportions, skin, build).
+                # However, we DO read physicalDescription for rendering STYLE cues
+                # (e.g. "anime", "Shinkai", "noir") — style != identity.
+                subject_clause = f"Wardrobe and styling: {desc}. " if desc else ""
+                phys_desc = entity.get("physicalDescription", "")
+                # Detect style from physical description
+                style_kw = "photorealistic"
+                style_detail = "high detail, natural lighting"
+                phys_lower = phys_desc.lower() if phys_desc else ""
+                if any(kw in phys_lower for kw in ("anime", "shinkai", "ghibli", "animated", "manga", "cel-shaded")):
+                    style_kw = "high-end anime style"
+                    style_detail = phys_desc.split(".")[0] if phys_desc else "anime realism"
+                elif any(kw in phys_lower for kw in ("noir", "dark", "gritty")):
+                    style_kw = "cinematic noir style"
+                    style_detail = "dramatic lighting, high contrast"
+                elif any(kw in phys_lower for kw in ("cartoon", "pixar", "3d render")):
+                    style_kw = "stylized 3D render"
+                    style_detail = "clean shading, appealing proportions"
+
+                if sheet_type == "face_closeup":
+                    return (f"{style_kw.title()} close-up portrait of the character shown in the reference images. "
+                            f"Match the character's front-facing view exactly — same facial features, "
+                            f"same markings, same proportions. Use the EXACT eye color and glow intensity "
+                            f"from the reference. "
+                            f"{subject_clause}{style_detail}. "
+                            f"Head-and-shoulders framing, soft cinematic key light, "
+                            f"solid neutral dark gray studio background (no trees, no scenery, no environment). "
+                            f"Shallow depth of field, 85mm lens look. "
+                            f"Do NOT add any jewelry, necklace, pendant, collar, chain, or accessory "
+                            f"that is not visible in the reference images. "
+                            f"Do NOT add background scenery. Preserve every identity detail from the "
+                            f"reference — do not invent new features.")
+                if sheet_type == "side":
+                    return (f"{style_kw.title()} side-profile portrait of the character shown in the reference images. "
+                            f"Match the character's right-profile view exactly — same facial features, "
+                            f"same markings, same proportions. "
+                            f"{subject_clause}{style_detail}. "
+                            f"90-degree profile view, studio lighting, neutral background, "
+                            f"sharp focus. Preserve the exact identity from the reference.")
+                if has_identity_mark:
+                    return (f"Professional character model sheet in {style_kw}: a single image "
+                            f"containing FOUR ROWS on a clean neutral dark-gray studio background. "
+                            f"TOP ROW — three equal tiles side by side, full-body: "
+                            f"FRONT VIEW, FRONT THREE-QUARTER VIEW, RIGHT SIDE PROFILE. "
+                            f"SECOND ROW — three equal tiles side by side, full-body: "
+                            f"BACK THREE-QUARTER VIEW, BACK VIEW, LEFT SIDE PROFILE. "
+                            f"THIRD ROW — three equal HEAD-AND-SHOULDERS tiles at different vertical "
+                            f"angles showing how the identity mark reads from each: "
+                            f"HEAD TILTED UP (looking up), HEAD BOWED ~30° DOWN, TOP-DOWN BIRDS-EYE "
+                            f"VIEW OF THE CROWN. These tiles establish exactly how the mark is "
+                            f"visible (or correctly hidden) at each angle. "
+                            f"BOTTOM ROW — TWO tiles side by side at equal width: "
+                            f"LEFT tile = LARGE HEAD-AND-SHOULDERS FACE CLOSEUP, front-facing, "
+                            f"with the identity mark rendered in full detail; "
+                            f"RIGHT tile = ISOLATED IDENTITY-MARK CALLOUT — zoom 2x on just the "
+                            f"mark itself against plain background, showing exact shape, stroke "
+                            f"weight, color, and glow. Label below: 'IDENTITY MARK — exact shape, "
+                            f"color, placement'. The callout is the authoritative reference for "
+                            f"downstream renders. "
+                            f"Identity mark: {identity_mark}. "
+                            f"{subject_clause}{style_detail}. "
+                            f"ALL tiles show the IDENTICAL character — same features, same "
+                            f"mark shape and color, same proportions. The mark MUST appear ONLY "
+                            f"where physically present (e.g. forehead); when the angle hides it "
+                            f"(back view, top-down showing crown, bowed head) it MUST NOT be "
+                            f"painted onto any other surface. Preserve the exact identity from "
+                            f"the reference. Do NOT add jewelry, necklace, pendant, collar, "
+                            f"chain, or any accessory not visible in the reference. Do NOT "
+                            f"add background scenery.")
+                return (f"Professional character model sheet in {style_kw}: a single image "
+                        f"containing THREE ROWS on a clean neutral dark-gray studio background. "
+                        f"TOP ROW — three equal tiles side by side, each a full-body view: "
+                        f"FRONT VIEW, FRONT THREE-QUARTER VIEW, RIGHT SIDE PROFILE. "
+                        f"MIDDLE ROW — three equal tiles side by side, each a full-body view: "
+                        f"BACK THREE-QUARTER VIEW, BACK VIEW, LEFT SIDE PROFILE. "
+                        f"BOTTOM ROW — one LARGE HEAD-AND-SHOULDERS FACE CLOSEUP "
+                        f"spanning the full width of the row, rendered in high detail with the "
+                        f"same features as the body views above. "
+                        f"{subject_clause}{style_detail}. "
+                        f"All seven views show the IDENTICAL character — same features, same "
+                        f"markings, same colors, same proportions. Preserve the exact identity "
+                        f"from the reference. Do NOT add jewelry, necklace, pendant, collar, "
+                        f"chain, or any accessory that is not visible in the reference. Do NOT "
+                        f"add background scenery.")
+
+            # No ref photo — text-only path (original behavior)
+            desc = desc or name or "character"
+            if sheet_type == "face_closeup":
+                return (f"Photorealistic close-up portrait of {desc}. "
+                        f"Head-and-shoulders framing, soft cinematic key light, "
+                        f"neutral background, shallow depth of field, 85mm lens look, "
+                        f"high detail skin texture, natural expression.")
+            if sheet_type == "side":
+                return (f"Photorealistic side-profile portrait of {desc}. "
+                        f"90-degree profile view, studio lighting, neutral background, "
+                        f"sharp focus, true-to-life proportions.")
+            if has_identity_mark:
+                return (f"Professional character model sheet showing the SAME character arranged "
+                        f"in FOUR ROWS on a neutral dark-gray studio background. "
+                        f"Top row: FRONT, FRONT THREE-QUARTER, RIGHT SIDE PROFILE — three equal full-body tiles. "
+                        f"Second row: BACK THREE-QUARTER, BACK, LEFT SIDE PROFILE — three equal full-body tiles. "
+                        f"Third row: HEAD-AND-SHOULDERS at three vertical angles — HEAD TILTED UP, "
+                        f"HEAD BOWED ~30° DOWN, TOP-DOWN BIRDS-EYE VIEW OF CROWN — showing how the "
+                        f"identity mark reads at each angle. "
+                        f"Bottom row: TWO equal tiles — LEFT = LARGE HEAD-AND-SHOULDERS FACE "
+                        f"CLOSEUP front-facing, RIGHT = ISOLATED IDENTITY-MARK CALLOUT at 2x zoom "
+                        f"on plain background with label 'IDENTITY MARK'. "
+                        f"Identity mark: {identity_mark}. "
+                        f"Character appearance: {desc}. Identical features across all views, "
+                        f"mark only where physically present, never painted onto hidden surfaces. "
+                        f"Photorealistic, high detail.")
+            return (f"Professional character model sheet showing the SAME character in seven views "
+                    f"arranged in THREE ROWS on a neutral dark-gray studio background. "
+                    f"Top row: FRONT, FRONT THREE-QUARTER, RIGHT SIDE PROFILE — three equal full-body tiles. "
+                    f"Middle row: BACK THREE-QUARTER, BACK, LEFT SIDE PROFILE — three equal full-body tiles. "
+                    f"Bottom row: one LARGE HEAD-AND-SHOULDERS FACE CLOSEUP spanning the full row width. "
+                    f"Character appearance: {desc}. Identical features across all views, consistent "
+                    f"proportions, photorealistic, high detail.")
+        if asset_type == "costume":
+            parts = []
+            for f in ("description", "upperBody", "lowerBody", "footwear"):
+                v = entity.get(f)
+                if v:
+                    parts.append(str(v))
+            acc = entity.get("accessories")
+            if acc:
+                if isinstance(acc, list):
+                    acc = ", ".join(str(a) for a in acc if a)
+                parts.append(f"accessories: {acc}")
+            if entity.get("colorPalette"):
+                parts.append(f"palette: {entity['colorPalette']}")
+            if entity.get("materialNotes"):
+                parts.append(f"fabric: {entity['materialNotes']}")
+            desc = ", ".join(p for p in parts if p) or name or "costume"
+            return (f"Fashion reference sheet: {desc}. Flat lay and front-view on "
+                    f"mannequin, clean neutral background, even studio lighting, "
+                    f"detailed fabric texture, photorealistic.")
+        if asset_type == "environment":
+            parts = []
+            for f in ("description", "location", "architecture", "weather", "timeOfDay"):
+                v = entity.get(f)
+                if v:
+                    parts.append(str(v))
+            if entity.get("lighting"):
+                parts.append(f"lighting: {entity['lighting']}")
+            if entity.get("atmosphere"):
+                parts.append(f"atmosphere: {entity['atmosphere']}")
+            key_props = entity.get("keyProps") or entity.get("props")
+            if key_props:
+                if isinstance(key_props, list):
+                    key_props = ", ".join(str(p) for p in key_props if p)
+                parts.append(f"key props: {key_props}")
+            if entity.get("architectureNotes"):
+                parts.append(f"architecture: {entity['architectureNotes']}")
+            if entity.get("materialNotes"):
+                parts.append(f"materials: {entity['materialNotes']}")
+            desc = ", ".join(p for p in parts if p) or name or "environment"
+            # Style detection — mirror the character path so env sheets inherit
+            # the project's visual language (anime / noir / stylized) instead of
+            # being locked to photorealistic. Style lives in the entity's
+            # description or visualStyle field.
+            style_hint = (desc + " " + str(entity.get("visualStyle", ""))).lower()
+            style_kw = "photorealistic, true-to-life lighting"
+            if any(kw in style_hint for kw in ("anime", "shinkai", "ghibli", "cel-shaded", "manga", "animated")):
+                style_kw = ("high-end anime style, Makoto Shinkai-inspired, cinematic anime realism, "
+                            "soft volumetric light, painterly clouds, rich color palette, cel-shaded")
+            elif any(kw in style_hint for kw in ("noir", "gritty")):
+                style_kw = "cinematic noir style, dramatic lighting, high contrast, film grain"
+            elif any(kw in style_hint for kw in ("cartoon", "pixar", "3d render")):
+                style_kw = "stylized 3D render, clean shading, appealing proportions"
+            return (f"Wide establishing cinematic shot of {desc}. No people, no characters, "
+                    f"{style_kw}, high detail, atmospheric depth, "
+                    f"strong sense of place.")
+        # reference (motif / prop)
+        parts = []
+        for f in ("description", "motif_category", "category", "usage_notes", "drift_rules"):
+            v = entity.get(f)
+            if v:
+                if isinstance(v, (list, tuple)):
+                    v = ", ".join(str(x) for x in v)
+                parts.append(str(v))
+        desc = ". ".join(p for p in parts if p) or name or "reference motif"
+        # Motif-category steers composition/framing. Objects want product-style,
+        # body_parts want macro close-up, textures want tight fur/surface framing.
+        motif_cat = (entity.get("motif_category") or "").lower()
+        if motif_cat == "texture":
+            framing = "Macro texture reference plate — tight on surface, even lighting, fills frame edge-to-edge"
+        elif motif_cat == "body_part":
+            framing = "Macro close-up reference of a body part, isolated subject, shallow DOF background, no full figure"
+        elif motif_cat == "silhouette":
+            framing = "Silhouette reference — full subject in single-tone shape against neutral backdrop"
+        else:  # object, or blank
+            framing = "Product photography reference, clean neutral background, multiple angles or isolated single-angle"
+        return (f"{framing}: {desc}. Photorealistic, sharp focus, high detail, "
+                f"controlled lighting consistent with Shinkai anime realism.")
 
     # ---- Lyrics Sync ----
 
@@ -10310,6 +12206,31 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": msg}, 400)
             return
 
+        # SECURITY (H1): moderate every prompt in the plan before the worker
+        # starts firing them at fal.ai. Fail-closed — block the entire plan
+        # if any single prompt is disallowed.
+        try:
+            from lib.moderation import moderate_prompt_strict
+            blocked = []
+            for sc in plan.get("scenes", []):
+                p = sc.get("prompt") or ""
+                if not p:
+                    continue
+                _mod = moderate_prompt_strict(p, nsfw_allowed=False)
+                if not _mod["allowed"]:
+                    blocked.append({"scene": sc.get("id") or sc.get("index"),
+                                    "severity": _mod["severity"],
+                                    "reasons": _mod["reasons"]})
+                elif _mod["severity"] == "warn":
+                    sc["prompt"] = _mod["redacted_prompt"]
+            if blocked:
+                return self._send_json({
+                    "error": "moderation_blocked",
+                    "blocked": blocked,
+                }, 451)
+        except Exception as _e:
+            return self._send_json({"error": "moderation unavailable"}, 500)
+
         def run_generation():
             try:
                 _auto_director.generate_full_video(plan, cost_cb=_record_cost)
@@ -10626,6 +12547,84 @@ class Handler(BaseHTTPRequestHandler):
             import traceback
             traceback.print_exc()
             self._send_json({"error": str(e)}, 500)
+
+    def _handle_import_shots(self):
+        """Import a pre-written shot sheet as a movie plan.
+
+        Accepts: {scenes: [{title, shot_prompt, prompt, summary, duration, ...}]}
+        Writes movie_plan.json + auto_director_plan.json + scene_plan.json
+        so the downstream Auto Director workspace can render and generate.
+        """
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        raw_scenes = body.get("scenes") or []
+        if not isinstance(raw_scenes, list) or not raw_scenes:
+            self._send_json({"error": "scenes array is required"}, 400)
+            return
+
+        normalized = []
+        for idx, s in enumerate(raw_scenes):
+            if not isinstance(s, dict):
+                continue
+            prompt = (s.get("shot_prompt") or s.get("prompt") or "").strip()
+            title = (s.get("title") or f"Shot {idx+1}").strip()
+            scene = {
+                "id": s.get("id") or f"imported_{idx+1}",
+                "order": idx,
+                "title": title,
+                "summary": s.get("summary") or title,
+                "shot_prompt": prompt,
+                "prompt": prompt,
+                "duration": s.get("duration") or 5,
+                "characters": s.get("characters") or [],
+                "costumes": s.get("costumes") or [],
+                "environments": s.get("environments") or [],
+                "camera_framing": s.get("camera_framing") or "medium",
+                "motion_direction": s.get("motion_direction") or "static",
+                "lighting_direction": s.get("lighting_direction") or "",
+                "atmosphere": s.get("atmosphere") or "",
+                "locks": {},
+            }
+            normalized.append(scene)
+
+        plan = {
+            "scenes": normalized,
+            "bible": {"concept": "Imported shot sheet", "theme": "", "story_arc": ""},
+            "beats": [],
+            "coverage": {},
+            "validation": {"ok": True, "warnings": []},
+            "created_at": time.time(),
+            "version": 1,
+            "source": "import_shots",
+        }
+
+        try:
+            save_movie_plan(plan, OUTPUT_DIR)
+        except Exception as e:
+            self._send_json({"error": f"Failed to save movie plan: {e}"}, 500)
+            return
+
+        compat_plan = {
+            "song_path": "",
+            "style": "cinematic",
+            "engine": "gen4_5",
+            "scenes": normalized,
+            "universal_prompt": "",
+            "world_setting": "",
+            "project_mode": "cinematic",
+        }
+        try:
+            with open(AUTO_DIRECTOR_PLAN_PATH, "w", encoding="utf-8") as f:
+                json.dump(compat_plan, f, indent=2)
+            _sync_auto_plan_to_scene_plan(compat_plan)
+        except Exception as _se:
+            print(f"[IMPORT_SHOTS] compat sync warning: {_se}")
+
+        self._send_json({"ok": True, "scenes": normalized, "count": len(normalized)})
 
     def _handle_movie_scene_edit(self, scene_index):
         """Edit specific fields of a scene in the movie plan."""
@@ -11076,29 +13075,104 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"anchors": pipeline.anchors})
 
     def _handle_pipeline_start(self):
-        """Ingest master prompt, extract assets, create packages, plan."""
+        """Ingest master prompt, extract assets, create packages, plan.
+        Also accepts enriched Brief context (storyline, world, style, film params, etc.)
+        which is folded into the master_prompt before extraction so the downstream
+        Opus extract_production_data call has full creative context.
+        """
         try:
             body = json.loads(self._read_body())
         except (json.JSONDecodeError, ValueError):
             self._send_json({"error": "Invalid JSON"}, 400)
             return
 
-        master_prompt = body.get("master_prompt", "")
+        master_prompt = (body.get("master_prompt") or "").strip()
         if not master_prompt:
             self._send_json({"error": "master_prompt is required"}, 400)
             return
 
+        # Optional reset — if pipeline is mid-run and user wants to restart
+        reset = bool(body.get("reset", False))
+        if reset:
+            try:
+                from lib.pipeline_state import PipelineState
+                ps = PipelineState(OUTPUT_DIR)
+                ps.reset_to("IDLE")
+            except Exception as _rerr:
+                print(f"[PIPELINE] reset warning: {_rerr}")
+
+        # Guard: if pipeline is already past IDLE/PROMPT_RECEIVED, refuse with 409
+        try:
+            from lib.pipeline_state import PipelineState
+            _ps = PipelineState(OUTPUT_DIR)
+            if _ps.state not in ("IDLE", "PROMPT_RECEIVED", "ERROR", "COMPLETE"):
+                self._send_json({
+                    "error": "pipeline_running",
+                    "state": _ps.state,
+                    "hint": "Pipeline already in progress — pass reset=true to restart",
+                }, 409)
+                return
+        except Exception:
+            pass
+
+        # ── Brief context enrichment — fold all Brief fields into the master prompt ──
+        style = (body.get("style") or "").strip()
+        storyline = (body.get("storyline") or "").strip()
+        world_setting = (body.get("world_setting") or "").strip()
+        universal_prompt = (body.get("universal_prompt") or "").strip()
+        lyrics = (body.get("lyrics") or "").strip()
+        project_mode = (body.get("project_mode") or "music_video").strip()
+        film_runtime = body.get("film_runtime")
+        film_scene_count = body.get("film_scene_count")
+        film_pacing = (body.get("film_pacing") or "").strip()
+        film_climax_position = (body.get("film_climax_position") or "").strip()
+        film_tension_curve = (body.get("film_tension_curve") or "").strip()
+        film_ending_type = (body.get("film_ending_type") or "").strip()
+        preset = (body.get("preset") or "").strip()
+
+        parts = ["Concept: " + master_prompt]
+        if storyline:
+            parts.append("Storyline: " + storyline)
+        if world_setting:
+            parts.append("World setting: " + world_setting)
+        if style:
+            parts.append("Visual style: " + style)
+        if universal_prompt:
+            parts.append("Global constraints (apply to every shot): " + universal_prompt)
+        if lyrics:
+            parts.append("Lyrics:\n" + lyrics)
+        if project_mode and project_mode != "music_video":
+            fp_bits = ["Project type: " + project_mode]
+            if film_runtime:
+                fp_bits.append("runtime " + str(film_runtime) + "s")
+            if film_scene_count:
+                fp_bits.append(str(film_scene_count) + " scenes")
+            if film_pacing:
+                fp_bits.append(film_pacing + " pacing")
+            if film_climax_position:
+                fp_bits.append("climax " + film_climax_position)
+            if film_tension_curve:
+                fp_bits.append(film_tension_curve + " tension curve")
+            if film_ending_type:
+                fp_bits.append(film_ending_type + " ending")
+            parts.append("Story structure: " + ", ".join(fp_bits))
+        if preset:
+            parts.append("Template preset: " + preset)
+
+        enriched_prompt = "\n\n".join(parts) if len(parts) > 1 else master_prompt
+
         song_path = body.get("song_path")
         if not song_path:
-            # Find most recent uploaded audio
-            audio_files = []
-            for f in os.listdir(UPLOADS_DIR):
-                if f.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac')):
-                    fp = os.path.join(UPLOADS_DIR, f)
-                    audio_files.append((os.path.getmtime(fp), fp))
-            if audio_files:
-                audio_files.sort(reverse=True)
-                song_path = audio_files[0][1]
+            # Find most recent uploaded audio (music video mode only)
+            if project_mode == "music_video":
+                audio_files = []
+                for f in os.listdir(UPLOADS_DIR):
+                    if f.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac')):
+                        fp = os.path.join(UPLOADS_DIR, f)
+                        audio_files.append((os.path.getmtime(fp), fp))
+                if audio_files:
+                    audio_files.sort(reverse=True)
+                    song_path = audio_files[0][1]
 
         engine = body.get("engine", "gen4_turbo")
         mode = body.get("mode", "fast")
@@ -11107,7 +13181,7 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             result = _auto_director.run_pipeline(
-                master_prompt=master_prompt,
+                master_prompt=enriched_prompt,
                 song_path=song_path,
                 engine=engine,
                 mode=mode,
@@ -11133,54 +13207,91 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": str(e)}, 400)
 
     def _handle_pipeline_sheets_generate(self):
-        """Trigger canonical sheet generation for all packages."""
-        from lib.preproduction_assets import PreproductionStore, build_sheet_prompt, get_sheet_plan
-        from lib.video_generator import _runway_generate_scene_image
+        """Trigger canonical sheet generation for current pipeline packages (background)."""
+        from lib.preproduction_assets import build_sheet_prompt, get_sheet_plan
+        from lib.fal_client import gemini_generate_image
 
         pipeline = self._get_pipeline_state()
         store = self._get_preprod_store()
-        packages = store.get_all()
-        pipeline.advance("SHEETS_GENERATING")
+        current_ids = set(pipeline.packages or [])
+        all_pkgs = store.get_all()
+        if current_ids:
+            packages = [p for p in all_pkgs if p.get("package_id") in current_ids]
+        else:
+            packages = all_pkgs
 
-        results = []
-        for pkg in packages:
-            if pkg.get("status") in ("approved", "generating"):
-                continue
-            sheet_plan = get_sheet_plan(pkg)
-            pkg["status"] = "generating"
-            store.save_package(pkg)
-            for view_def in sheet_plan:
-                prompt = build_sheet_prompt(pkg, view_def)
-                try:
-                    image_path = _runway_generate_scene_image(
-                        prompt=prompt,
-                        reference_photos=[],
-                        model="gen4_image_turbo",
+        try:
+            pipeline.advance("SHEETS_GENERATING")
+        except ValueError as e:
+            self._send_json({"error": str(e)}, 400)
+            return
+
+        def _sheets_thread():
+            try:
+                for pkg in packages:
+                    if pkg.get("status") in ("approved", "generating"):
+                        continue
+                    sheet_plan = get_sheet_plan(pkg)
+                    pkg["status"] = "generating"
+                    store.save_package(pkg)
+                    for view_def in sheet_plan:
+                        prompt = build_sheet_prompt(pkg, view_def)
+                        try:
+                            paths = gemini_generate_image(
+                                prompt=prompt,
+                                resolution="1K",
+                                aspect_ratio="16:9",
+                                num_images=1,
+                            )
+                            image_path = paths[0] if paths else ""
+                            if image_path and os.path.isfile(image_path):
+                                for si in pkg["sheet_images"]:
+                                    if si["view"] == view_def["view"]:
+                                        si["image_path"] = image_path
+                                        si["status"] = "generated"
+                                        si["prompt_used"] = prompt
+                                        break
+                            else:
+                                for si in pkg["sheet_images"]:
+                                    if si["view"] == view_def["view"]:
+                                        si["status"] = "failed"
+                                        si["error"] = "fal.ai/Gemini returned no images"
+                                        si["prompt_used"] = prompt
+                                        break
+                        except Exception as e:
+                            for si in pkg["sheet_images"]:
+                                if si["view"] == view_def["view"]:
+                                    si["status"] = "failed"
+                                    si["error"] = str(e)
+                                    break
+                    any_ok = any(
+                        si.get("status") == "generated" and si.get("image_path")
+                        for si in pkg["sheet_images"]
                     )
-                    for si in pkg["sheet_images"]:
-                        if si["view"] == view_def["view"]:
-                            si["image_path"] = image_path
-                            si["status"] = "generated"
-                            si["prompt_used"] = prompt
-                            break
-                except Exception as e:
-                    for si in pkg["sheet_images"]:
-                        if si["view"] == view_def["view"]:
-                            si["status"] = "failed"
-                            si["error"] = str(e)
-                            break
-            pkg["status"] = "generated"
-            # Auto-select first image as hero if none set
-            if not pkg.get("hero_image_path"):
-                for si in pkg["sheet_images"]:
-                    if si.get("image_path") and si["status"] == "generated":
-                        pkg["hero_image_path"] = si["image_path"]
-                        pkg["hero_view"] = si["view"]
-                        break
-            store.save_package(pkg)
-            results.append({"package_id": pkg["package_id"], "status": pkg["status"]})
+                    pkg["status"] = "generated" if any_ok else "failed"
+                    if any_ok and not pkg.get("hero_image_path"):
+                        for si in pkg["sheet_images"]:
+                            if si.get("image_path") and si["status"] == "generated":
+                                pkg["hero_image_path"] = si["image_path"]
+                                pkg["hero_view"] = si["view"]
+                                break
+                    store.save_package(pkg)
+                try:
+                    pipeline.advance("SHEETS_REVIEW")
+                except ValueError:
+                    pass
+            except Exception as e:
+                pipeline.set_error(f"Sheets generation failed: {e}")
 
-        self._send_json({"ok": True, "results": results, "pipeline": pipeline.get_progress()})
+        import threading
+        t = threading.Thread(target=_sheets_thread, daemon=True)
+        t.start()
+        self._send_json({
+            "ok": True,
+            "message": "Sheet generation started",
+            "pipeline": pipeline.get_progress(),
+            "num_packages": len(packages),
+        })
 
     def _handle_pipeline_sheets_approve_all(self):
         """Bulk approve all generated canonical sheets."""
@@ -11197,12 +13308,33 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "approved": approved, "pipeline": pipeline.get_progress()})
 
     def _handle_pipeline_anchors_generate(self):
-        """Compose shot anchors from approved canonical sheets."""
-        try:
-            result = _auto_director.pipeline_generate_anchors()
-            self._send_json(result)
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
+        """Compose shot anchors from approved canonical sheets (background)."""
+        pipeline = self._get_pipeline_state()
+        if not pipeline.plan or not pipeline.plan.get("scenes"):
+            self._send_json({"error": "No plan available — run pipeline first"}, 400)
+            return
+        store = self._get_preprod_store()
+        approved = [p for p in store.get_all() if p.get("status") == "approved"]
+        if not approved:
+            self._send_json({"error": "No approved packages — approve canonical sheets first"}, 400)
+            return
+
+        def _anchors_thread():
+            try:
+                _auto_director.pipeline_generate_anchors()
+            except Exception as e:
+                pipeline.set_error(f"Anchor generation failed: {e}")
+
+        import threading
+        t = threading.Thread(target=_anchors_thread, daemon=True)
+        t.start()
+        self._send_json({
+            "ok": True,
+            "message": "Anchor generation started",
+            "pipeline": pipeline.get_progress(),
+            "num_shots": len(pipeline.plan.get("scenes", [])),
+            "num_approved_packages": len(approved),
+        })
 
     def _handle_pipeline_anchor_approve(self, shot_id):
         pipeline = self._get_pipeline_state()
@@ -11252,7 +13384,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": str(e)}, 500)
 
     def _handle_pipeline_generate(self):
-        """Trigger video generation using approved anchors."""
+        """Generate video clips per approved anchor via fal.ai Kling, then stitch.
+
+        V6 path — bypasses the legacy auto_director Runway loop. For each scene
+        in the plan with an approved anchor, calls kling_image_to_video with the
+        anchor as start frame, stitches clips with the existing video_stitcher,
+        overlays the song, and writes the final MP4 to pipeline.output_file.
+        """
         pipeline = self._get_pipeline_state()
         plan_path = os.path.join(OUTPUT_DIR, "auto_director_plan.json")
         if not os.path.isfile(plan_path):
@@ -11262,28 +13400,4349 @@ class Handler(BaseHTTPRequestHandler):
         with open(plan_path) as f:
             plan = json.load(f)
 
-        # Inject anchor paths from pipeline state into plan
-        for scene in plan.get("scenes", []):
+        scenes = plan.get("scenes", [])
+        missing_anchors = []
+        for scene in scenes:
             sid = scene.get("shot_id", scene.get("id", ""))
             anchor = pipeline.get_anchor(sid)
             if anchor and anchor.get("image_path") and anchor.get("status") in ("approved", "generated"):
                 scene["anchor_image_path"] = anchor["image_path"]
+            else:
+                missing_anchors.append(sid)
+
+        if missing_anchors:
+            self._send_json({
+                "error": "Missing approved anchors",
+                "missing": missing_anchors[:10],
+            }, 400)
+            return
 
         pipeline.advance("SHOTS_GENERATING")
 
         def _generate_thread():
             try:
-                _auto_director.generate_full_video(plan)
-                pipeline.output_file = _auto_director.progress.get("output_file", "")
+                from lib.fal_client import kling_image_to_video
+                from lib.video_stitcher import stitch
+
+                clips_dir = os.path.join(OUTPUT_DIR, "pipeline", "clips_v6")
+                os.makedirs(clips_dir, exist_ok=True)
+
+                generated_clips = []
+                transitions = []
+                for idx, scene in enumerate(scenes):
+                    sid = scene.get("shot_id", scene.get("id", f"shot_{idx}"))
+                    anchor_path = scene.get("anchor_image_path", "")
+                    if not anchor_path or not os.path.isfile(anchor_path):
+                        print(f"[PIPELINE] shot {sid}: anchor missing on disk, skipping")
+                        continue
+
+                    raw_prompt = scene.get("prompt", "") or scene.get("shot_prompt", "")
+                    duration = int(scene.get("duration", 5) or 5)
+                    tier = scene.get("kling_tier", "v3_standard")
+                    cfg_scale = float(scene.get("cfg_scale", 0.6))
+
+                    clip_out = os.path.join(clips_dir, f"clip_{idx:03d}_{sid}.mp4")
+                    print(f"[PIPELINE] shot {sid} → Kling {tier} ({duration}s)")
+
+                    try:
+                        clip_path = kling_image_to_video(
+                            start_image_path=anchor_path,
+                            prompt=raw_prompt,
+                            duration=duration,
+                            tier=tier,
+                            cfg_scale=cfg_scale,
+                        )
+                        if clip_path and os.path.isfile(clip_path):
+                            import shutil as _shutil
+                            _shutil.copy2(clip_path, clip_out)
+                            scene["clip_path"] = clip_out
+                            scene["status"] = "done"
+                            generated_clips.append(clip_out)
+                            transitions.append(scene.get("transition", "crossfade"))
+                            _record_cost(f"pipeline_clip_{sid}", "video")
+                        else:
+                            scene["status"] = "failed"
+                            scene["error"] = "fal.ai Kling returned no file"
+                    except Exception as e:
+                        scene["status"] = "failed"
+                        scene["error"] = str(e)
+                        print(f"[PIPELINE] shot {sid} failed: {e}")
+
+                plan["scenes"] = scenes
+                with open(plan_path, "w", encoding="utf-8") as pf:
+                    json.dump(plan, pf, indent=2, ensure_ascii=False)
+
+                if not generated_clips:
+                    pipeline.set_error("No clips generated successfully")
+                    return
+
                 pipeline.advance("CONFORM")
+
+                song_path = plan.get("song_path") or pipeline.song_path
+                audio = song_path if song_path and os.path.isfile(song_path) else None
+                final_path = os.path.join(OUTPUT_DIR, "pipeline_final.mp4")
+                stitch(generated_clips, audio, final_path, transitions=transitions)
+
+                pipeline.output_file = final_path
                 pipeline.advance("COMPLETE")
             except Exception as e:
+                import traceback as _tb
+                _tb.print_exc()
                 pipeline.set_error(str(e))
 
         import threading
         t = threading.Thread(target=_generate_thread, daemon=True)
         t.start()
-        self._send_json({"ok": True, "message": "Generation started", "pipeline": pipeline.get_progress()})
+        self._send_json({
+            "ok": True,
+            "message": "Generation started (Kling)",
+            "pipeline": pipeline.get_progress(),
+            "num_scenes": len(scenes),
+        })
+
+    # ──── V6 Pipeline Handlers: Gemini + Kling via fal.ai ────
+
+    def _active_project_shot_ids(self) -> set:
+        """Set of scene IDs for the current project. Used to filter shared
+        output/pipeline/ folders so legacy test shots and other projects'
+        shots don't leak into the active-project UI.
+        """
+        try:
+            from lib.active_project import get_project_root
+            scenes_path = os.path.join(get_project_root(), "prompt_os", "scenes.json")
+            if not os.path.isfile(scenes_path):
+                return set()
+            with open(scenes_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return {s.get("id") for s in data if s.get("id")}
+        except Exception:
+            pass
+        return set()
+
+    def _handle_v6_get_anchors(self):
+        """Return V6 anchor data for the active project only, sorted by the
+        scene's narrative order (orderIndex) so the UI shows 1a→9b, not a
+        UUID alphabetical jumble.
+
+        Per-user namespacing: anchor gens for authenticated users land in
+        `anchors_v6/u_<uid>/<shot>/`. We union the flat + user-specific dirs
+        so gens are always visible to the UI that triggered them.
+        """
+        anchor_base = os.path.join(OUTPUT_DIR, "pipeline", "anchors_v6")
+        if not os.path.isdir(anchor_base):
+            self._send_json({"anchors": []})
+            return
+        active_ids = self._active_project_shot_ids()
+        _cu = self._current_user() or {}
+        _uid = int(_cu.get("id", 0) or 0)
+        user_base = os.path.join(anchor_base, f"u_{_uid}") if _uid > 0 else None
+
+        # Load scene narrative metadata for sort + display.
+        scene_meta: dict[str, dict] = {}
+        try:
+            from lib.active_project import get_project_root
+            scenes_path = os.path.join(get_project_root(), "prompt_os", "scenes.json")
+            if os.path.isfile(scenes_path):
+                with open(scenes_path, "r", encoding="utf-8") as f:
+                    _scenes = json.load(f)
+                if isinstance(_scenes, list):
+                    for _s in _scenes:
+                        _sid = _s.get("id")
+                        if not _sid:
+                            continue
+                        scene_meta[_sid] = {
+                            "opus_shot_id": _s.get("opus_shot_id", ""),
+                            "order_index": _s.get("orderIndex", 999),
+                            "name": _s.get("name", ""),
+                            "duration_s": _s.get("duration_s") or _s.get("duration"),
+                            "duration_source": _s.get("duration_source", ""),
+                            "duration_rationale": _s.get("duration_rationale", ""),
+                        }
+        except Exception:
+            pass
+
+        # Collect shot dirs: flat first, then user-specific (user shadows flat)
+        shot_sources: dict[str, str] = {}
+        for shot_dir in sorted(os.listdir(anchor_base)):
+            shot_path = os.path.join(anchor_base, shot_dir)
+            if not os.path.isdir(shot_path):
+                continue
+            if shot_dir.startswith("u_") or shot_dir.startswith("_"):
+                continue
+            if active_ids and shot_dir not in active_ids:
+                continue
+            shot_sources[shot_dir] = shot_path
+        if user_base and os.path.isdir(user_base):
+            for shot_dir in sorted(os.listdir(user_base)):
+                shot_path = os.path.join(user_base, shot_dir)
+                if not os.path.isdir(shot_path):
+                    continue
+                if active_ids and shot_dir not in active_ids:
+                    continue
+                shot_sources[shot_dir] = shot_path  # user shadows flat
+
+        # Sort by narrative order_index; unknown scenes sort last by UUID.
+        def _sort_key(sid: str):
+            m = scene_meta.get(sid)
+            if m:
+                return (0, m["order_index"], m["opus_shot_id"])
+            return (1, 999, sid)
+
+        anchors = []
+        for shot_dir in sorted(shot_sources.keys(), key=_sort_key):
+            shot_path = shot_sources[shot_dir]
+            is_user = user_base is not None and shot_path.startswith(user_base)
+            url_prefix = f"u_{_uid}/{shot_dir}" if is_user else shot_dir
+            meta = scene_meta.get(shot_dir, {})
+            entry = {
+                "shot_id": shot_dir,
+                "opus_shot_id": meta.get("opus_shot_id", ""),
+                "order_index": meta.get("order_index", 999),
+                "scene_name": meta.get("name", ""),
+                "duration_s": meta.get("duration_s"),
+                "duration_source": meta.get("duration_source", ""),
+                "duration_rationale": meta.get("duration_rationale", ""),
+                "candidates": [],
+                "selected": None,
+                "end_image": None,
+            }
+            for f in sorted(os.listdir(shot_path)):
+                rel = f"{url_prefix}/{f}"
+                if f.startswith("candidate_") and f.endswith(".png"):
+                    entry["candidates"].append(f"/api/v6/anchor-image/{rel}")
+                elif f == "selected.png":
+                    entry["selected"] = f"/api/v6/anchor-image/{rel}"
+                elif f == "end_image.png":
+                    entry["end_image"] = f"/api/v6/anchor-image/{rel}"
+            anchors.append(entry)
+        self._send_json({"anchors": anchors})
+
+    def _handle_v6_get_clips(self):
+        """Return V6 clip data for the active project only. Supports both
+        the legacy flat `<shot_id>.mp4` layout and the new
+        `<shot_id>/selected.mp4` subdir layout.
+        """
+        clips_dir = os.path.join(OUTPUT_DIR, "pipeline", "clips_v6")
+        if not os.path.isdir(clips_dir):
+            self._send_json({"clips": []})
+            return
+        active_ids = self._active_project_shot_ids()
+        clips = []
+        for entry in sorted(os.listdir(clips_dir)):
+            full = os.path.join(clips_dir, entry)
+            if os.path.isfile(full) and entry.endswith(".mp4"):
+                shot_id = entry[:-4]
+                if active_ids and shot_id not in active_ids:
+                    continue
+                size_mb = os.path.getsize(full) / (1024 * 1024)
+                clips.append({
+                    "shot_id": shot_id,
+                    "url": f"/api/v6/clip-video/{entry}",
+                    "size_mb": round(size_mb, 1),
+                })
+            elif os.path.isdir(full):
+                if active_ids and entry not in active_ids:
+                    continue
+                sel = os.path.join(full, "selected.mp4")
+                if os.path.isfile(sel):
+                    size_mb = os.path.getsize(sel) / (1024 * 1024)
+                    clips.append({
+                        "shot_id": entry,
+                        "url": f"/api/v6/clip-video/{entry}/selected.mp4",
+                        "size_mb": round(size_mb, 1),
+                    })
+        self._send_json({"clips": clips})
+
+    def _handle_v6_serve_file(self, filepath):
+        """Serve an anchor image or clip video file.
+
+        SECURITY (C2): Realpath-confine to the pipeline output root. Without
+        this check, `GET /api/v6/anchor-image/../../lumn.db` exfiltrates the
+        DB (password hashes, sessions, ledger) and `..\\..\\.env` pulls keys.
+        """
+        pipeline_root = os.path.realpath(os.path.join(OUTPUT_DIR, "pipeline"))
+        resolved = os.path.realpath(filepath)
+        if not (resolved == pipeline_root or resolved.startswith(pipeline_root + os.sep)):
+            self._send_json({"error": "Forbidden"}, 403)
+            return
+        if not os.path.isfile(resolved):
+            self._send_json({"error": "File not found"}, 404)
+            return
+        # Also reject symlinks that pointed inside-then-outside
+        try:
+            st = os.lstat(resolved)
+            import stat as _stat
+            if _stat.S_ISLNK(st.st_mode):
+                self._send_json({"error": "Forbidden"}, 403)
+                return
+        except OSError:
+            self._send_json({"error": "Forbidden"}, 403)
+            return
+        # Whitelist extensions we expect to serve
+        ext = os.path.splitext(resolved)[1].lower()
+        content_types = {".png": "image/png", ".jpg": "image/jpeg",
+                         ".jpeg": "image/jpeg", ".mp4": "video/mp4",
+                         ".webp": "image/webp"}
+        if ext not in content_types:
+            self._send_json({"error": "Unsupported file type"}, 403)
+            return
+        ct = content_types[ext]
+        self.send_response(200)
+        self.send_header("Content-Type", ct)
+        size = os.path.getsize(resolved)
+        self.send_header("Content-Length", str(size))
+        self.send_header("Cache-Control", "public, max-age=300")
+        self.end_headers()
+        with open(resolved, "rb") as f:
+            self.wfile.write(f.read())
+
+    def _handle_v6_identity_lock(self):
+        """Manually lock a character's identity anchor (user override)."""
+        from lib.identity_gate import lock_identity
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        name = (body.get("character_name") or "").strip()
+        anchor_raw = body.get("anchor_path", "")
+        anchor = _safe_user_path(anchor_raw)
+        shot_id = body.get("shot_id", "manual")
+        if not name or not anchor:
+            self._send_json({"error": "character_name + valid anchor_path (must live under output/pipeline) required"}, 400)
+            return
+        entry = lock_identity(
+            character_name=name,
+            anchor_path=anchor,
+            shot_id=shot_id,
+            qa_overall=float(body.get("qa_overall", 0.85)),
+            qa_identity=float(body.get("qa_identity", 0.85)),
+            force=True,
+        )
+        self._send_json({"ok": True, "character": name, "entry": entry})
+
+    def _handle_v6_identity_unlock(self):
+        """Manually unlock a character's identity (user override)."""
+        from lib.identity_gate import unlock_identity
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        name = (body.get("character_name") or "").strip()
+        if not name:
+            self._send_json({"error": "character_name required"}, 400)
+            return
+        removed = unlock_identity(name)
+        self._send_json({"ok": True, "removed": removed, "character": name})
+
+    def _handle_v6_brief_expand(self):
+        """Opus expands a user's one-line brief into a structured project plan:
+        characters, environments, shot list, tone. UI uses this to prefill the
+        preproduction packages so the user can tweak rather than start blank."""
+        from lib.claude_client import call_json, OPUS_MODEL
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        if lumn_validate:
+            _ok, _err, _ = lumn_validate.validate(body, lumn_validate.BRIEF_EXPAND_SCHEMA)
+            if not _ok:
+                self._send_json({"error": _err}, 400)
+                return
+        brief = (body.get("brief") or "").strip()
+        max_shots = int(body.get("max_shots", 8))
+
+        # Budget gate — Opus text-only call ~$0.10
+        est_cost = 0.10
+        ok, reason, _t = _check_budget_gate(est_cost)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason, "est": est_cost}, 402)
+            return
+
+        system = """You are a pre-production planner for a short AI-generated film.
+Expand the user's one-line idea into a structured plan the pipeline can use to
+build reference sheets and a shot list.
+
+Return JSON ONLY with this exact shape:
+{
+  "title": "short film title",
+  "logline": "one-sentence logline",
+  "tone": "tonal keywords, comma-sep (e.g., warm, nostalgic, observational)",
+  "style_bible": "visual style one-liner (film stock, palette, lens feel)",
+  "characters": [
+    {
+      "name": "Name",
+      "role": "protagonist|supporting|background",
+      "description": "45-word physical description — age, build, skin, hair, eyes, wardrobe, distinguishing features. Think character sheet prompt.",
+      "must_keep": ["identifying trait 1", "trait 2", "trait 3"],
+      "avoid": ["anti-trait"]
+    }
+  ],
+  "environments": [
+    {
+      "name": "Location Name",
+      "description": "30-word location description — time of day, weather, key props, light direction",
+      "must_keep": ["trait 1", "trait 2"],
+      "avoid": []
+    }
+  ],
+  "shots": [
+    {
+      "shot_id": "s01",
+      "title": "short title",
+      "beat": "what happens in plain english",
+      "shot_size": "wide|medium|close|extreme_close",
+      "camera": "static|slow_push|handheld_track|pan|tilt",
+      "duration_s": 5,
+      "characters": ["Name"],
+      "environment": "Location Name",
+      "action": "one-sentence action for this shot"
+    }
+  ]
+}
+
+Constraints:
+- 1-4 characters max
+- 1-3 environments max
+- {max_shots} shots max
+- Shots should tell a complete micro-story with beginning/middle/end
+- Every character and environment named in shots MUST exist in the characters/environments arrays
+- No fantasy/sci-fi unless the brief demands it"""
+
+        user_prompt = f"""Brief: {brief}
+Max shots: {max_shots}
+JSON only, no preamble."""
+
+        try:
+            result = call_json(
+                user_prompt,
+                system=system.replace("{max_shots}", str(max_shots)),
+                model=OPUS_MODEL,
+                max_tokens=4000,
+            )
+            # Ledger record — we successfully called Opus
+            _record_generation(
+                shot_key="brief_expand", gen_type="image", engine="opus",
+                tier="", duration=0, est_cost=est_cost, status="ok",
+                meta={"brief_len": len(brief)},
+            )
+            self._send_json({"ok": True, "plan": result})
+        except Exception as e:
+            _record_generation(
+                shot_key="brief_expand", gen_type="image", engine="opus",
+                tier="", duration=0, est_cost=est_cost, status="error",
+                meta={"err": str(e)[:200]},
+            )
+            self._send_json({"error": str(e)}, 500)
+
+    # ─── Opus Director endpoints (Phase 3) ─────────────────────────────────
+    def _handle_v6_director_storyplan(self):
+        """Opus director: brief + song timing → full Snyder-arc scene plan.
+        Richer than brief/expand — writes emotion/acting/looking_at per scene."""
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        brief = (body.get("brief") or "").strip()
+        duration_s = float(body.get("duration_s") or 60.0)
+        project = body.get("project") or "default"
+        profile_id = body.get("profile_id")
+        song_analysis = body.get("song_analysis")
+        environments = body.get("environments") or []
+        thinking_budget = int(body.get("thinking_budget", 6000))
+
+        # Opus extended-thinking call — budget gate
+        est_cost = 0.75
+        ok, reason, _t = _check_budget_gate(est_cost)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason, "est": est_cost}, 402)
+            return
+
+        try:
+            from lib.opus_director import direct_story
+            plan = direct_story(
+                brief=brief,
+                duration_s=duration_s,
+                project=project,
+                profile_id=profile_id,
+                song_analysis=song_analysis,
+                environments=environments,
+                thinking_budget=thinking_budget,
+            )
+            _record_generation(
+                shot_key="director_storyplan", gen_type="image", engine="opus",
+                tier="", duration=0, est_cost=est_cost, status="ok",
+                meta={"brief_len": len(brief), "duration_s": duration_s,
+                      "project": project, "scenes": len(plan.get("scenes", []))},
+            )
+            self._send_json({"ok": True, "plan": plan})
+        except Exception as e:
+            _record_generation(
+                shot_key="director_storyplan", gen_type="image", engine="opus",
+                tier="", duration=0, est_cost=est_cost, status="error",
+                meta={"err": str(e)[:200]},
+            )
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_v6_director_scene(self):
+        """Opus director: skeletal scene → fully hydrated with acting/emotion/eyeline."""
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        spec = body.get("scene") or {}
+        project = body.get("project") or "default"
+        profile_id = body.get("profile_id")
+        thinking_budget = int(body.get("thinking_budget", 2000))
+
+        est_cost = 0.15
+        ok, reason, _t = _check_budget_gate(est_cost)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason, "est": est_cost}, 402)
+            return
+
+        try:
+            from lib.opus_director import direct_scene
+            scene = direct_scene(
+                minimal_spec=spec,
+                project=project,
+                profile_id=profile_id,
+                thinking_budget=thinking_budget,
+            )
+            _record_generation(
+                shot_key=f"director_scene:{spec.get('id','?')}", gen_type="image", engine="opus",
+                tier="", duration=0, est_cost=est_cost, status="ok",
+                meta={"project": project},
+            )
+            self._send_json({"ok": True, "scene": scene})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_v6_director_kling_prompt(self):
+        """Opus director: scene + anchor path → final Kling I2V prompt."""
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        scene = body.get("scene") or {}
+        anchor_path = body.get("anchor_path")
+        project = body.get("project") or "default"
+        profile_id = body.get("profile_id")
+        thinking_budget = int(body.get("thinking_budget", 1500))
+
+        est_cost = 0.12
+        ok, reason, _t = _check_budget_gate(est_cost)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason, "est": est_cost}, 402)
+            return
+
+        try:
+            from lib.opus_director import direct_kling_prompt
+            out = direct_kling_prompt(
+                scene=scene,
+                anchor_path=anchor_path,
+                project=project,
+                profile_id=profile_id,
+                thinking_budget=thinking_budget,
+            )
+            _record_generation(
+                shot_key=f"director_kling:{scene.get('id','?')}", gen_type="image", engine="opus",
+                tier="", duration=0, est_cost=est_cost, status="ok",
+                meta={"project": project, "prompt_len": len(out.get("prompt",""))},
+            )
+            self._send_json({"ok": True, "kling": out})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_v6_director_critique(self):
+        """Opus director: review a full scene plan for bible violations."""
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        plan = body.get("plan") or {}
+        project = body.get("project") or "default"
+        profile_id = body.get("profile_id")
+        thinking_budget = int(body.get("thinking_budget", 4000))
+
+        est_cost = 0.50
+        ok, reason, _t = _check_budget_gate(est_cost)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason, "est": est_cost}, 402)
+            return
+
+        try:
+            from lib.opus_director import direct_critique
+            crit = direct_critique(
+                scene_plan=plan,
+                project=project,
+                profile_id=profile_id,
+                thinking_budget=thinking_budget,
+            )
+            _record_generation(
+                shot_key="director_critique", gen_type="image", engine="opus",
+                tier="", duration=0, est_cost=est_cost, status="ok",
+                meta={"project": project, "verdict": crit.get("verdict")},
+            )
+            self._send_json({"ok": True, "critique": crit})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _director_context_for_shot(self, shot_id: str, project: str):
+        """Load (shot, prev, next, character, environment, motifs) for direct_v6_shot.
+        Scenes are sorted by orderIndex so prev/next are narrative neighbors."""
+        from lib.active_project import get_project_root
+        root = get_project_root(project)
+        scenes_path = os.path.join(root, "prompt_os", "scenes.json")
+        chars_path = os.path.join(root, "prompt_os", "characters.json")
+        envs_path = os.path.join(root, "prompt_os", "environments.json")
+        refs_path = os.path.join(root, "prompt_os", "references.json")
+
+        def _load(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except (IOError, json.JSONDecodeError):
+                return []
+
+        scenes = sorted(_load(scenes_path), key=lambda s: s.get("orderIndex", 0))
+        chars = _load(chars_path)
+        envs = _load(envs_path)
+        refs = _load(refs_path)
+
+        idx = next((i for i, s in enumerate(scenes) if s.get("id") == shot_id), -1)
+        if idx < 0:
+            return None, None, None, None, None, None, scenes_path, scenes
+        shot = scenes[idx]
+        prev_shot = scenes[idx - 1] if idx > 0 else None
+        next_shot = scenes[idx + 1] if idx < len(scenes) - 1 else None
+
+        char = next((c for c in chars if c.get("id") == shot.get("characterId")), None)
+        env = next((e for e in envs if e.get("id") == shot.get("environmentId")), None)
+        motif_ids = shot.get("motifIds") or shot.get("referenceIds") or []
+        motifs = [r for r in refs if r.get("id") in motif_ids] if motif_ids else []
+
+        return shot, prev_shot, next_shot, char, env, motifs, scenes_path, scenes
+
+    @staticmethod
+    def _apply_director_v2(scene: dict, result: dict) -> dict:
+        """Merge result into scene.director_v2 and write populator fields through.
+
+        Preserves originals under director_v2.original on first write, so the
+        user can revert. Subsequent calls overwrite the director_v2 fields but
+        leave the original snapshot untouched.
+        """
+        if not isinstance(scene, dict) or not isinstance(result, dict):
+            return scene
+        existing = scene.get("director_v2") or {}
+        original = existing.get("original") or {
+            "subjectAction": scene.get("subjectAction", ""),
+            "shotDescription": scene.get("shotDescription", ""),
+            "lighting": scene.get("lighting", ""),
+            "cameraMovement": scene.get("cameraMovement", ""),
+            "envMotion": scene.get("envMotion", ""),
+            "continuityIn": scene.get("continuityIn", ""),
+            "continuityOut": scene.get("continuityOut", ""),
+            "subtext": scene.get("subtext", ""),
+        }
+        scene["director_v2"] = {
+            "subjectAction": result.get("subjectAction", ""),
+            "shotDescription": result.get("shotDescription", ""),
+            "lighting": result.get("lighting", ""),
+            "cameraMovement": result.get("cameraMovement", ""),
+            "envMotion": result.get("envMotion", ""),
+            "continuityIn": result.get("continuityIn", ""),
+            "continuityOut": result.get("continuityOut", ""),
+            "subtext": result.get("subtext", ""),
+            "rationale": result.get("rationale", ""),
+            "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "original": original,
+        }
+        # Fields the UI populator already reads — write through so the shot card shows the rewrite.
+        for k in ("subjectAction", "shotDescription", "lighting", "cameraMovement",
+                  "envMotion", "continuityIn", "continuityOut", "subtext"):
+            v = result.get(k)
+            if isinstance(v, str) and v.strip():
+                scene[k] = v
+        scene["updatedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        return scene
+
+    def _handle_v6_director_direct_shot(self):
+        """Opus director: rewrite a single shot card's fields for cinematic specificity.
+        Body: {shot_id, project?, apply?: bool, thinking_budget?}"""
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        shot_id = (body.get("shot_id") or "").strip()
+        if not shot_id:
+            self._send_json({"error": "shot_id required"}, 400)
+            return
+        project = body.get("project") or active_project.get_active_slug() or "default"
+        apply_now = bool(body.get("apply", True))
+        thinking_budget = int(body.get("thinking_budget", 1500))
+
+        est_cost = 0.12
+        ok, reason, _t = _check_budget_gate(est_cost)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason, "est": est_cost}, 402)
+            return
+
+        shot, prev_shot, next_shot, char, env, motifs, scenes_path, scenes = \
+            self._director_context_for_shot(shot_id, project)
+        if not shot:
+            self._send_json({"error": f"shot {shot_id} not found in project {project}"}, 404)
+            return
+
+        try:
+            from lib.opus_director import direct_v6_shot
+            result = direct_v6_shot(
+                shot=shot,
+                prev_shot=prev_shot,
+                next_shot=next_shot,
+                character=char,
+                environment=env,
+                motifs=motifs,
+                project=project,
+                thinking_budget=thinking_budget,
+            )
+            if apply_now:
+                self._apply_director_v2(shot, result)
+                for i, s in enumerate(scenes):
+                    if s.get("id") == shot_id:
+                        scenes[i] = shot
+                        break
+                with open(scenes_path, "w", encoding="utf-8") as f:
+                    json.dump(scenes, f, indent=2, ensure_ascii=False)
+            _record_generation(
+                shot_key=f"director_v6shot:{shot_id}", gen_type="image", engine="opus",
+                tier="", duration=0, est_cost=est_cost, status="ok",
+                meta={"project": project, "applied": apply_now},
+            )
+            self._send_json({"ok": True, "result": result, "applied": apply_now, "shot_id": shot_id})
+        except Exception as e:
+            _record_generation(
+                shot_key=f"director_v6shot:{shot_id}", gen_type="image", engine="opus",
+                tier="", duration=0, est_cost=est_cost, status="error",
+                meta={"err": str(e)[:200]},
+            )
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_v6_director_direct_all(self):
+        """Batch direct: rewrite every shot in the active project (or a subset).
+        Body: {project?, shot_ids?: list, apply?: bool, thinking_budget?}
+
+        Runs sequentially — Opus calls aren't cheap, and serialized writes avoid
+        scenes.json contention. Returns a per-shot pass/fail summary."""
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        project = body.get("project") or active_project.get_active_slug() or "default"
+        apply_now = bool(body.get("apply", True))
+        thinking_budget = int(body.get("thinking_budget", 1500))
+        only_ids = body.get("shot_ids") or None
+
+        from lib.active_project import get_project_root
+        scenes_path = os.path.join(get_project_root(project), "prompt_os", "scenes.json")
+        try:
+            with open(scenes_path, "r", encoding="utf-8") as f:
+                scenes = sorted(json.load(f), key=lambda s: s.get("orderIndex", 0))
+        except (IOError, json.JSONDecodeError):
+            self._send_json({"error": "scenes.json not readable"}, 500)
+            return
+
+        if only_ids:
+            only_ids_set = {str(x) for x in only_ids}
+            targets = [s for s in scenes if s.get("id") in only_ids_set]
+        else:
+            targets = scenes
+        if not targets:
+            self._send_json({"error": "no shots to process"}, 400)
+            return
+
+        est_cost = 0.12 * len(targets)
+        ok, reason, _t = _check_budget_gate(est_cost)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason,
+                             "est": est_cost, "count": len(targets)}, 402)
+            return
+
+        from lib.opus_director import direct_v6_shot
+        results = []
+        for target in targets:
+            shot_id = target.get("id")
+            try:
+                shot, prev_shot, next_shot, char, env, motifs, _sp, _scenes = \
+                    self._director_context_for_shot(shot_id, project)
+                if not shot:
+                    results.append({"shot_id": shot_id, "ok": False, "error": "not_found"})
+                    continue
+                result = direct_v6_shot(
+                    shot=shot, prev_shot=prev_shot, next_shot=next_shot,
+                    character=char, environment=env, motifs=motifs,
+                    project=project, thinking_budget=thinking_budget,
+                )
+                if apply_now:
+                    self._apply_director_v2(shot, result)
+                    for i, s in enumerate(scenes):
+                        if s.get("id") == shot_id:
+                            scenes[i] = shot
+                            break
+                    with open(scenes_path, "w", encoding="utf-8") as f:
+                        json.dump(scenes, f, indent=2, ensure_ascii=False)
+                results.append({"shot_id": shot_id, "ok": True,
+                                "preview": {k: result.get(k, "") for k in
+                                            ("subjectAction", "lighting", "cameraMovement")}})
+                _record_generation(
+                    shot_key=f"director_v6shot:{shot_id}", gen_type="image", engine="opus",
+                    tier="", duration=0, est_cost=0.12, status="ok",
+                    meta={"project": project, "batch": True, "applied": apply_now},
+                )
+            except Exception as e:
+                results.append({"shot_id": shot_id, "ok": False, "error": str(e)[:200]})
+                _record_generation(
+                    shot_key=f"director_v6shot:{shot_id}", gen_type="image", engine="opus",
+                    tier="", duration=0, est_cost=0.12, status="error",
+                    meta={"err": str(e)[:200], "batch": True},
+                )
+
+        passed = sum(1 for r in results if r.get("ok"))
+        self._send_json({"ok": True, "total": len(results),
+                         "passed": passed, "failed": len(results) - passed,
+                         "applied": apply_now, "results": results})
+
+    def _handle_v6_director_variety_check(self):
+        """Variety linter: scan every shot's populator fields for repetition.
+        No LLM call — pure analysis. Body: {project?, threshold?}"""
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+        project = (body.get("project") if isinstance(body, dict) else None) \
+            or active_project.get_active_slug() or "default"
+        threshold = int(body.get("threshold", 3)) if isinstance(body, dict) else 3
+
+        try:
+            from lib.variety_linter import analyze_project
+            report = analyze_project(project=project, threshold_overuse=threshold)
+            self._send_json({"ok": True, "report": report, "project": project})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_v6_anchor_audit_full(self):
+        """Two-stage identity audit: perceptual pre-gate + Opus multi-image
+        comparison. Returns decision + per-reference similarity breakdown."""
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        candidate_path = body.get("candidate_path") or body.get("anchor_path")
+        sheet_path = body.get("sheet_path")
+        priors = body.get("prior_anchor_paths") or []
+        scene_ctx = body.get("scene_context")
+        project = body.get("project") or "default"
+        profile_id = body.get("profile_id")
+        force_opus = bool(body.get("force_opus", False))
+        thinking_budget = int(body.get("thinking_budget", 3000))
+
+        if not candidate_path:
+            self._send_json({"error": "candidate_path required"}, 400)
+            return
+
+        est_cost = 0.25 if force_opus else 0.10
+        ok, reason, _t = _check_budget_gate(est_cost)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason, "est": est_cost}, 402)
+            return
+
+        try:
+            from lib.identity_gate_opus import audit_anchor_full
+            result = audit_anchor_full(
+                candidate_path=candidate_path,
+                sheet_path=sheet_path,
+                prior_anchor_paths=priors,
+                scene_context=scene_ctx,
+                project=project,
+                profile_id=profile_id,
+                force_opus=force_opus,
+                thinking_budget=thinking_budget,
+            )
+            engine = "perceptual" if result.get("opus") is None else "opus+perceptual"
+            _record_generation(
+                shot_key=f"audit_full:{candidate_path.split('/')[-1]}",
+                gen_type="image", engine=engine,
+                tier="", duration=0, est_cost=est_cost, status="ok",
+                meta={"verdict": result.get("final_verdict"),
+                      "path": result.get("decision_path")},
+            )
+            self._send_json({"ok": True, "audit": result})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_v6_anchor_audit_meta(self):
+        """Phase 5: self-consistency vote + devil's-advocate meta-critique.
+        Costs 3x a single audit but catches false-passes on hero shots."""
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        candidate_path = body.get("candidate_path") or body.get("anchor_path")
+        sheet_path = body.get("sheet_path")
+        priors = body.get("prior_anchor_paths") or []
+        scene_ctx = body.get("scene_context")
+        project = body.get("project") or "default"
+        profile_id = body.get("profile_id")
+        n_votes = int(body.get("n_votes", 3))
+        escalate_on = body.get("escalate_on", "LOW")
+        thinking_budget = int(body.get("thinking_budget", 3000))
+
+        if not candidate_path:
+            self._send_json({"error": "candidate_path required"}, 400)
+            return
+
+        # meta_audit = N Opus vision calls + optional meta-critique
+        est_cost = 0.25 * n_votes + 0.30
+        ok, reason, _t = _check_budget_gate(est_cost)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason, "est": est_cost}, 402)
+            return
+
+        try:
+            from lib.identity_gate_opus import audit_anchor_full
+            from lib.meta_audit import meta_audit
+            result = meta_audit(
+                audit_anchor_full,
+                candidate_path=candidate_path,
+                sheet_path=sheet_path,
+                prior_anchor_paths=priors,
+                scene_context=scene_ctx,
+                project=project,
+                profile_id=profile_id,
+                force_opus=True,              # always use Opus in meta mode
+                thinking_budget=thinking_budget,
+                n_votes=n_votes,
+                escalate_on=escalate_on,
+            )
+            _record_generation(
+                shot_key=f"audit_meta:{candidate_path.split('/')[-1]}",
+                gen_type="image", engine="opus-meta",
+                tier="", duration=0, est_cost=est_cost, status="ok",
+                meta={"final": result.get("final_verdict"),
+                      "escalated": result.get("escalated"),
+                      "ratio": result.get("vote", {}).get("agreement_ratio")},
+            )
+            self._send_json({"ok": True, "meta_audit": result})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_v6_prompt_lint(self):
+        """Pre-flight Kling prompt validation (no cost)."""
+        from lib.kling_prompt_linter import lint_kling_prompt
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        prompt = body.get("prompt", "")
+        strict = bool(body.get("strict", False))
+        result = lint_kling_prompt(prompt, strict=strict)
+        self._send_json(result)
+
+    # ─── Auth: signup / login / logout / me ──────────────────────────────
+    #
+    # Session cookie: lumn_sid (httpOnly, SameSite=Lax). The front-end
+    # doesn't touch it directly — fetch() includes cookies automatically.
+    # We keep the legacy LUMN_API_TOKEN bearer for local dev/CLI tooling.
+
+    def _set_session_cookie(self, sid: str):
+        # HttpOnly + SameSite=Lax keeps CSRF surface small. Secure flag is
+        # added when the request came in over HTTPS (set by reverse proxy).
+        parts = [
+            f"lumn_sid={sid}",
+            "Path=/",
+            "HttpOnly",
+            "SameSite=Lax",
+            f"Max-Age={lumn_db.SESSION_TTL_SECONDS}" if lumn_db else "Max-Age=2592000",
+        ]
+        if self.headers.get("X-Forwarded-Proto") == "https":
+            parts.append("Secure")
+        self._extra_set_cookie = "; ".join(parts)
+
+    def _handle_feedback_submit(self):
+        """In-app bug report capture. Authenticated or anon."""
+        if not lumn_db:
+            return self._send_json({"error": "db unavailable"}, 503)
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            return self._send_json({"error": "invalid json"}, 400)
+        message = (body.get("message") or "").strip()
+        if not message:
+            return self._send_json({"error": "message required"}, 400)
+        if len(message) > 8000:
+            return self._send_json({"error": "message too long"}, 400)
+        # H6: IP rate limit so anon feedback can't be used as a write amp /
+        # storage-fill vector. 20/hour is generous for a real human bug-reporter.
+        client_ip = self._real_client_ip()
+        allowed, _count = lumn_db.rate_limit_check_ip(client_ip, "feedback", max_per_hour=20)
+        if not allowed:
+            return self._send_json({"error": "feedback rate limit — try again later"}, 429)
+        category = (body.get("category") or "bug").strip().lower()[:40]
+        cu = self._current_user() or {}
+        try:
+            fid = lumn_db.insert_feedback(
+                user_id=cu.get("id") or None,
+                email=cu.get("email"),
+                category=category,
+                message=message,
+                context=(body.get("context") or "")[:8000],
+                user_agent=self.headers.get("User-Agent", "")[:300],
+                url=(body.get("url") or "")[:500],
+            )
+        except Exception as e:
+            return self._send_json({"error": f"insert failed: {e}"}, 500)
+        if lumn_obs:
+            try:
+                lumn_obs.structured_log("info", "feedback_submitted",
+                                        id=fid, category=category,
+                                        user_id=cu.get("id"))
+            except Exception:
+                pass
+        return self._send_json({"ok": True, "id": fid})
+
+    def _handle_shot_rate(self):
+        """Thumbs up/down on a generated shot. Feeds the TI learning loop."""
+        if not lumn_db:
+            return self._send_json({"error": "db unavailable"}, 503)
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            return self._send_json({"error": "invalid json"}, 400)
+        cu = self._current_user() or {}
+        uid = int(cu.get("id") or 0)
+        if uid <= 0:
+            return self._send_json({"error": "auth required"}, 401)
+        shot_id = (body.get("shot_id") or "").strip()
+        rating = body.get("rating")
+        if not shot_id or rating not in (-1, 0, 1):
+            return self._send_json({"error": "shot_id + rating in {-1,0,1} required"}, 400)
+        raw_asset = body.get("asset_path")
+        safe_asset = None
+        if isinstance(raw_asset, str) and raw_asset:
+            resolved = _safe_user_path(raw_asset)
+            safe_asset = resolved if resolved else None
+        try:
+            rid = lumn_db.insert_shot_rating(
+                user_id=uid,
+                shot_id=shot_id,
+                rating=int(rating),
+                asset_path=safe_asset,
+                prompt=body.get("prompt"),
+                reason=body.get("reason"),
+                meta=body.get("meta"),
+            )
+        except Exception as e:
+            return self._send_json({"error": f"insert failed: {e}"}, 500)
+
+        # Bridge the rating into the TI learning system so the optimizer can
+        # cluster failure patterns and tune prompt rules. Best-effort — the
+        # rating is already persisted in SQL; this is the feedback signal.
+        try:
+            from lib import learning_system as _ls
+            outcome = "pass" if int(rating) > 0 else "fail" if int(rating) < 0 else "neutral"
+            _ls.log_attempt(
+                project_id=str(body.get("project_id") or "beta"),
+                scene_id=str(body.get("scene_id") or "unknown"),
+                shot_id=shot_id,
+                attempt_data={
+                    "final_outcome": outcome,
+                    "failure_type": body.get("reason") if outcome == "fail" else None,
+                    "prompt_version": (body.get("prompt") or "")[:200],
+                    "user_rating": int(rating),
+                    "user_id": uid,
+                    "asset_path": safe_asset,
+                    "source": "user_feedback",
+                    "meta": body.get("meta") or {},
+                },
+            )
+        except Exception:
+            pass  # learning is advisory; never block the rating
+
+        return self._send_json({"ok": True, "id": rid})
+
+    def _handle_auth_signup(self):
+        if not lumn_db:
+            return self._send_json({"error": "db unavailable"}, 503)
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            return self._send_json({"error": "invalid json"}, 400)
+
+        # IP-based signup rate limit (5/hour) — blocks automated account farms.
+        client_ip = self._real_client_ip()
+        allowed, _count = lumn_db.rate_limit_check_ip(client_ip, "signup", max_per_hour=5)
+        if not allowed:
+            return self._send_json({"error": "signup rate limit — try again in an hour"}, 429)
+
+        # Shared beta password gate. Set LUMN_BETA_PASSWORD in env; hand
+        # the value out with your invites. If unset, signup is open.
+        beta_pw_required = os.environ.get("LUMN_BETA_PASSWORD", "")
+        if beta_pw_required:
+            submitted = (body.get("beta_password") or body.get("invite_code") or "").strip()
+            if not hmac.compare_digest(submitted, beta_pw_required):
+                return self._send_json({"error": "invalid beta access code"}, 403)
+
+        email = (body.get("email") or "").strip()
+        password = body.get("password") or ""
+        try:
+            uid = lumn_db.create_user(email, password, credits_cents=500)
+        except ValueError as e:
+            return self._send_json({"error": str(e)}, 400)
+
+        # Auto-promote to admin if email is in LUMN_ADMIN_EMAILS env (comma-sep).
+        admin_emails = {e.strip().lower() for e in
+                        os.environ.get("LUMN_ADMIN_EMAILS", "").split(",") if e.strip()}
+        if email.lower() in admin_emails:
+            try:
+                with lumn_db._conn() as _c:
+                    _c.execute("UPDATE users SET role='admin' WHERE id=?", (uid,))
+            except Exception as _e:
+                print(f"[auth] admin promote failed: {_e}")
+        sid = lumn_db.create_session(uid)
+        u = lumn_db.get_user(uid)
+        # Set-Cookie directly in the response
+        body_out = json.dumps({"ok": True, "user": {
+            "id": u["id"], "email": u["email"],
+            "credits_cents": u["credits_cents"], "role": u["role"],
+        }, "csrf_token": _csrf_for_sid(sid)}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body_out)))
+        self.send_header("Set-Cookie", _build_session_cookie(sid))
+        self.end_headers()
+        self.wfile.write(body_out)
+
+    def _handle_auth_login(self):
+        if not lumn_db:
+            return self._send_json({"error": "db unavailable"}, 503)
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            return self._send_json({"error": "invalid json"}, 400)
+        email = (body.get("email") or "").strip()
+        password = body.get("password") or ""
+        # M2: per-IP login rate limit to blunt credential-stuffing. 30/hour is
+        # generous for a human who forgot their password; bots hitting this
+        # should be cut off long before they exhaust a dictionary.
+        client_ip = self._real_client_ip()
+        allowed, _count = lumn_db.rate_limit_check_ip(client_ip, "login", max_per_hour=30)
+        if not allowed:
+            return self._send_json({"error": "login rate limit — try again later"}, 429)
+        u = lumn_db.authenticate(email, password)
+        if not u:
+            return self._send_json({"error": "invalid credentials"}, 401)
+        sid = lumn_db.create_session(u["id"])
+        body_out = json.dumps({"ok": True, "user": {
+            "id": u["id"], "email": u["email"],
+            "credits_cents": u["credits_cents"], "role": u["role"],
+        }, "csrf_token": _csrf_for_sid(sid)}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body_out)))
+        self.send_header("Set-Cookie", _build_session_cookie(sid))
+        self.end_headers()
+        self.wfile.write(body_out)
+
+    def _handle_auth_logout(self):
+        if not lumn_db:
+            return self._send_json({"error": "db unavailable"}, 503)
+        sid = self._parse_cookie("lumn_sid")
+        if sid:
+            lumn_db.destroy_session(sid)
+        body_out = json.dumps({"ok": True}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body_out)))
+        self.send_header("Set-Cookie", _build_session_cookie("", max_age=0))
+        self.end_headers()
+        self.wfile.write(body_out)
+
+    def _handle_auth_me(self):
+        u = self._current_user()
+        if not u:
+            return self._send_json({"authenticated": False}, 200)
+        sid = self._parse_cookie("lumn_sid") or ""
+        # Best-effort sync: overwrite the user's LUMN credits with the live
+        # fal.ai account balance. No-op when FAL_ADMIN_KEY isn't configured
+        # (or any fal/DB error). The 10s in-process cache on get_fal_balance
+        # keeps this cheap on rapid auth/me polls.
+        credits_cents = int(u.get("credits_cents", 0) or 0)
+        try:
+            from lib.fal_billing import sync_user_credits_to_fal
+            synced = sync_user_credits_to_fal(int(u["id"]))
+            if synced is not None:
+                credits_cents = synced
+        except Exception:
+            pass
+        return self._send_json({
+            "authenticated": True,
+            "user": {
+                "id": u["id"],
+                "email": u["email"],
+                "credits_cents": credits_cents,
+                "role": u.get("role", "user"),
+            },
+            "csrf_token": _csrf_for_sid(sid),
+        })
+
+    def _handle_fal_balance(self):
+        """Return the true fal.ai account balance (in dollars).
+
+        Reads FAL_ADMIN_KEY (or falls back to FAL_API_KEY) and calls
+        https://api.fal.ai/v1/account/billing. Requires an admin-scoped
+        fal key — regular keys return 403. Cached in-process for 10s.
+        """
+        if not self._current_user():
+            return self._send_json({"ok": False, "error": "unauthenticated"}, 401)
+        try:
+            from lib.fal_billing import get_fal_balance
+            data = get_fal_balance()
+        except Exception as e:
+            return self._send_json({"ok": False, "error": f"exc:{e.__class__.__name__}"}, 500)
+        return self._send_json(data)
+
+    def _handle_v6_prompt_assemble(self):
+        """Preview the enriched prompt for a given raw prompt + shot_context.
+        Lets the UI show exactly what will be sent to Gemini/Kling before paying."""
+        from lib.v6_prompt_assembler import assemble_v6_prompt
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        if lumn_validate:
+            _ok, _err, _ = lumn_validate.validate(body, lumn_validate.PROMPT_ASSEMBLE_SCHEMA)
+            if not _ok:
+                self._send_json({"error": _err}, 400)
+                return
+        raw_prompt = body.get("prompt", "")
+        shot_context = body.get("shot_context") or {}
+        target = (body.get("target") or "anchor").lower()  # anchor | clip
+        include_desc = target != "clip"
+        max_chars = 900 if include_desc else 400
+        result = assemble_v6_prompt(
+            raw_prompt=raw_prompt,
+            shot_context=shot_context,
+            include_description=include_desc,
+            max_chars=max_chars,
+        )
+        self._send_json({"ok": True, "target": target, **result})
+
+    # -- Async job helpers -----------------------------------------------
+
+    def _serialize_job(self, row: dict) -> dict:
+        out = dict(row)
+        # Parse JSON columns for client convenience
+        for k in ("input_json", "result_json"):
+            if out.get(k):
+                try:
+                    out[k.replace("_json", "")] = json.loads(out[k])
+                except Exception:
+                    pass
+        return out
+
+    def _stream_job(self, job_id: str) -> None:
+        """Server-Sent Events stream of a job's progress. Closes when the
+        job hits a terminal state (done|failed) or after a 5-minute cap."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        deadline = time.time() + 300
+        last_payload = None
+        while time.time() < deadline:
+            row = lumn_db.get_job(job_id) if lumn_db else None
+            if not row:
+                try:
+                    self.wfile.write(b"event: error\ndata: {\"error\":\"gone\"}\n\n")
+                    self.wfile.flush()
+                except Exception:
+                    pass
+                return
+            payload = json.dumps(self._serialize_job(row), default=str)
+            if payload != last_payload:
+                try:
+                    self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+                except Exception:
+                    return
+                last_payload = payload
+            if row["status"] in ("done", "failed"):
+                return
+            time.sleep(1.0)
+
+    def _handle_v6_anchor_generate_async(self):
+        """Enqueue an anchor generation job, return job_id immediately.
+        Pre-checks (auth, validation, moderation, budget, rate limit) all
+        happen synchronously; only the fal.ai call runs in the worker."""
+        if not lumn_worker:
+            return self._send_json({"error": "worker unavailable"}, 503)
+        from lib.v6_prompt_assembler import assemble_v6_prompt, resolve_reference_paths, load_motif_refs_for_shot, load_pos_entity_refs_for_shot, load_pos_identity_clauses_for_shot, parse_at_mentions
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            return self._send_json({"error": "Invalid JSON"}, 400)
+        if lumn_validate:
+            ok, err, _ = lumn_validate.validate(body, lumn_validate.ANCHOR_GENERATE_SCHEMA)
+            if not ok:
+                return self._send_json({"error": err}, 400)
+
+        cu = self._current_user() or {}
+        uid = int(cu.get("id", 0) or 0)
+        if uid <= 0:
+            return self._send_json({"error": "auth required"}, 401)
+
+        # Daily cap
+        cap = int(os.environ.get("LUMN_DAILY_CAP_CENTS", "0") or "0")
+        if cap > 0 and lumn_db:
+            spent = lumn_db.global_spend_since(86400)
+            if spent >= cap:
+                return self._send_json({"error": "daily_spend_cap_reached",
+                                        "spent_cents": spent, "cap_cents": cap}, 503)
+
+        raw_prompt = body.get("prompt", "")
+        # SECURITY (H7): fail-closed on moderation exception.
+        try:
+            from lib.moderation import moderate_prompt_strict
+            mod = moderate_prompt_strict(raw_prompt, nsfw_allowed=False)
+            if not mod["allowed"]:
+                return self._send_json({"error": "moderation_blocked",
+                                        "severity": mod["severity"],
+                                        "reasons": mod["reasons"]}, 451)
+            if mod["severity"] == "warn":
+                raw_prompt = mod["redacted_prompt"]
+        except Exception:
+            return self._send_json({"error": "moderation unavailable"}, 500)
+
+        num_images = max(1, int(body.get("num_images", 1) or 1))
+        est_cost = _price_for("gemini", "", 0, "image") * num_images
+        ok_b, reason, _ = _check_budget_gate(est_cost)
+        if not ok_b:
+            return self._send_json({"error": "budget_exceeded", "reason": reason}, 402)
+
+        cost_cents = max(1, int(round(est_cost * 100)))
+        if lumn_db:
+            allowed, n = lumn_db.rate_limit_check(uid, "anchor", max_per_hour=30)
+            if not allowed:
+                return self._send_json({"error": "rate_limited", "kind": "anchor",
+                                        "count_in_window": n, "max_per_hour": 30}, 429)
+
+        # SECURITY (H3): atomic credit reserve — kills TOCTOU double-spend.
+        # Cached session balance is untrustworthy under concurrency; the
+        # DB-level atomic debit is the only safe gate.
+        if lumn_db and not _user_credits_deferred():
+            if not lumn_db.charge_user(uid, cost_cents, "reserve_anchor",
+                                       {"shot_id": body.get("shot_id"), "async": True}):
+                return self._send_json({"error": "insufficient_credits",
+                                        "need_cents": cost_cents}, 402)
+
+        # Enrich prompt + resolve refs (synchronously — these are cheap)
+        shot_context = body.get("shot_context") or {}
+        try:
+            _active_slug = active_project.get_active_slug() or "default"
+        except Exception:
+            _active_slug = "default"
+        enriched = assemble_v6_prompt(raw_prompt=raw_prompt, shot_context=shot_context,
+                                      include_description=True, max_chars=900,
+                                      project_slug=_active_slug)
+        prompt = enriched["enriched_prompt"]
+        # PROJECT-SCOPED REF RESOLUTION.
+        # Only POS (scenes.json characterId/environmentId/costumeId + references.json
+        # motifs) drives ref selection now. Client-provided reference_image_paths
+        # are logged-and-discarded unless they pass _safe_project_ref_path
+        # (which rejects preproduction/pkg_* and any other project's workspace).
+        # Fixes the 2026-04-20 Buddy/Owen/Maya cross-project leak.
+        ref_paths: list[str] = []
+        _async_shot_id = body.get("shot_id", "")
+
+        # Per-shot UI overrides — user-excluded entity/motif UUIDs (via ref chips).
+        _excluded_ids = set()
+        try:
+            _sctx = shot_context or {}
+            raw_excl = _sctx.get("excluded_ids") if isinstance(_sctx, dict) else None
+            if isinstance(raw_excl, list):
+                _excluded_ids = {str(x) for x in raw_excl if x}
+        except Exception:
+            _excluded_ids = set()
+
+        pos_paths = load_pos_entity_refs_for_shot(
+            _async_shot_id, project=_active_slug, exclude_ids=_excluded_ids
+        )
+        for pp in pos_paths:
+            safe_p = _safe_project_ref_path(pp, _active_slug)
+            if safe_p and safe_p not in ref_paths:
+                ref_paths.append(safe_p)
+
+        # Client-supplied refs (from UI's /api/v6/references pool) only accepted
+        # when they pass project-scope validation. If UI sends a pkg_char_*
+        # from preproduction/, it's dropped silently and logged.
+        client_refs_raw = body.get("reference_image_paths") or []
+        _client_dropped = 0
+        for p in client_refs_raw:
+            if not isinstance(p, str):
+                continue
+            safe = _safe_project_ref_path(p, _active_slug)
+            if safe:
+                if safe not in ref_paths:
+                    ref_paths.append(safe)
+            else:
+                _client_dropped += 1
+        if _client_dropped:
+            print(f"[ANCHOR async] dropped {_client_dropped} out-of-project refs for shot={_async_shot_id}")
+
+        # Motif injection: append shot-specific motif approvedRefs so beads,
+        # pawprint, gold fur, etc. actually reach Gemini as visual refs.
+        motif_paths = load_motif_refs_for_shot(
+            _async_shot_id, project=_active_slug, exclude_ids=_excluded_ids
+        )
+        for mp in motif_paths:
+            safe_m = _safe_project_ref_path(mp, _active_slug)
+            if safe_m and safe_m not in ref_paths:
+                ref_paths.append(safe_m)
+
+        # @mention resolution: @<Name> tokens in the raw prompt force-attach
+        # that entity's sheet even if it's not the scene's configured character.
+        # Extraction scans both enriched prompt (post-assembler) and raw prompt
+        # (pre-enrichment) to catch mentions in either source.
+        try:
+            _mention_text = (raw_prompt or "") + " " + (prompt or "")
+            mentions = parse_at_mentions(_mention_text, project=_active_slug)
+            _mention_added = 0
+            for m in mentions:
+                sp = m.get("sheet_path")
+                if not sp:
+                    continue
+                safe = _safe_project_ref_path(sp, _active_slug)
+                if safe and safe not in ref_paths:
+                    ref_paths.append(safe)
+                    _mention_added += 1
+            if mentions:
+                print(f"[ANCHOR async] @mentions resolved={len(mentions)} added={_mention_added} "
+                      f"names={[m.get('name') for m in mentions]}")
+        except Exception as _e:
+            print(f"[ANCHOR async] @mention parse error: {_e}")
+
+        ref_paths = ref_paths[:8]
+
+        # Identity-mark text injection: sheet image alone doesn't lock
+        # emblem orientation — Gemini redraws marks semantically.
+        _id_clause = load_pos_identity_clauses_for_shot(
+            _async_shot_id, project=_active_slug, exclude_ids=_excluded_ids
+        )
+        if _id_clause:
+            prompt = (prompt.rstrip(". ") + ". " + _id_clause).strip()
+        try:
+            _async_motifs = len(locals().get("motif_paths") or [])
+        except Exception:
+            _async_motifs = 0
+        print(f"[ANCHOR async] project={_active_slug} shot={_async_shot_id} refs={len(ref_paths)} motifs={_async_motifs} id_mark={'Y' if _id_clause else 'N'}")
+
+        payload = {
+            "user_id": uid,
+            "shot_id": body.get("shot_id", "unknown"),
+            "prompt": prompt,
+            "ref_paths": ref_paths,
+            "num_images": num_images,
+            "cost_cents": cost_cents,
+            "reserved": True,  # tells runner to skip charge_user (already paid)
+        }
+        try:
+            job_id = lumn_worker.enqueue("v6_anchor", user_id=uid, payload=payload)
+        except Exception as e:
+            # Enqueue failed — refund the reserve immediately.
+            if lumn_db:
+                try:
+                    lumn_db.refund_credits(uid, cost_cents, "refund_anchor",
+                                           {"reason": "enqueue_failed"})
+                except Exception:
+                    pass
+            return self._send_json({"error": f"enqueue failed: {e}"}, 500)
+        return self._send_json({"ok": True, "job_id": job_id, "status": "queued"}, 202)
+
+    def _handle_v6_clip_generate_async(self):
+        """Enqueue a Kling i2v job. See _handle_v6_anchor_generate_async for shape."""
+        if not lumn_worker:
+            return self._send_json({"error": "worker unavailable"}, 503)
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            return self._send_json({"error": "Invalid JSON"}, 400)
+        if lumn_validate:
+            ok, err, _ = lumn_validate.validate(body, lumn_validate.CLIP_GENERATE_SCHEMA)
+            if not ok:
+                return self._send_json({"error": err}, 400)
+
+        cu = self._current_user() or {}
+        uid = int(cu.get("id", 0) or 0)
+        if uid <= 0:
+            return self._send_json({"error": "auth required"}, 401)
+
+        cap = int(os.environ.get("LUMN_DAILY_CAP_CENTS", "0") or "0")
+        if cap > 0 and lumn_db:
+            spent = lumn_db.global_spend_since(86400)
+            if spent >= cap:
+                return self._send_json({"error": "daily_spend_cap_reached",
+                                        "spent_cents": spent, "cap_cents": cap}, 503)
+
+        raw_prompt = body.get("prompt", "")
+        multi_prompt = body.get("multi_prompt") or None
+        if isinstance(multi_prompt, list) and not multi_prompt:
+            multi_prompt = None
+
+        # Moderate: single prompt OR every beat in multi_prompt
+        try:
+            from lib.moderation import moderate_prompt_strict
+            texts_to_check = []
+            if raw_prompt:
+                texts_to_check.append(("prompt", raw_prompt))
+            if multi_prompt:
+                for i, beat in enumerate(multi_prompt):
+                    p = (beat or {}).get("prompt", "") if isinstance(beat, dict) else ""
+                    if p:
+                        texts_to_check.append((f"multi_prompt[{i}]", p))
+            for label, text in texts_to_check:
+                mod = moderate_prompt_strict(text, nsfw_allowed=False)
+                if not mod["allowed"]:
+                    return self._send_json({"error": "moderation_blocked",
+                                            "field": label,
+                                            "severity": mod["severity"],
+                                            "reasons": mod["reasons"]}, 451)
+                if mod["severity"] == "warn":
+                    if label == "prompt":
+                        raw_prompt = mod["redacted_prompt"]
+                    elif multi_prompt:
+                        idx = int(label.split("[")[1].rstrip("]"))
+                        multi_prompt[idx]["prompt"] = mod["redacted_prompt"]
+        except Exception:
+            return self._send_json({"error": "moderation unavailable"}, 500)
+
+        # Duration: single clip = body.duration; multi_prompt = sum of beats.
+        duration_source = "manual"
+        if multi_prompt:
+            try:
+                duration = sum(int((b or {}).get("duration", 5) or 5) for b in multi_prompt)
+            except Exception:
+                return self._send_json({"error": "invalid multi_prompt durations"}, 400)
+            if duration < 3 or duration > 15:
+                return self._send_json({"error": f"multi_prompt total duration {duration}s out of range 3-15"}, 400)
+            duration_source = "multi_prompt"
+        elif body.get("duration") is not None:
+            duration = int(body.get("duration") or 5)
+            if duration < 3 or duration > 15:
+                return self._send_json({"error": f"duration {duration}s out of range 3-15"}, 400)
+            duration_source = "manual"
+        else:
+            scene_dur, src = _scene_duration_for_shot(body.get("shot_id", ""))
+            if scene_dur is not None and 3 <= scene_dur <= 15:
+                duration = scene_dur
+                duration_source = src
+            else:
+                duration = 5
+                duration_source = "default"
+        print(f"[KLING] shot={body.get('shot_id','?')} dur={duration}s src={duration_source}")
+
+        est_cost = _price_for("kling", "", duration, "video")
+        ok_b, reason, _ = _check_budget_gate(est_cost)
+        if not ok_b:
+            return self._send_json({"error": "budget_exceeded", "reason": reason}, 402)
+        cost_cents = max(1, int(round(est_cost * 100)))
+        if lumn_db:
+            allowed, n = lumn_db.rate_limit_check(uid, "clip", max_per_hour=20)
+            if not allowed:
+                return self._send_json({"error": "rate_limited", "kind": "clip",
+                                        "count_in_window": n, "max_per_hour": 20}, 429)
+
+        anchor_path = _safe_user_path(body.get("anchor_path") or "")
+        if not anchor_path:
+            return self._send_json({"error": "anchor_path missing or outside pipeline root"}, 400)
+
+        end_image_raw = body.get("end_image_path") or ""
+        end_image_path = _safe_user_path(end_image_raw) if end_image_raw else None
+
+        tier = body.get("tier") or body.get("engine") or "v3_standard"
+        elements = body.get("elements") or None
+        cfg_scale = float(body.get("cfg_scale", 0.5) or 0.5)
+
+        # SECURITY (H3): atomic credit reserve — kills TOCTOU double-spend.
+        if lumn_db and not _user_credits_deferred():
+            if not lumn_db.charge_user(uid, cost_cents, "reserve_clip",
+                                       {"shot_id": body.get("shot_id"), "async": True}):
+                return self._send_json({"error": "insufficient_credits",
+                                        "need_cents": cost_cents}, 402)
+
+        payload = {
+            "user_id": uid,
+            "shot_id": body.get("shot_id", "unknown"),
+            "prompt": raw_prompt,
+            "anchor_path": anchor_path,
+            "duration": duration,
+            "cost_cents": cost_cents,
+            "reserved": True,
+            "tier": tier,
+            "end_image_path": end_image_path,
+            "multi_prompt": multi_prompt,
+            "elements": elements,
+            "cfg_scale": cfg_scale,
+        }
+        try:
+            job_id = lumn_worker.enqueue("v6_clip", user_id=uid, payload=payload)
+        except Exception as e:
+            if lumn_db:
+                try:
+                    lumn_db.refund_credits(uid, cost_cents, "refund_clip",
+                                           {"reason": "enqueue_failed"})
+                except Exception:
+                    pass
+            return self._send_json({"error": f"enqueue failed: {e}"}, 500)
+        return self._send_json({"ok": True, "job_id": job_id, "status": "queued"}, 202)
+
+    def _handle_v6_anchor_generate(self):
+        """Generate anchor image via Gemini 3.1 Flash edit mode."""
+        from lib.fal_client import gemini_edit_image
+        from lib.v6_prompt_assembler import assemble_v6_prompt, resolve_reference_paths, load_motif_refs_for_shot, load_pos_entity_refs_for_shot, load_pos_identity_clauses_for_shot, parse_at_mentions
+        from lib.claude_client import call_vision_json, OPUS_MODEL
+        from lib.identity_gate import maybe_auto_lock
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        if lumn_validate:
+            _ok, _err, _ = lumn_validate.validate(body, lumn_validate.ANCHOR_GENERATE_SCHEMA)
+            if not _ok:
+                self._send_json({"error": _err}, 400)
+                return
+
+        raw_prompt = body.get("prompt", "")
+        reference_image_paths = body.get("reference_image_paths", [])
+        shot_id = body.get("shot_id", "unknown")
+        num_images = body.get("num_images", 1)
+        shot_context = body.get("shot_context") or {}
+
+        # Global daily spend circuit breaker — last-resort cost cap across
+        # all users. Set LUMN_DAILY_CAP_CENTS in env; unset = no cap.
+        _cap = int(os.environ.get("LUMN_DAILY_CAP_CENTS", "0") or "0")
+        if _cap > 0 and lumn_db:
+            _spent = lumn_db.global_spend_since(86400)
+            if _spent >= _cap:
+                return self._send_json({
+                    "error": "daily_spend_cap_reached",
+                    "spent_cents": _spent, "cap_cents": _cap,
+                }, 503)
+
+        # Content moderation pre-filter — strict (keyword + Opus borderline).
+        # SECURITY (H7): fail-closed on exception.
+        try:
+            from lib.moderation import moderate_prompt_strict
+            _mod = moderate_prompt_strict(raw_prompt, nsfw_allowed=False)
+            if not _mod["allowed"]:
+                return self._send_json({
+                    "error": "moderation_blocked",
+                    "severity": _mod["severity"],
+                    "reasons": _mod["reasons"],
+                }, 451)
+            if _mod["severity"] == "warn":
+                raw_prompt = _mod["redacted_prompt"]
+        except Exception:
+            return self._send_json({"error": "moderation unavailable"}, 500)
+
+        # Hard budget gate — anchor gen is billed per image; never start a
+        # request that would push the ledger past budget. (#47)
+        est_cost = _price_for("gemini", "", 0, "image") * max(1, int(num_images))
+        ok, reason, _tracker = _check_budget_gate(est_cost)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason, "est": est_cost}, 402)
+            return
+
+        # Per-user credits + rate limit (only for DB-backed users, id > 0).
+        _cu = self._current_user() or {}
+        _uid = int(_cu.get("id", 0) or 0)
+        if _uid > 0 and lumn_db:
+            _cost_cents = max(1, int(round(est_cost * 100)))
+            _bal = int(_cu.get("credits_cents", 0) or 0)
+            if not _user_credits_deferred() and _bal < _cost_cents:
+                self._send_json({
+                    "error": "insufficient_credits",
+                    "balance_cents": _bal,
+                    "need_cents": _cost_cents,
+                }, 402)
+                return
+            allowed, n = lumn_db.rate_limit_check(_uid, "anchor", max_per_hour=30)
+            if not allowed:
+                self._send_json({
+                    "error": "rate_limited",
+                    "kind": "anchor",
+                    "count_in_window": n,
+                    "max_per_hour": 30,
+                }, 429)
+                return
+
+        # V6 enrichment: load packages.json and inject entity metadata into the
+        # prompt so character/costume/env/prop fields the user filled in
+        # actually reach Gemini. include_description=True — anchors build identity.
+        try:
+            _active_slug = active_project.get_active_slug() or "default"
+        except Exception:
+            _active_slug = "default"
+        enriched = assemble_v6_prompt(
+            raw_prompt=raw_prompt,
+            shot_context=shot_context,
+            include_description=True,
+            max_chars=900,
+            project_slug=_active_slug,
+        )
+        prompt = enriched["enriched_prompt"]
+
+        # PROJECT-SCOPED REF RESOLUTION.
+        # POS (scenes.json characterId/environmentId/costumeId + references.json
+        # motifs) is the only authoritative source. Client-supplied refs are
+        # validated against project scope; anything pointing to preproduction/
+        # or another project's workspace is dropped. Fixes the 2026-04-20
+        # Buddy/Owen/Maya cross-project leak.
+        valid_refs: list[str] = []
+
+        # Per-shot UI overrides from ref chips.
+        _excluded_ids = set()
+        try:
+            _sctx = shot_context or {}
+            raw_excl = _sctx.get("excluded_ids") if isinstance(_sctx, dict) else None
+            if isinstance(raw_excl, list):
+                _excluded_ids = {str(x) for x in raw_excl if x}
+        except Exception:
+            _excluded_ids = set()
+
+        pos_paths = load_pos_entity_refs_for_shot(
+            shot_id, project=_active_slug, exclude_ids=_excluded_ids
+        )
+        for pp in pos_paths:
+            safe_p = _safe_project_ref_path(pp, _active_slug)
+            if safe_p and safe_p not in valid_refs:
+                valid_refs.append(safe_p)
+
+        # Client refs — accepted only when they pass project-scope validation.
+        _client_dropped = 0
+        for p in reference_image_paths:
+            if not isinstance(p, str):
+                continue
+            safe = _safe_project_ref_path(p, _active_slug)
+            if safe:
+                if safe not in valid_refs:
+                    valid_refs.append(safe)
+            else:
+                _client_dropped += 1
+        if _client_dropped:
+            print(f"[ANCHOR] dropped {_client_dropped} out-of-project refs for shot={shot_id}")
+
+        # Motif injection: look up shot_ref_map_v8.json → references.json and
+        # append each motif's approvedRef as a visual ref. This is how motifs
+        # (necklace, beads, pawprint, gold fur) actually reach Gemini — prose
+        # alone isn't enough per `feedback_refs_not_text.md`.
+        motif_paths = load_motif_refs_for_shot(
+            shot_id, project=_active_slug, exclude_ids=_excluded_ids
+        )
+        for mp in motif_paths:
+            safe_m = _safe_project_ref_path(mp, _active_slug)
+            if safe_m and safe_m not in valid_refs:
+                valid_refs.append(safe_m)
+
+        # @mention resolution: @<Name> tokens force-attach the mentioned
+        # entity's sheet, covering the cross-character case where user wants
+        # a second character ref in a scene that's owned by another.
+        try:
+            _mention_text = (raw_prompt or "") + " " + (prompt or "")
+            mentions = parse_at_mentions(_mention_text, project=_active_slug)
+            _mention_added = 0
+            for m in mentions:
+                sp = m.get("sheet_path")
+                if not sp:
+                    continue
+                safe = _safe_project_ref_path(sp, _active_slug)
+                if safe and safe not in valid_refs:
+                    valid_refs.append(safe)
+                    _mention_added += 1
+            if mentions:
+                print(f"[ANCHOR] @mentions resolved={len(mentions)} added={_mention_added} "
+                      f"names={[m.get('name') for m in mentions]}")
+        except Exception as _e:
+            print(f"[ANCHOR] @mention parse error: {_e}")
+
+        # Cap at 8 total (Gemini edit handles 10+ but latency grows with count)
+        valid_refs = valid_refs[:8]
+
+        # Identity-mark text injection: the sheet image alone doesn't lock
+        # emblem orientation — Gemini redraws marks semantically. Append the
+        # character's canonical identityMark prose so orientation is explicit.
+        id_clause = load_pos_identity_clauses_for_shot(
+            shot_id, project=_active_slug, exclude_ids=_excluded_ids
+        )
+        if id_clause:
+            prompt = (prompt.rstrip(". ") + ". " + id_clause).strip()
+
+        print(f"[ANCHOR] project={_active_slug} shot={shot_id} pos={len(pos_paths)} motifs={len(motif_paths)} refs={len(valid_refs)} id_mark={'Y' if id_clause else 'N'}")
+        for _rp in valid_refs:
+            print(f"  ref: {os.path.basename(_rp)}")
+
+        def _gen():
+            try:
+                paths = gemini_edit_image(
+                    prompt=prompt,
+                    reference_image_paths=valid_refs,
+                    resolution="1K",
+                    num_images=num_images,
+                )
+                # Copy to anchors dir. Per-user namespacing: authenticated
+                # users get a u_<id>/ prefix so two users editing "Buddy"
+                # don't collide. Local dev/bearer token = no namespace.
+                _cu = self._current_user() or {}
+                _uid = int(_cu.get("id", 0) or 0)
+                if _uid > 0:
+                    anchor_dir = os.path.join(OUTPUT_DIR, "pipeline", "anchors_v6", f"u_{_uid}", shot_id)
+                else:
+                    anchor_dir = os.path.join(OUTPUT_DIR, "pipeline", "anchors_v6", shot_id)
+                os.makedirs(anchor_dir, exist_ok=True)
+                saved = []
+                for i, src in enumerate(paths):
+                    if num_images > 1:
+                        dest = os.path.join(anchor_dir, f"candidate_{i}.png")
+                    else:
+                        dest = os.path.join(anchor_dir, "selected.png")
+                    import shutil
+                    shutil.copy2(src, dest)
+                    saved.append(dest)
+                # Ledger: bill only on successful delivery
+                _record_generation(
+                    shot_key=shot_id, gen_type="image", engine="gemini",
+                    tier="", duration=0, est_cost=est_cost, status="ok",
+                    meta={"count": len(saved)},
+                )
+                # Per-user charge. Re-check balance inside the charge txn.
+                if _uid > 0 and lumn_db:
+                    _cents = max(1, int(round(est_cost * 100)))
+                    lumn_db.charge_user(_uid, _cents, "anchor",
+                                        {"shot_id": shot_id, "count": len(saved)})
+                return saved
+            except Exception as e:
+                _record_generation(
+                    shot_key=shot_id, gen_type="image", engine="gemini",
+                    tier="", duration=0, est_cost=est_cost, status="error",
+                    meta={"err": str(e)[:200]},
+                )
+                return {"error": str(e)}
+
+        import threading
+        result_holder = [None]
+        def _thread():
+            result_holder[0] = _gen()
+        t = threading.Thread(target=_thread, daemon=True)
+        t.start()
+        # fal.ai gemini edit call can run up to ~3 min on num_images=3.
+        # The fal client itself has a 600s submit timeout — we give the
+        # server-thread 300s before surfacing a 504 so the UI / orchestrator
+        # doesn't give up prematurely.
+        t.join(timeout=300)
+
+        result = result_holder[0]
+        if isinstance(result, dict) and "error" in result:
+            self._send_json(result, 500)
+            return
+        if not result:
+            self._send_json({"error": "Generation timed out"}, 504)
+            return
+
+        # Auto-QA + auto-rank (#48, #49). Runs only if we have at least one
+        # anchor AND the caller didn't opt out (skip_qa=true). Opus scores
+        # identity match, prompt compliance, must_keep compliance, technical
+        # quality; picks the winner and returns full scores.
+        qa_report: dict | None = None
+        selected_path = result[0] if result else None
+        if result and not body.get("skip_qa", False):
+            ref_paths = resolve_reference_paths(enriched["injected"], limit=2) if enriched["injected"] else []
+            if ref_paths:
+                qa_est = 0.02 + 0.012 * len(result)
+                qa_ok, _, _ = _check_budget_gate(qa_est)
+                if qa_ok:
+                    try:
+                        qa_report = self._run_anchor_qa(
+                            shot_id=shot_id,
+                            prompt=prompt,
+                            candidate_paths=result,
+                            ref_paths=ref_paths,
+                            must_keep=enriched["must_keep"],
+                            avoid=enriched["avoid"],
+                            entity_names=[e.get("name") for e in enriched["injected"] if e.get("name")],
+                        )
+                        if qa_report and qa_report.get("pick_path"):
+                            selected_path = qa_report["pick_path"]
+                            _record_generation(
+                                shot_key=shot_id, gen_type="image", engine="opus",
+                                tier="", duration=0, est_cost=qa_est, status="ok",
+                                meta={"qa": "anchor", "pick": qa_report.get("pick")},
+                            )
+                            # Identity gate auto-lock (#50) — single-subject
+                            # anchors that clear the QA floor get locked as
+                            # the canonical identity anchor for that character.
+                            char_names = [
+                                e.get("name") for e in enriched["injected"]
+                                if e.get("type") == "character" and e.get("name")
+                            ]
+                            locked_now = maybe_auto_lock(
+                                character_names=char_names,
+                                anchor_path=selected_path,
+                                shot_id=shot_id,
+                                qa_report=qa_report,
+                            )
+                            if locked_now:
+                                qa_report["identity_gate_locked"] = locked_now
+                    except Exception as e:
+                        qa_report = {"error": str(e)[:200]}
+
+        self._send_json({
+            "ok": True,
+            "shot_id": shot_id,
+            "paths": result,
+            "count": len(result),
+            "selected_path": selected_path,
+            "enriched_prompt": prompt,
+            "injection": {
+                "injected": enriched["injected"],
+                "must_keep": enriched["must_keep"],
+                "avoid": enriched["avoid"],
+                "report": enriched["report"],
+            },
+            "qa": qa_report,
+        })
+
+    def _run_anchor_qa(
+        self,
+        shot_id: str,
+        prompt: str,
+        candidate_paths: list,
+        ref_paths: list,
+        must_keep: list,
+        avoid: list,
+        entity_names: list,
+    ) -> dict:
+        """Opus vision QA over anchor candidates. Returns scores + pick.
+        First image(s) in the call are reference sheets for identity; then
+        candidates labeled A, B, C... in order."""
+        from lib.claude_client import call_vision_json, OPUS_MODEL
+        labels = [chr(ord("A") + i) for i in range(len(candidate_paths))]
+        must_keep_str = "; ".join(must_keep) if must_keep else "(none)"
+        avoid_str = "; ".join(avoid) if avoid else "(none)"
+        names_str = ", ".join(entity_names) if entity_names else "subject"
+
+        system = """You are a senior continuity supervisor doing QA on AI-generated anchor frames.
+The first image(s) are the REFERENCE SHEETS for the subject(s) — the ground truth for identity.
+The remaining images are CANDIDATES labeled A, B, C... in order.
+
+Score each candidate 0-1 on:
+  identity   — does the subject match the reference sheet? (the most important)
+  prompt     — does it fulfill the shot description (framing, action, lighting)?
+  must_keep  — does it preserve every required trait from the must_keep list?
+  quality    — technical: sharpness, composition, natural lighting, no artifacts
+  avoid      — 1.0 if NONE of the avoid items are present, 0.0 if any are
+
+overall = weighted avg (identity 0.4, prompt 0.2, must_keep 0.2, quality 0.1, avoid 0.1)
+
+Golden retrievers: pendant ears that hang, NEVER prick upright.
+Humans: count fingers (5 per hand), watch for warped faces / extra limbs.
+
+Return JSON ONLY:
+{
+  "candidates": {
+    "A": {"identity": N, "prompt": N, "must_keep": N, "quality": N, "avoid": N, "overall": N, "notes": "..."},
+    ...
+  },
+  "pick": "A",
+  "pick_reason": "...",
+  "confidence": N,
+  "worth_regen": true|false
+}"""
+        user = f"""Shot: {shot_id}
+Subjects: {names_str}
+Prompt: {prompt[:400]}
+Must keep: {must_keep_str}
+Avoid: {avoid_str}
+Candidates: {", ".join(labels)}
+JSON only."""
+        images = ref_paths + candidate_paths
+        images = [p for p in images if os.path.isfile(p)]
+        if not images:
+            return {"error": "no valid images for QA"}
+        result = call_vision_json(user, images, system=system, model=OPUS_MODEL, max_tokens=2000)
+        # Map pick label back to path
+        pick_label = (result or {}).get("pick", "").strip().upper()
+        if pick_label and pick_label in labels:
+            idx = labels.index(pick_label)
+            if 0 <= idx < len(candidate_paths):
+                result["pick_path"] = candidate_paths[idx]
+        result["labels"] = labels
+        return result
+
+    def _handle_v6_clip_generate(self):
+        """Generate video clip via Kling 3.0 image-to-video."""
+        from lib.fal_client import kling_image_to_video
+        from lib.v6_prompt_assembler import assemble_v6_prompt
+        from lib.kling_prompt_linter import lint_kling_prompt
+        from lib.identity_gate import check_gate
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        if lumn_validate:
+            _ok, _err, _ = lumn_validate.validate(body, lumn_validate.CLIP_GENERATE_SCHEMA)
+            if not _ok:
+                self._send_json({"error": _err}, 400)
+                return
+
+        shot_id = body.get("shot_id", "unknown")
+        # SECURITY (C3): confine anchor path to pipeline root.
+        anchor_path = _safe_user_path(body.get("anchor_path", ""))
+        if not anchor_path:
+            self._send_json({"error": "anchor_path missing or outside pipeline root"}, 400)
+            return
+        raw_prompt = body.get("prompt", "")
+        shot_context = body.get("shot_context") or {}
+
+        # Global daily spend circuit breaker (see anchor handler).
+        _cap = int(os.environ.get("LUMN_DAILY_CAP_CENTS", "0") or "0")
+        if _cap > 0 and lumn_db:
+            _spent = lumn_db.global_spend_since(86400)
+            if _spent >= _cap:
+                return self._send_json({
+                    "error": "daily_spend_cap_reached",
+                    "spent_cents": _spent, "cap_cents": _cap,
+                }, 503)
+
+        # V6 enrichment — anchor already carries identity, so we omit
+        # description blocks to avoid re-describing subjects (Kling best-practice,
+        # per feedback_kling_i2v_prompting.md) but still enforce must_keep +
+        # avoid as continuity constraints.
+        enriched = assemble_v6_prompt(
+            raw_prompt=raw_prompt,
+            shot_context=shot_context,
+            include_description=False,
+            max_chars=400,
+        )
+        prompt = enriched["enriched_prompt"]
+
+        # Identity gate (#50) — if the clip features characters whose
+        # identity is not yet locked, refuse (unless skip_identity_gate=true).
+        # Rationale: unlocked characters drift across shots because Kling has
+        # no canonical anchor to anchor to. The gate forces a medium/close
+        # identity anchor to be generated + QA-locked first.
+        if not body.get("skip_identity_gate", False):
+            char_names_in_shot = [
+                e.get("name") for e in enriched["injected"]
+                if e.get("type") == "character" and e.get("name")
+            ]
+            if char_names_in_shot:
+                gate = check_gate(char_names_in_shot)
+                if not gate["all_locked"]:
+                    self._send_json({
+                        "error": "identity_gate_blocked",
+                        "message": (
+                            "Lock identity for these characters first "
+                            "(generate medium/close anchor, QA-passed): "
+                            + ", ".join(gate["unlocked"])
+                        ),
+                        "gate": gate,
+                    }, 428)
+                    return
+
+        # Kling lint — block hard errors by default; caller can pass
+        # skip_lint=true to bypass for experimentation.
+        if not body.get("skip_lint", False):
+            lint_result = lint_kling_prompt(prompt)
+            if not lint_result["ok"]:
+                self._send_json({
+                    "error": "prompt_lint_failed",
+                    "lint": lint_result,
+                    "enriched_prompt": prompt,
+                }, 422)
+                return
+
+        if body.get("duration") is not None:
+            duration = body.get("duration")
+            _dur_src = "manual"
+        else:
+            _scene_dur, _scene_src = _scene_duration_for_shot(body.get("shot_id", ""))
+            if _scene_dur is not None and 3 <= _scene_dur <= 15:
+                duration = _scene_dur
+                _dur_src = _scene_src
+            else:
+                duration = 5
+                _dur_src = "default"
+        print(f"[KLING sync] shot={body.get('shot_id','?')} dur={duration}s src={_dur_src}")
+        tier = body.get("tier", "v3_standard")
+        cfg_scale = body.get("cfg_scale", 0.6)
+        num_candidates = max(1, min(3, int(body.get("num_candidates", 1))))
+        negative_prompt = body.get("negative_prompt",
+            "blur, distortion, extra limbs, extra legs, face warping, morphing, "
+            "texture swimming, jitter, flicker, deformation, watermark, text, low quality")
+        generate_audio = body.get("generate_audio", True)
+        # SECURITY (C3): confine end_image_path to pipeline root.
+        end_image_raw = body.get("end_image_path", None)
+        end_image_path = _safe_user_path(end_image_raw) if end_image_raw else None
+
+        # Elements for character consistency — every path goes through _safe_user_path.
+        elements = None
+        elem_data = body.get("elements", [])
+        if elem_data:
+            elements = []
+            for e in elem_data:
+                frontal = _safe_user_path(e.get("frontal_image_path", ""))
+                refs_raw = e.get("reference_image_paths", []) or []
+                refs = []
+                for p in refs_raw:
+                    safe = _safe_user_path(p) if isinstance(p, str) else None
+                    if safe:
+                        refs.append(safe)
+                if frontal:
+                    elements.append({"frontal_image_path": frontal, "reference_image_paths": refs})
+        if not prompt:
+            self._send_json({"error": "prompt required"}, 400)
+            return
+
+        _cu = self._current_user() or {}
+        _uid = int(_cu.get("id", 0) or 0)
+        if _uid > 0:
+            clips_dir = os.path.join(OUTPUT_DIR, "pipeline", "clips_v6", f"u_{_uid}")
+        else:
+            clips_dir = os.path.join(OUTPUT_DIR, "pipeline", "clips_v6")
+        os.makedirs(clips_dir, exist_ok=True)
+
+        # Content moderation pre-filter — strict (keyword + Opus borderline).
+        # SECURITY (H2): use moderate_prompt_strict not moderate_prompt.
+        # SECURITY (H7): fail closed on exception — never skip moderation.
+        try:
+            from lib.moderation import moderate_prompt_strict
+            _mod = moderate_prompt_strict(prompt, nsfw_allowed=False)
+            if not _mod["allowed"]:
+                return self._send_json({
+                    "error": "moderation_blocked",
+                    "severity": _mod["severity"],
+                    "reasons": _mod["reasons"],
+                }, 451)
+            if _mod["severity"] == "warn":
+                prompt = _mod["redacted_prompt"]
+        except Exception as _e:
+            return self._send_json({"error": "moderation unavailable"}, 500)
+
+        # --- Real cost estimate + hard budget gate (P0-1, P0-2) ---
+        est_cost = _price_for("kling", tier, duration, "video") * num_candidates
+        ok, reason, _tracker = _check_budget_gate(est_cost)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason, "est": est_cost}, 402)
+            return
+
+        # Per-user credits + rate limit for clip gen.
+        if _uid > 0 and lumn_db:
+            _cost_cents = max(1, int(round(est_cost * 100)))
+            _bal = int(_cu.get("credits_cents", 0) or 0)
+            if not _user_credits_deferred() and _bal < _cost_cents:
+                self._send_json({
+                    "error": "insufficient_credits",
+                    "balance_cents": _bal, "need_cents": _cost_cents,
+                }, 402)
+                return
+            allowed, n = lumn_db.rate_limit_check(_uid, "clip", max_per_hour=20)
+            if not allowed:
+                self._send_json({
+                    "error": "rate_limited", "kind": "clip",
+                    "count_in_window": n, "max_per_hour": 20,
+                }, 429)
+                return
+
+        def _gen_thread():
+            try:
+                clip_path = kling_image_to_video(
+                    start_image_path=anchor_path,
+                    prompt=prompt,
+                    duration=duration,
+                    tier=tier,
+                    end_image_path=end_image_path if end_image_path and os.path.isfile(end_image_path) else None,
+                    elements=elements,
+                    negative_prompt=negative_prompt,
+                    cfg_scale=cfg_scale,
+                    generate_audio=generate_audio,
+                )
+                if clip_path and os.path.isfile(clip_path):
+                    import shutil
+                    # Versioned filename: shot_id_v{N}.mp4. The "current" is a copy at shot_id.mp4.
+                    versions_dir = os.path.join(clips_dir, "_versions", shot_id)
+                    os.makedirs(versions_dir, exist_ok=True)
+                    existing = [f for f in os.listdir(versions_dir) if f.startswith("v") and f.endswith(".mp4")]
+                    next_n = len(existing) + 1
+                    versioned = os.path.join(versions_dir, f"v{next_n}.mp4")
+                    shutil.copy2(clip_path, versioned)
+                    # Write sidecar meta for this version
+                    meta = {
+                        "version": next_n,
+                        "shot_id": shot_id,
+                        "tier": tier,
+                        "duration": duration,
+                        "prompt": prompt,
+                        "cfg_scale": cfg_scale,
+                        "ts": time.time(),
+                        "cost_est": round({"v3_standard":0.084,"v3_pro":0.112,"o3_standard":0.084,"o3_pro":0.392}.get(tier, 0.084) * duration, 3),
+                    }
+                    with open(os.path.join(versions_dir, f"v{next_n}.json"), "w", encoding="utf-8") as mf:
+                        json.dump(meta, mf, indent=2)
+                    # "Current" pointer
+                    dest = os.path.join(clips_dir, f"{shot_id}.mp4")
+                    shutil.copy2(versioned, dest)
+                    # Real ledger record — bills only on successful delivery
+                    _record_generation(
+                        shot_key=shot_id,
+                        gen_type="video",
+                        engine="kling",
+                        tier=tier,
+                        duration=duration,
+                        est_cost=est_cost,
+                        status="ok",
+                        meta={"version": next_n},
+                    )
+                    # Per-user charge on successful delivery.
+                    if _uid > 0 and lumn_db:
+                        _cents = max(1, int(round(est_cost * 100)))
+                        lumn_db.charge_user(_uid, _cents, "clip",
+                                            {"shot_id": shot_id, "tier": tier,
+                                             "duration": duration})
+                    return {"ok": True, "shot_id": shot_id, "path": dest, "version": next_n}
+                # No asset returned — record as failed, no bill
+                _record_generation(
+                    shot_key=shot_id, gen_type="video", engine="kling",
+                    tier=tier, duration=duration, est_cost=est_cost, status="failed",
+                )
+                return {"error": "No video returned"}
+            except Exception as e:
+                _record_generation(
+                    shot_key=shot_id, gen_type="video", engine="kling",
+                    tier=tier, duration=duration, est_cost=est_cost, status="error",
+                    meta={"err": str(e)[:200]},
+                )
+                return {"error": str(e)}
+
+        import threading
+        # P2-12: Fire N parallel candidate generations. Each one saves as a new
+        # version (v1, v2, v3) via the existing versioning logic inside _gen_thread.
+        for _i in range(num_candidates):
+            t = threading.Thread(target=_gen_thread, daemon=True)
+            t.start()
+
+        # Return immediately — client polls for completion
+        self._send_json({
+            "ok": True,
+            "message": f"Started {num_candidates} candidate(s)",
+            "shot_id": shot_id,
+            "tier": tier,
+            "duration": duration,
+            "num_candidates": num_candidates,
+            "est_total": est_cost,
+            "enriched_prompt": prompt,
+            "injection": {
+                "injected": enriched["injected"],
+                "must_keep": enriched["must_keep"],
+                "avoid": enriched["avoid"],
+                "report": enriched["report"],
+            },
+        })
+
+    def _handle_v6_sonnet_select(self):
+        """Opus vision picks best candidate per shot. (Route name kept for
+        UI backwards-compat; model is claude-opus-4-7.)"""
+        from lib.claude_client import call_vision_json, OPUS_MODEL
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        shot_id = body.get("shot_id", "")
+        candidate_paths = body.get("candidate_paths", [])
+        ref_sheet = body.get("ref_sheet", "")
+        shot_info = body.get("shot_info", {})
+
+        if not candidate_paths or len(candidate_paths) < 2:
+            self._send_json({"error": "Need at least 2 candidates"}, 400)
+            return
+
+        # Budget gate — Opus vision estimate: ~$0.10-0.15 per call
+        # (ref sheet + up to 3 candidates + ~2k output at $15/$75 per M tokens).
+        est_cost = 0.03 + 0.03 * len(candidate_paths)
+        ok, reason, _t = _check_budget_gate(est_cost)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason, "est": est_cost}, 402)
+            return
+
+        system = """You are a senior cinematographer selecting the best anchor frame from candidates.
+Image 1 = character reference sheet. Remaining images = candidates A, B, C.
+Evaluate: identity match, prompt compliance, technical quality, emotional read, continuity fitness (0-1 each).
+Golden retrievers have pendant ears that hang, never prick upright.
+JSON only: {"candidates": {"A": {"overall": N, "notes": "..."}, ...}, "pick": "A|B|C", "pick_reason": "...", "confidence": N}"""
+
+        prompt_text = shot_info.get("prompt", "")
+        user_prompt = f"""Shot {shot_id}: {shot_info.get('title', '')}
+Prompt: {prompt_text[:300]}
+Pick the best candidate. JSON only."""
+
+        raw_images = [ref_sheet] + candidate_paths
+        valid_images = []
+        for p in raw_images:
+            if not isinstance(p, str) or not p:
+                continue
+            safe = _safe_user_path(p)
+            if safe and os.path.isfile(safe):
+                valid_images.append(safe)
+        if not valid_images:
+            self._send_json({"error": "no valid image paths"}, 400)
+            return
+
+        try:
+            result = call_vision_json(user_prompt, valid_images, system=system, model=OPUS_MODEL, max_tokens=2000)
+            result["shot_id"] = shot_id
+            self._send_json(result)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_v6_staleness_check(self):
+        """Detect shots where referenced assets (character/environment sheets) have been
+        regenerated *after* the shot's anchor was rendered. Those shots need a re-gen
+        because their anchor no longer reflects the latest reference.
+        """
+        anchors_dir = os.path.join(OUTPUT_DIR, "pipeline", "anchors_v6")
+        clips_dir = os.path.join(OUTPUT_DIR, "pipeline", "clips_v6")
+        # Newest reference mtime across all preproduction packages + uploaded refs
+        newest_ref_mtime = 0.0
+        newest_ref_name = ""
+        try:
+            store = self._get_preprod_store()
+            for pkg in store.get_all():
+                for img in pkg.get("sheet_images", []):
+                    p = img.get("image_path")
+                    if p and os.path.isfile(p):
+                        m = os.path.getmtime(p)
+                        if m > newest_ref_mtime:
+                            newest_ref_mtime = m
+                            newest_ref_name = pkg.get("name", "") + "/" + img.get("view", "")
+        except Exception:
+            pass
+
+        refs_dir = os.path.join(OUTPUT_DIR, "pipeline", "references_v6")
+        if os.path.isdir(refs_dir):
+            for ref_type in os.listdir(refs_dir):
+                type_dir = os.path.join(refs_dir, ref_type)
+                if os.path.isdir(type_dir):
+                    for f in os.listdir(type_dir):
+                        fp = os.path.join(type_dir, f)
+                        if os.path.isfile(fp):
+                            m = os.path.getmtime(fp)
+                            if m > newest_ref_mtime:
+                                newest_ref_mtime = m
+                                newest_ref_name = f"{ref_type}/{f}"
+
+        stale_anchors = []
+        stale_clips = []
+        if os.path.isdir(anchors_dir):
+            for f in os.listdir(anchors_dir):
+                if f.endswith(('.png', '.jpg')):
+                    fp = os.path.join(anchors_dir, f)
+                    if os.path.getmtime(fp) < newest_ref_mtime:
+                        stale_anchors.append(f)
+        if os.path.isdir(clips_dir):
+            for f in os.listdir(clips_dir):
+                if f.endswith('.mp4'):
+                    fp = os.path.join(clips_dir, f)
+                    if os.path.getmtime(fp) < newest_ref_mtime:
+                        stale_clips.append(f)
+
+        self._send_json({
+            "newest_ref_mtime": newest_ref_mtime,
+            "newest_ref_name": newest_ref_name,
+            "stale_anchors": sorted(stale_anchors),
+            "stale_clips": sorted(stale_clips),
+            "stale_count": len(stale_anchors) + len(stale_clips),
+        })
+
+    def _handle_v6_timeline_preview(self):
+        """Assemble current project into a timeline with placeholders for missing clips.
+
+        Returns a list of tracks: each entry has shot_id, start, duration, and either
+        a real clip URL or a 'placeholder' flag. The UI uses this to render a full-length
+        preview even before every shot has been generated.
+        """
+        project_path = os.path.join(OUTPUT_DIR, "pipeline", "project.json")
+        project = {}
+        if os.path.isfile(project_path):
+            try:
+                with open(project_path, "r", encoding="utf-8") as f:
+                    project = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                project = {}
+        shots = project.get("shots", [])
+        clips_dir = os.path.join(OUTPUT_DIR, "pipeline", "clips_v6")
+        anchors_dir = os.path.join(OUTPUT_DIR, "pipeline", "anchors_v6")
+
+        track = []
+        cursor = 0.0
+        total_generated = 0
+        total_stubs = 0
+        for shot in shots:
+            sid = shot.get("shot_id", "")
+            dur = float(shot.get("duration", 5))
+            clip_path = os.path.join(clips_dir, f"{sid}.mp4")
+            has_clip = os.path.isfile(clip_path)
+            # Placeholder falls back to the anchor still if the clip isn't ready yet
+            anchor_candidates = []
+            if os.path.isdir(anchors_dir):
+                anchor_candidates = [f for f in os.listdir(anchors_dir)
+                                     if f.startswith(sid) and f.endswith(('.png', '.jpg'))]
+            entry = {
+                "shot_id": sid,
+                "title": shot.get("title", sid),
+                "beat_name": shot.get("beat_name", ""),
+                "start": round(cursor, 3),
+                "duration": dur,
+                "tone": shot.get("tone", ""),
+            }
+            if has_clip:
+                entry["clip_url"] = f"/api/v6/clip-video/{sid}.mp4"
+                entry["status"] = "ready"
+                total_generated += 1
+            elif anchor_candidates:
+                entry["placeholder"] = True
+                entry["poster_url"] = f"/api/v6/anchor-image/{anchor_candidates[0]}"
+                entry["status"] = "anchor_only"
+                total_stubs += 1
+            else:
+                entry["placeholder"] = True
+                entry["status"] = "stub"
+                total_stubs += 1
+            track.append(entry)
+            cursor += dur
+
+        self._send_json({
+            "track": track,
+            "total_duration_sec": round(cursor, 3),
+            "shot_count": len(track),
+            "generated": total_generated,
+            "stubs": total_stubs,
+            "template": project.get("template"),
+        })
+
+    def _check_motion_audit_gate(self, body: dict, stitch_sids: list) -> tuple | None:
+        """Shared motion-audit precondition for stitch endpoints.
+
+        Reads `output/pipeline/audits/motion_audit_latest.json` and refuses
+        to let a stitch proceed if any shot in `stitch_sids` has severity=fail.
+        Returns None to proceed, or `(payload, status)` for _send_json on block.
+
+        Body flags:
+          bypass_motion_audit: skip the check (use sparingly)
+          require_audit:       require an audit file to exist at all
+        """
+        if bool(body.get("bypass_motion_audit")):
+            return None
+        latest_audit = os.path.join(
+            OUTPUT_DIR, "pipeline", "audits", "motion_audit_latest.json"
+        )
+        require_audit = bool(body.get("require_audit"))
+        if os.path.isfile(latest_audit):
+            try:
+                with open(latest_audit, "r", encoding="utf-8") as f:
+                    audit_data = json.load(f)
+                fail_ids = set(audit_data.get("fail_ids") or [])
+                audit_age_s = time.time() - os.path.getmtime(latest_audit)
+                sids = set(stitch_sids)
+                blocked = fail_ids & sids
+                if blocked:
+                    return ({
+                        "error": "motion_audit_blocked",
+                        "failed_shots": sorted(blocked),
+                        "audit_age_hours": round(audit_age_s / 3600.0, 2),
+                        "latest_audit": latest_audit,
+                        "hint": ("Re-render failing shots on Kling with "
+                                 "anti-orbit prompts, re-run /api/v6/clips/"
+                                 "motion-audit with persist=true, then retry. "
+                                 "To override, POST {'bypass_motion_audit': true}."),
+                    }, 409)
+            except (json.JSONDecodeError, IOError, OSError):
+                if require_audit:
+                    return ({
+                        "error": "motion_audit_unreadable",
+                        "latest_audit": latest_audit,
+                    }, 409)
+        elif require_audit:
+            return ({
+                "error": "motion_audit_missing",
+                "hint": ("No motion_audit_latest.json on record. Run "
+                         "/api/v6/clips/motion-audit with persist=true "
+                         "before stitching, or drop require_audit."),
+            }, 409)
+        return None
+
+    def _handle_v6_stitch(self):
+        """Concat all v6 clips (output/pipeline/clips_v6/<sid>/selected.mp4)
+        in project.json shot order into output/pipeline/v6_final.mp4.
+
+        Body (optional):
+          {
+            "audio_path": "...mp3",        # optional audio track
+            "transitions": ["cut", ...],   # per-cut; default "cut"
+            "include_shots": ["sid", ...], # optional whitelist (skip others)
+            "output_name": "final.mp4"     # default "v6_final.mp4"
+          }
+        """
+        try:
+            body = json.loads(self._read_body() or "{}")
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+
+        project_path = os.path.join(OUTPUT_DIR, "pipeline", "project.json")
+        if not os.path.isfile(project_path):
+            return self._send_json({"error": "no v6 project"}, 400)
+        try:
+            with open(project_path, "r", encoding="utf-8") as f:
+                project = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return self._send_json({"error": "project.json unreadable"}, 500)
+
+        shots = project.get("shots", []) or []
+        whitelist = set(body.get("include_shots") or [])
+        only_signed_off = bool(body.get("only_signed_off"))
+        clips_dir = os.path.join(OUTPUT_DIR, "pipeline", "clips_v6")
+
+        # If only_signed_off, intersect the whitelist with signed-off shots.
+        # The caller gets back `missing` for any non-signed-off shot so they
+        # know what's gating the stitch.
+        if only_signed_off:
+            try:
+                from lib.shot_gates import signed_off_shot_ids
+                project_slug = (body.get("project") or "default").strip() or "default"
+                proj_dir = os.path.join(OUTPUT_DIR, "projects", project_slug)
+                signed = set(signed_off_shot_ids(proj_dir))
+                if whitelist:
+                    whitelist = whitelist & signed
+                else:
+                    whitelist = signed
+                if not whitelist:
+                    return self._send_json({
+                        "error": "no_signed_off_shots",
+                        "hint": "Sign off at least one shot before stitching with only_signed_off=true",
+                    }, 400)
+            except Exception:
+                pass
+
+        ordered, missing = [], []
+        for shot in shots:
+            sid = shot.get("shot_id", "")
+            if whitelist and sid not in whitelist:
+                continue
+            candidate = os.path.join(clips_dir, sid, "selected.mp4")
+            if os.path.isfile(candidate):
+                ordered.append((sid, candidate))
+            else:
+                missing.append(sid)
+
+        if not ordered:
+            return self._send_json(
+                {"error": "no v6 clips found", "missing": missing}, 400
+            )
+
+        err = self._check_motion_audit_gate(body, [sid for sid, _ in ordered])
+        if err:
+            return self._send_json(*err)
+
+        transitions = body.get("transitions")
+        if not isinstance(transitions, list) or len(transitions) != len(ordered):
+            transitions = ["cut"] * len(ordered)
+
+        audio_path = body.get("audio_path")
+        if audio_path and not os.path.isfile(audio_path):
+            audio_path = None
+
+        out_name = body.get("output_name") or "v6_final.mp4"
+        if "/" in out_name or "\\" in out_name or ".." in out_name:
+            return self._send_json({"error": "bad output_name"}, 400)
+        output_path = os.path.join(OUTPUT_DIR, "pipeline", out_name)
+
+        from lib.video_stitcher import stitch as _stitch
+        try:
+            _stitch(
+                [p for _, p in ordered],
+                audio_path,
+                output_path,
+                transitions=transitions,
+            )
+        except Exception as e:
+            return self._send_json(
+                {"error": f"stitch_failed: {e.__class__.__name__}: {e}"}, 500
+            )
+
+        size = os.path.getsize(output_path) if os.path.isfile(output_path) else 0
+        self._send_json({
+            "ok": True,
+            "output_path": output_path,
+            "output_url": f"/api/v6/final-video/{out_name}",
+            "size_bytes": size,
+            "clip_count": len(ordered),
+            "shot_ids": [sid for sid, _ in ordered],
+            "missing": missing,
+        })
+
+    def _build_beat_snap_clips(self, body):
+        """Shared loader for beat-snap endpoints.
+
+        Returns (clips_list, downbeats, error_tuple) where clips_list is in
+        project shot order with each entry = {shot_id, source, duration}.
+        On failure returns (None, None, (error_dict, status)).
+        """
+        project_path = os.path.join(OUTPUT_DIR, "pipeline", "project.json")
+        if not os.path.isfile(project_path):
+            return None, None, ({"error": "no v6 project"}, 400)
+        try:
+            with open(project_path, "r", encoding="utf-8") as f:
+                project = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return None, None, ({"error": "project.json unreadable"}, 500)
+
+        grid_path = body.get("music_grid_path") or os.path.join(
+            OUTPUT_DIR, "pipeline", "music_grid.json"
+        )
+        if not os.path.isfile(grid_path):
+            return None, None, ({"error": "music_grid not found", "path": grid_path,
+                                   "hint": "run song analyze first"}, 400)
+
+        from lib.beat_snap import load_grid, _probe_duration
+        try:
+            downbeats = load_grid(grid_path)
+        except Exception as e:
+            return None, None, ({"error": f"grid unreadable: {e}"}, 500)
+        if not downbeats:
+            return None, None, ({"error": "music_grid has no downbeats"}, 400)
+
+        whitelist = set(body.get("include_shots") or [])
+        duration_overrides = body.get("duration_overrides") or {}
+        clips_dir = os.path.join(OUTPUT_DIR, "pipeline", "clips_v6")
+        clips = []
+        missing = []
+        for shot in (project.get("shots") or []):
+            sid = shot.get("shot_id", "")
+            if whitelist and sid not in whitelist:
+                continue
+            src = os.path.join(clips_dir, sid, "selected.mp4")
+            if not os.path.isfile(src):
+                missing.append(sid)
+                continue
+            # Duration source precedence:
+            #   1. body.duration_overrides[sid] — explicit caller override
+            #   2. probed mp4 duration         — ground truth, what actually exists
+            #   3. project.json dur/duration   — user intent fallback
+            #   4. 5.0                         — last resort
+            # Note: project.json `dur` is often a template default (4-5s), not intent —
+            # using it as primary caused the TB-v7 beat-snap truncation (278s → 134s).
+            override = duration_overrides.get(sid)
+            if override is not None:
+                duration_s = float(override)
+            else:
+                probed = _probe_duration(src)
+                if probed > 0:
+                    duration_s = probed
+                else:
+                    intent = shot.get("duration") or shot.get("dur") or 5.0
+                    duration_s = float(intent)
+            clips.append({
+                "shot_id": sid,
+                "source": src,
+                "duration": duration_s,
+            })
+
+        if not clips:
+            return None, None, ({"error": "no clips available", "missing": missing}, 400)
+
+        return clips, downbeats, None
+
+    def _handle_v6_beat_plan(self):
+        """Compute a downbeat-snap plan without side effects.
+
+        Body:
+          tolerance_s: float (default 2.0)
+          fps: int (default 24)
+          include_shots: [shot_id, ...] optional whitelist
+          music_grid_path: optional explicit path (defaults to project grid)
+
+        Returns the plan dict from beat_snap.plan_beat_snap plus a preview list.
+        """
+        try:
+            body = json.loads(self._read_body() or "{}")
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+
+        clips, downbeats, err = self._build_beat_snap_clips(body)
+        if err:
+            return self._send_json(*err)
+
+        from lib.beat_snap import plan_beat_snap
+        plan = plan_beat_snap(
+            clips,
+            downbeats,
+            tolerance_s=float(body.get("tolerance_s") or 2.0),
+            fps=int(body.get("fps") or 24),
+        )
+        self._send_json({"ok": True, **plan})
+
+    def _handle_v6_beat_snap(self):
+        """Compute the plan, trim each clip to its snapped duration, and
+        concatenate into a single output via the existing video_stitcher.
+
+        Body (all optional):
+          tolerance_s: float   (default 2.0)
+          fps: int             (default 24)
+          include_shots: list  (whitelist)
+          music_grid_path: str
+          audio_path: str      (audio track to mix over the result)
+          output_name: str     (default 'v6_beat_snapped.mp4')
+          out_dir_name: str    (default 'clips_v6_snapped')
+          preview_only: bool   (when true, skip stitch, return trimmed paths only)
+        """
+        try:
+            body = json.loads(self._read_body() or "{}")
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+
+        clips, downbeats, err = self._build_beat_snap_clips(body)
+        if err:
+            return self._send_json(*err)
+
+        # Motion-audit precondition — same gate as /api/v6/stitch. See
+        # _handle_v6_stitch for rationale. Bypass with bypass_motion_audit=true.
+        err = self._check_motion_audit_gate(body, [c["shot_id"] for c in clips])
+        if err:
+            return self._send_json(*err)
+
+        from lib.beat_snap import plan_beat_snap, apply_beat_snap
+        tolerance_s = float(body.get("tolerance_s") or 2.0)
+        fps = int(body.get("fps") or 24)
+        plan = plan_beat_snap(clips, downbeats, tolerance_s=tolerance_s, fps=fps)
+
+        out_dir_name = body.get("out_dir_name") or "clips_v6_snapped"
+        if "/" in out_dir_name or "\\" in out_dir_name or ".." in out_dir_name:
+            return self._send_json({"error": "bad out_dir_name"}, 400)
+        snap_dir = os.path.join(OUTPUT_DIR, "pipeline", out_dir_name)
+
+        trim_result = apply_beat_snap(plan, snap_dir)
+        if trim_result["errors"]:
+            return self._send_json({
+                "error": "trim_errors",
+                "trim_errors": trim_result["errors"],
+                "plan": plan,
+            }, 500)
+
+        if body.get("preview_only"):
+            return self._send_json({
+                "ok": True,
+                "plan": plan,
+                "trimmed": trim_result["clips"],
+                "out_dir": snap_dir,
+                "stitched": False,
+            })
+
+        out_name = body.get("output_name") or "v6_beat_snapped.mp4"
+        if "/" in out_name or "\\" in out_name or ".." in out_name:
+            return self._send_json({"error": "bad output_name"}, 400)
+        output_path = os.path.join(OUTPUT_DIR, "pipeline", out_name)
+
+        audio_path = body.get("audio_path")
+        if audio_path and not os.path.isfile(audio_path):
+            audio_path = None
+
+        from lib.video_stitcher import stitch as _stitch
+        try:
+            _stitch(
+                [c["output_path"] for c in trim_result["clips"]],
+                audio_path,
+                output_path,
+                transitions=["cut"] * len(trim_result["clips"]),
+            )
+        except Exception as e:
+            return self._send_json({
+                "error": f"stitch_failed: {e.__class__.__name__}: {e}",
+                "plan": plan,
+                "trimmed": trim_result["clips"],
+            }, 500)
+
+        size = os.path.getsize(output_path) if os.path.isfile(output_path) else 0
+        self._send_json({
+            "ok": True,
+            "output_path": output_path,
+            "output_url": f"/api/v6/final-video/{out_name}",
+            "size_bytes": size,
+            "plan_summary": {
+                "clip_count": plan["clip_count"],
+                "original_total_s": plan["original_total_s"],
+                "snapped_total_s": plan["snapped_total_s"],
+                "delta_s": plan["delta_s"],
+                "cuts_snapped": plan["cuts_snapped"],
+            },
+            "clips": trim_result["clips"],
+            "snapped_dir": snap_dir,
+            "stitched": True,
+        })
+
+    def _handle_v6_remotion_render(self):
+        """F6 — spawn tools/render_mv.py in a background thread and return a job id.
+
+        Body (all optional):
+          mode: "proxy" | "full"           (default: "proxy")
+          composition: str                 (default: "LifestreamStatic")
+          out: str                         (override output path, relative to lumn-stitcher/)
+          concurrency: int
+          props: str                       (path to props JSON)
+
+        Returns {job_id, status, log_path}.
+        """
+        import subprocess as _sp
+        import threading
+        import uuid
+
+        try:
+            body = json.loads(self._read_body() or "{}")
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+
+        mode = (body.get("mode") or "proxy").lower()
+        if mode not in ("proxy", "full"):
+            return self._send_json({"error": "mode must be proxy or full"}, 400)
+        composition = body.get("composition") or "LifestreamStatic"
+        out_override = body.get("out")
+        concurrency = body.get("concurrency")
+        props = body.get("props")
+
+        repo_root = os.path.dirname(os.path.abspath(__file__))
+        script = os.path.join(repo_root, "tools", "render_mv.py")
+        if not os.path.isfile(script):
+            return self._send_json({"error": "render_mv.py missing"}, 500)
+
+        jobs_dir = os.path.join(OUTPUT_DIR, "pipeline", "render_jobs")
+        os.makedirs(jobs_dir, exist_ok=True)
+        job_id = uuid.uuid4().hex[:12]
+        state_path = os.path.join(jobs_dir, f"{job_id}.json")
+        log_path = os.path.join(jobs_dir, f"{job_id}.log")
+
+        suffix = "_proxy" if mode == "proxy" else ""
+        default_out = os.path.join("out", f"{composition}{suffix}.mp4")
+        out_rel = out_override or default_out
+        out_abs = out_rel if os.path.isabs(out_rel) else os.path.join(
+            repo_root, "lumn-stitcher", out_rel
+        )
+
+        cmd = [sys.executable, "-u", script, "--composition", composition, "--out", out_rel]
+        if mode == "proxy":
+            cmd.append("--proxy")
+        if concurrency:
+            cmd += ["--concurrency", str(int(concurrency))]
+        if props:
+            cmd += ["--props", str(props)]
+
+        started_at = time.time()
+        state = {
+            "job_id": job_id,
+            "mode": mode,
+            "composition": composition,
+            "status": "running",
+            "exit_code": None,
+            "output_path": out_abs,
+            "log_path": log_path,
+            "started_at": started_at,
+            "finished_at": None,
+            "cmd": cmd,
+        }
+        with open(state_path, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+
+        def _worker():
+            try:
+                with open(log_path, "w", encoding="utf-8") as lf:
+                    lf.write(f"[remotion_render] cmd={' '.join(cmd)}\n")
+                    lf.flush()
+                    proc = _sp.Popen(
+                        cmd,
+                        stdout=lf,
+                        stderr=_sp.STDOUT,
+                        cwd=repo_root,
+                    )
+                    rc = proc.wait()
+                state["status"] = "completed" if rc == 0 else "failed"
+                state["exit_code"] = rc
+            except Exception as e:
+                state["status"] = "failed"
+                state["exit_code"] = -1
+                try:
+                    with open(log_path, "a", encoding="utf-8") as lf:
+                        lf.write(f"[remotion_render] worker exception: {e}\n")
+                except OSError:
+                    pass
+            finally:
+                state["finished_at"] = time.time()
+                try:
+                    with open(state_path, "w", encoding="utf-8") as f:
+                        json.dump(state, f, indent=2)
+                except OSError:
+                    pass
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+        self._send_json({
+            "ok": True,
+            "job_id": job_id,
+            "status": "running",
+            "mode": mode,
+            "composition": composition,
+            "log_path": log_path,
+            "output_path": out_abs,
+        })
+
+    def _handle_v6_remotion_render_status(self, job_id):
+        """F6 — return current state + tail of log for a render job."""
+        if not re.match(r"^[A-Za-z0-9_\-]+$", job_id):
+            return self._send_json({"error": "bad job_id"}, 400)
+
+        state_path = os.path.join(OUTPUT_DIR, "pipeline", "render_jobs", f"{job_id}.json")
+        if not os.path.isfile(state_path):
+            return self._send_json({"error": "job not found"}, 404)
+
+        try:
+            with open(state_path, "r", encoding="utf-8") as f:
+                state = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            return self._send_json({"error": f"state read failed: {e}"}, 500)
+
+        log_tail = []
+        log_path = state.get("log_path")
+        if log_path and os.path.isfile(log_path):
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+                log_tail = lines[-40:]
+            except OSError:
+                log_tail = []
+
+        elapsed_s = None
+        started = state.get("started_at")
+        finished = state.get("finished_at") or time.time()
+        if started:
+            elapsed_s = round(finished - started, 1)
+
+        output_path = state.get("output_path") or ""
+        output_size = None
+        output_exists = False
+        if output_path and os.path.isfile(output_path):
+            output_exists = True
+            try:
+                output_size = os.path.getsize(output_path)
+            except OSError:
+                pass
+
+        self._send_json({
+            "ok": True,
+            "job_id": job_id,
+            "status": state.get("status"),
+            "exit_code": state.get("exit_code"),
+            "mode": state.get("mode"),
+            "composition": state.get("composition"),
+            "output_path": output_path,
+            "output_exists": output_exists,
+            "output_size": output_size,
+            "elapsed_s": elapsed_s,
+            "log_tail": log_tail,
+        })
+
+    def _handle_v6_clips_drag_scan(self):
+        """Scan rendered clips for frame-drag (frozen-motion) via phash sampling.
+
+        Body (all optional):
+            {"only_ids": ["id1","id2"], "signed_off_only": false}
+
+        Response:
+            {"ok": true, "total": N, "drag": M, "ok_count": N-M,
+             "records": [{shot_id, is_drag, pair_similarities, ...}]}
+        """
+        try:
+            body = json.loads(self._read_body() or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+        only_ids = set(body.get("only_ids") or [])
+        signed_off_only = bool(body.get("signed_off_only"))
+
+        try:
+            from lib.drag_detector import scan_clip
+        except ImportError as e:
+            return self._send_json({"error": f"drag_detector unavailable: {e}"}, 500)
+
+        clips_root = os.path.join(OUTPUT_DIR, "pipeline", "clips_v6")
+        if not os.path.isdir(clips_root):
+            return self._send_json({"error": "clips root not found", "path": clips_root}, 404)
+
+        # Build candidate list — every selected.mp4 under clips_v6 (flat + u_*).
+        import glob as _glob
+        candidates: dict[str, str] = {}  # shot_id -> freshest mp4 path
+        for fp in _glob.glob(os.path.join(clips_root, "*", "selected.mp4")):
+            sid = os.path.basename(os.path.dirname(fp))
+            if sid not in candidates or os.path.getmtime(fp) > os.path.getmtime(candidates[sid]):
+                candidates[sid] = fp
+        for fp in _glob.glob(os.path.join(clips_root, "u_*", "*", "selected.mp4")):
+            sid = os.path.basename(os.path.dirname(fp))
+            if sid not in candidates or os.path.getmtime(fp) > os.path.getmtime(candidates[sid]):
+                candidates[sid] = fp
+
+        # Optional filter by signed_off state.
+        if signed_off_only:
+            gates_path = os.path.join(OUTPUT_DIR, "projects", "default",
+                                      "shots", "shot_gates.json")
+            try:
+                with open(gates_path, "r", encoding="utf-8") as f:
+                    gates = json.load(f)
+                signed = {sid for sid, g in (gates.get("shots") or {}).items()
+                          if g.get("signed_off")}
+                candidates = {sid: fp for sid, fp in candidates.items() if sid in signed}
+            except (OSError, json.JSONDecodeError):
+                pass
+
+        if only_ids:
+            candidates = {sid: fp for sid, fp in candidates.items() if sid in only_ids}
+
+        t0 = time.time()
+        records: list[dict] = []
+        for sid, fp in sorted(candidates.items()):
+            rec = scan_clip(fp)
+            rec["shot_id"]   = sid
+            rec["clip_path"] = fp
+            records.append(rec)
+
+        drag_count = sum(1 for r in records if r.get("is_drag"))
+        self._send_json({
+            "ok": True,
+            "total": len(records),
+            "drag": drag_count,
+            "ok_count": len(records) - drag_count,
+            "elapsed_s": round(time.time() - t0, 2),
+            "records": records,
+        })
+
+    def _handle_v6_clips_cut_drift(self):
+        """Report cut-to-downbeat drift for the current stitched MV (F9).
+
+        Body (all optional):
+            {"mv_path": "...", "grid_path": "...", "threshold_s": 0.2}
+
+        Response:
+            {"ok": true, "total_cuts": N, "off_grid_count": M,
+             "off_grid_pct": X, "max_drift_s": D, "mean_drift_s": Dm,
+             "threshold_s": T, "recommendation": "...",
+             "cuts": [...], "off_grid_only": [...]}
+        """
+        try:
+            body = json.loads(self._read_body() or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+
+        default_mv   = os.path.join(PROJECT_DIR, "lumn-stitcher", "src", "mv-data.json")
+        default_grid = os.path.join(OUTPUT_DIR, "pipeline", "music_grid.json")
+        mv_path      = body.get("mv_path")   or default_mv
+        grid_path    = body.get("grid_path") or default_grid
+        threshold_s  = float(body.get("threshold_s") or 0.2)
+
+        if not os.path.isfile(mv_path):
+            return self._send_json({"error": "mv-data not found", "path": mv_path}, 404)
+        if not os.path.isfile(grid_path):
+            return self._send_json({"error": "music_grid not found", "path": grid_path}, 404)
+
+        try:
+            from lib.cut_drift import analyze_mv, recommend
+        except ImportError as e:
+            return self._send_json({"error": f"cut_drift unavailable: {e}"}, 500)
+
+        t0 = time.time()
+        try:
+            result = analyze_mv(mv_path, grid_path, threshold_s=threshold_s)
+        except (OSError, ValueError, KeyError) as e:
+            return self._send_json({"error": f"analyze_mv failed: {e}"}, 500)
+        result["elapsed_s"]      = round(time.time() - t0, 3)
+        result["recommendation"] = recommend(result)
+        result["ok"]             = True
+        self._send_json(result)
+
+    def _handle_v6_clips_motion_audit(self):
+        """Audit rendered clips for identity drift during Kling motion.
+
+        Samples N frames per clip and asks Opus to verify the character's
+        identity holds (eyes, emblem, pose). Catches the failure mode the
+        anchor-stills auditor cannot see: Kling rotating the subject mid-clip
+        and smearing the emblem to back of head.
+
+        Body (all optional):
+            {"only_ids": [...], "sample_count": 3, "persist": false,
+             "spec": {...}  # per-project identity spec override
+            }
+
+        Response:
+            {"ok": true, "total": N, "pass": A, "warn": B, "fail": C,
+             "fail_ids": [...], "warn_ids": [...],
+             "records": [...], "elapsed_s": X}
+        """
+        try:
+            body = json.loads(self._read_body() or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+        only_ids = set(body.get("only_ids") or [])
+        sample_count = int(body.get("sample_count") or 3)
+        persist = bool(body.get("persist"))
+        spec = body.get("spec")
+
+        try:
+            from lib.motion_audit import audit_clip, summarize
+        except ImportError as e:
+            return self._send_json({"error": f"motion_audit unavailable: {e}"}, 500)
+
+        # Candidate collection: prefer stitcher-staged v7_* clips, fall back
+        # to clips_v6/<shot>/selected.mp4.
+        import glob as _glob
+        candidates: dict[str, str] = {}
+        stitcher_mv = os.path.join(PROJECT_DIR, "lumn-stitcher", "public", "mv")
+        for fp in _glob.glob(os.path.join(stitcher_mv, "*.mp4")):
+            base = os.path.basename(fp)
+            if base.startswith("v7_"):
+                sid = base.replace("v7_", "").split("_", 1)[0]
+                if sid not in candidates or os.path.getmtime(fp) > os.path.getmtime(candidates[sid]):
+                    candidates[sid] = fp
+        clips_root = os.path.join(OUTPUT_DIR, "pipeline", "clips_v6")
+        for fp in _glob.glob(os.path.join(clips_root, "*", "selected.mp4")):
+            sid = os.path.basename(os.path.dirname(fp))
+            if sid not in candidates:
+                candidates[sid] = fp
+
+        if only_ids:
+            candidates = {sid: fp for sid, fp in candidates.items() if sid in only_ids}
+
+        if not candidates:
+            return self._send_json({"error": "no clips found", "stitcher_mv": stitcher_mv}, 404)
+
+        frames_dir = os.path.join(OUTPUT_DIR, "pipeline", "audits", "motion_frames")
+        t0 = time.time()
+        records: list[dict] = []
+        for sid, fp in sorted(candidates.items()):
+            r = audit_clip(fp, spec=spec, sample_count=sample_count,
+                           shot_id=sid, frames_dir=frames_dir)
+            r["clip_path"] = fp
+            records.append(r)
+
+        summary = summarize(records)
+        resp = {
+            "ok": True,
+            "elapsed_s": round(time.time() - t0, 2),
+            **summary,
+            "records": records,
+        }
+
+        if persist:
+            audits_dir = os.path.join(OUTPUT_DIR, "pipeline", "audits")
+            os.makedirs(audits_dir, exist_ok=True)
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            out_path = os.path.join(audits_dir, f"motion_audit_{ts}.json")
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(resp, f, indent=2)
+            latest = os.path.join(audits_dir, "motion_audit_latest.json")
+            with open(latest, "w", encoding="utf-8") as f:
+                json.dump(resp, f, indent=2)
+            resp["persisted_path"] = out_path
+            resp["latest_path"]    = latest
+
+        self._send_json(resp)
+
+    def _handle_v6_pacing_arc(self):
+        """Return pacing-arc recommendation for the current project's music grid (F5).
+
+        Body (all optional):
+            {"grid_path": "...", "style": "arc|steady|climax-heavy", "persist": false}
+
+        Response:
+            {"ok": true, "tempo_bpm": X, "bar_s": Y, "total_duration_s": D,
+             "total_suggested_cuts": N, "curve_style": S,
+             "sections": [...], "intensity_profile": [...],
+             "recommendation": "...", "persisted_path": "..."?}
+        """
+        try:
+            body = json.loads(self._read_body() or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+
+        default_grid = os.path.join(OUTPUT_DIR, "pipeline", "music_grid.json")
+        grid_path    = body.get("grid_path") or default_grid
+        style        = body.get("style") or "arc"
+        persist      = bool(body.get("persist"))
+
+        if not os.path.isfile(grid_path):
+            return self._send_json({"error": "music_grid not found", "path": grid_path}, 404)
+
+        try:
+            from lib.pacing_arc import analyze_grid, recommend, CURVE_STYLES
+        except ImportError as e:
+            return self._send_json({"error": f"pacing_arc unavailable: {e}"}, 500)
+
+        if style not in CURVE_STYLES:
+            style = "arc"
+
+        t0 = time.time()
+        try:
+            result = analyze_grid(grid_path, curve_style=style)
+        except (OSError, ValueError, KeyError) as e:
+            return self._send_json({"error": f"analyze_grid failed: {e}"}, 500)
+        result["elapsed_s"]      = round(time.time() - t0, 3)
+        result["recommendation"] = recommend(result)
+        result["ok"]             = True
+
+        if persist:
+            persist_path = os.path.join(OUTPUT_DIR, "pipeline", "pacing_curve.json")
+            try:
+                with open(persist_path, "w", encoding="utf-8") as f:
+                    json.dump(result, f, indent=2)
+                result["persisted_path"] = persist_path
+            except OSError as e:
+                result["persist_error"] = str(e)
+
+        self._send_json(result)
+
+    def _handle_v6_shots_plan_durations(self):
+        """Dynamic shot duration planner — maps scenes.json signals to
+        per-shot target duration in [3,15] (Kling V3 range).
+
+        Body (all optional):
+            {"project": "slug"?, "apply": false}
+
+        Response:
+            {"ok": true, "total_shots": N, "total_seconds": S,
+             "plan": [{"scene_id","opus_shot_id","duration_s",
+                       "rationale","factors"}],
+             "applied": bool, "scenes_path": "..."?}
+        """
+        try:
+            body = json.loads(self._read_body() or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+        apply_changes = bool(body.get("apply"))
+
+        try:
+            from lib.active_project import get_project_root
+            scenes_path = os.path.join(get_project_root(), "prompt_os", "scenes.json")
+        except Exception as e:
+            return self._send_json({"error": f"active_project unavailable: {e}"}, 500)
+
+        if not os.path.isfile(scenes_path):
+            return self._send_json(
+                {"error": "scenes.json not found", "path": scenes_path}, 404
+            )
+        try:
+            with open(scenes_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            return self._send_json({"error": f"scenes.json read failed: {e}"}, 500)
+
+        if isinstance(raw, dict) and "scenes" in raw:
+            scenes = raw["scenes"]
+            wrapper = raw
+        elif isinstance(raw, list):
+            scenes = raw
+            wrapper = None
+        else:
+            return self._send_json({"error": "scenes.json has unexpected shape"}, 500)
+
+        try:
+            from lib.shot_duration_planner import plan_scene_durations, apply_plan_to_scenes
+        except ImportError as e:
+            return self._send_json({"error": f"shot_duration_planner unavailable: {e}"}, 500)
+
+        t0 = time.time()
+        try:
+            plan = plan_scene_durations(scenes)
+        except (KeyError, ValueError, TypeError) as e:
+            return self._send_json({"error": f"plan_scene_durations failed: {e}"}, 500)
+
+        total_seconds = sum(int(p.get("duration_s", 0) or 0) for p in plan)
+
+        applied = False
+        if apply_changes:
+            try:
+                apply_plan_to_scenes(scenes, plan, write_fields=True)
+                to_write = wrapper if wrapper is not None else scenes
+                with open(scenes_path, "w", encoding="utf-8") as f:
+                    json.dump(to_write, f, indent=2)
+                applied = True
+            except (OSError, TypeError) as e:
+                return self._send_json(
+                    {"error": f"write failed: {e}", "plan": plan}, 500
+                )
+
+        self._send_json({
+            "ok":            True,
+            "total_shots":   len(plan),
+            "total_seconds": total_seconds,
+            "plan":          plan,
+            "applied":       applied,
+            "scenes_path":   scenes_path if applied else None,
+            "elapsed_s":     round(time.time() - t0, 3),
+        })
+
+    def _handle_v6_export_fcpxml(self):
+        """Export current project as FCPXML 1.9 for DaVinci Resolve / Final Cut Pro.
+
+        Improvements over prior version (P2-15):
+        - Stable `uid` on each asset (MD5 of path) for relink
+        - Relative paths (no file:// URL — editors look up relative to the xml)
+        - Per-shot `<marker>` with shot_id / prompt / seed metadata
+        - Optional EDL fallback when ?format=edl
+        """
+        import hashlib
+        import xml.sax.saxutils as _sx
+
+        query = ""
+        if "?" in self.path:
+            query = self.path.split("?", 1)[1]
+        use_edl = "format=edl" in query
+
+        project_path = os.path.join(OUTPUT_DIR, "pipeline", "project.json")
+        project = {}
+        if os.path.isfile(project_path):
+            try:
+                with open(project_path, "r", encoding="utf-8") as f:
+                    project = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+        shots = project.get("shots", [])
+        clips_dir = os.path.join(OUTPUT_DIR, "pipeline", "clips_v6")
+        title = (project.get("template") or {}).get("name", "LUMN Project")
+
+        # EDL fallback — simple CMX 3600 emission
+        if use_edl:
+            edl_lines = ["TITLE: " + title, "FCM: NON-DROP FRAME"]
+            offset = 0.0
+            idx = 1
+            for shot in shots:
+                sid = shot.get("shot_id", "")
+                dur = float(shot.get("duration", 5))
+                def _tc(s):
+                    h = int(s // 3600); m = int((s % 3600) // 60); sec = int(s % 60); fr = int(round((s - int(s)) * 30))
+                    return f"{h:02d}:{m:02d}:{sec:02d}:{fr:02d}"
+                edl_lines.append(f"{idx:03d}  AX       V     C        00:00:00:00 {_tc(dur)} {_tc(offset)} {_tc(offset + dur)}")
+                edl_lines.append(f"* FROM CLIP NAME: {sid}")
+                offset += dur
+                idx += 1
+            body = ("\n".join(edl_lines) + "\n").encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Content-Disposition", 'attachment; filename="lumn_project.edl"')
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # Build FCPXML (timebase 30000/1001 = 29.97 NDF)
+        fps_num, fps_den = 30000, 1001
+        frame_duration = f"{fps_den}/{fps_num}s"
+
+        def _sec_to_rational(sec):
+            frames = int(round(sec * fps_num / fps_den))
+            return f"{frames * fps_den}/{fps_num}s"
+
+        def _xml_attr(v):
+            return _sx.quoteattr(str(v))[1:-1]  # strip surrounding quotes for attribute bodies
+
+        resources_xml = []
+        spine_xml = []
+        asset_id = 1
+        offset_sec = 0.0
+        for shot in shots:
+            sid = shot.get("shot_id", "")
+            dur = float(shot.get("duration", 5))
+            prompt = shot.get("prompt", "") or ""
+            seed = shot.get("seed", "")
+            clip_path = os.path.join(clips_dir, f"{sid}.mp4")
+            if os.path.isfile(clip_path):
+                # Relative path — editor resolves from the FCPXML location
+                try:
+                    rel_path = os.path.relpath(clip_path, start=OUTPUT_DIR).replace("\\", "/")
+                except ValueError:
+                    rel_path = os.path.basename(clip_path)
+                # Stable uid for relink across machines
+                uid = hashlib.md5(rel_path.encode("utf-8")).hexdigest().upper()
+                resources_xml.append(
+                    f'<asset id="r{asset_id}" name="{_xml_attr(sid)}" uid="{uid}" '
+                    f'src="{_xml_attr(rel_path)}" start="0s" duration="{_sec_to_rational(dur)}" '
+                    f'hasVideo="1" format="r0" audioSources="0" />'
+                )
+                marker_xml = (
+                    f'<marker start="0s" duration="{frame_duration}" value="{_xml_attr(sid)}" '
+                    f'note="{_xml_attr((prompt[:180] + ("… seed=" + str(seed) if seed else "")) or sid)}" />'
+                )
+                spine_xml.append(
+                    f'<asset-clip name="{_xml_attr(sid)}" ref="r{asset_id}" '
+                    f'offset="{_sec_to_rational(offset_sec)}" '
+                    f'duration="{_sec_to_rational(dur)}">'
+                    + marker_xml +
+                    '</asset-clip>'
+                )
+                asset_id += 1
+            else:
+                spine_xml.append(
+                    f'<gap offset="{_sec_to_rational(offset_sec)}" '
+                    f'duration="{_sec_to_rational(dur)}" name="{_xml_attr(sid)}_stub" />'
+                )
+            offset_sec += dur
+
+        fcpxml = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<!DOCTYPE fcpxml>\n'
+            '<fcpxml version="1.9">\n'
+            '  <resources>\n'
+            f'    <format id="r0" name="FFVideoFormat1080p2997" frameDuration="{frame_duration}" width="1920" height="1080"/>\n'
+            + "\n".join("    " + r for r in resources_xml) +
+            '\n  </resources>\n'
+            '  <library>\n'
+            f'    <event name="{_xml_attr(title)}">\n'
+            f'      <project name="{_xml_attr(title)}">\n'
+            '        <sequence format="r0" tcStart="0s" tcFormat="NDF">\n'
+            '          <spine>\n'
+            + "\n".join("            " + s for s in spine_xml) +
+            '\n          </spine>\n'
+            '        </sequence>\n'
+            '      </project>\n'
+            '    </event>\n'
+            '  </library>\n'
+            '</fcpxml>\n'
+        )
+        body = fcpxml.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/xml")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", 'attachment; filename="lumn_project.fcpxml"')
+        self.send_header("Access-Control-Allow-Origin", self._get_cors_origin())
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_v6_project_autosave(self):
+        """Receive a partial project state snapshot from the client and merge it into project.json.
+
+        Client sends this on a debounced interval while editing. Keeps a rolling backup
+        at project.json.bak.N (up to 5) so an errant save never loses work irrevocably.
+        """
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        pipeline_dir = os.path.join(OUTPUT_DIR, "pipeline")
+        os.makedirs(pipeline_dir, exist_ok=True)
+        project_path = os.path.join(pipeline_dir, "project.json")
+
+        # Load existing
+        project = {}
+        if os.path.isfile(project_path):
+            try:
+                with open(project_path, "r", encoding="utf-8") as f:
+                    project = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                project = {}
+            # Rolling backup — shift .bak.N → .bak.N+1, drop oldest
+            for i in range(4, 0, -1):
+                old = project_path + f".bak.{i}"
+                new = project_path + f".bak.{i+1}"
+                if os.path.isfile(old):
+                    try:
+                        if os.path.isfile(new):
+                            os.remove(new)
+                        os.rename(old, new)
+                    except OSError:
+                        pass
+            try:
+                import shutil as _sh
+                _sh.copy2(project_path, project_path + ".bak.1")
+            except OSError:
+                pass
+
+        # Merge: shots are replaced wholesale, other top-level keys deep-merged
+        for k, v in body.items():
+            project[k] = v
+        project["_last_autosave"] = time.time()
+
+        with open(project_path, "w", encoding="utf-8") as f:
+            json.dump(project, f, indent=2)
+        self._send_json({"ok": True, "ts": project["_last_autosave"]})
+
+    def _handle_template_apply(self):
+        """Instantiate a project template into shots."""
+        from lib.project_templates import get_template, instantiate_shots
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        template_id = body.get("template_id", "")
+        tpl = get_template(template_id)
+        if not tpl:
+            self._send_json({"error": f"Unknown template: {template_id}"}, 400)
+            return
+        shots = instantiate_shots(template_id)
+        # Persist as the current project's shot list
+        project_path = os.path.join(OUTPUT_DIR, "pipeline", "project.json")
+        os.makedirs(os.path.dirname(project_path), exist_ok=True)
+        project = {}
+        if os.path.isfile(project_path):
+            try:
+                with open(project_path, "r", encoding="utf-8") as f:
+                    project = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                project = {}
+        project["template"] = {
+            "id": tpl["id"],
+            "name": tpl["name"],
+            "applied_ts": time.time(),
+        }
+        project["shots"] = shots
+        project["duration_target_sec"] = tpl.get("duration_target_sec")
+        project["default_tier"] = tpl.get("default_tier")
+        with open(project_path, "w", encoding="utf-8") as f:
+            json.dump(project, f, indent=2)
+        self._send_json({"ok": True, "template": tpl["name"], "shot_count": len(shots), "shots": shots})
+
+    def _handle_v6_audio_beats(self):
+        """Return enhanced beat info for the current project audio track.
+        Feeds the editable waveform/beat-snap timeline (P2-16)."""
+        try:
+            from lib.audio_analyzer import analyze
+            from lib import beat_sync
+        except Exception as e:
+            self._send_json({"error": f"audio libs unavailable: {e}"}, 500)
+            return
+        plan = _load_manual_plan()
+        audio_path = plan.get("song_path", "")
+        if not audio_path or not os.path.isfile(audio_path):
+            self._send_json({"beats": [], "downbeats": [], "duration": 0, "bpm": 0, "has_audio": False})
+            return
+        try:
+            analysis = analyze(audio_path)
+            enhanced = beat_sync.analyze_audio_for_beats(analysis) if hasattr(beat_sync, "analyze_audio_for_beats") else {
+                "beat_times": analysis.get("beats", []),
+                "downbeats": [],
+                "duration": analysis.get("duration", 0),
+            }
+            self._send_json({
+                "has_audio": True,
+                "duration": analysis.get("duration", 0),
+                "bpm": analysis.get("bpm", 0),
+                "beats": enhanced.get("beat_times", analysis.get("beats", [])),
+                "downbeats": enhanced.get("downbeats", []),
+                "bar_times": enhanced.get("bar_times", []),
+                "sections": analysis.get("sections", []),
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    # ------------------------------------------------------------------
+    # Song timing (lyrics + beats + downbeats + sections)
+    # ------------------------------------------------------------------
+
+    def _project_dir_for(self, project_slug: str) -> str:
+        return os.path.join(OUTPUT_DIR, "projects", project_slug or "default")
+
+    def _resolve_song_path(self, body: dict, project_slug: str) -> str | None:
+        """Pick a song path: explicit body.song_path → manual plan → None."""
+        cand = (body.get("song_path") or "").strip()
+        if cand and os.path.isfile(cand):
+            return cand
+        plan = _load_manual_plan() or {}
+        plan_song = plan.get("song_path") or ""
+        if plan_song and os.path.isfile(plan_song):
+            return plan_song
+        return None
+
+    def _handle_v6_song_timing(self):
+        """Return the cached timing.json for the project, or 404 if absent.
+
+        Query: ?project=<slug>  (default "default")
+        """
+        from urllib.parse import parse_qs, urlparse
+        qs = parse_qs(urlparse(self.path).query)
+        project_slug = (qs.get("project", ["default"])[0] or "default").strip()
+        project_dir = self._project_dir_for(project_slug)
+        try:
+            from lib.song_timing import load_timing, project_timing_path
+        except Exception as e:
+            return self._send_json({"error": f"song_timing import failed: {e}"}, 500)
+        timing = load_timing(project_dir)
+        if not timing:
+            return self._send_json({
+                "ok": False,
+                "status": "missing",
+                "path": project_timing_path(project_dir),
+                "hint": "POST /api/v6/song/analyze to create it",
+            }, 404)
+        self._send_json({"ok": True, "project": project_slug, **timing})
+
+    def _handle_v6_song_analyze(self):
+        """Run full song timing analysis and persist timing.json.
+
+        Body:
+          {
+            project?: "default",
+            song_path?: absolute path,     # falls back to manual plan song
+            include_lyrics?: true,         # set false to skip fal Whisper
+          }
+        Returns a summary; full JSON is fetchable via GET /api/v6/song/timing.
+        """
+        try:
+            body = json.loads(self._read_body() or "{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        project_slug = (body.get("project") or "default").strip() or "default"
+        include_lyrics = bool(body.get("include_lyrics", True))
+
+        song_path = self._resolve_song_path(body, project_slug)
+        if not song_path:
+            return self._send_json({
+                "error": "no_song",
+                "reason": "body.song_path missing and manual plan has none",
+            }, 400)
+
+        # Whisper ~$0.006/min; 4 min track ≈ $0.024. Gate gently.
+        ok, reason, _t = _check_budget_gate(0.05)
+        if not ok and include_lyrics:
+            return self._send_json({"error": "budget_exceeded", "reason": reason}, 402)
+
+        try:
+            from lib.song_timing import analyze_song, save_timing, project_timing_path
+        except Exception as e:
+            return self._send_json({"error": f"song_timing import failed: {e}"}, 500)
+
+        try:
+            timing = analyze_song(song_path, include_lyrics=include_lyrics)
+        except Exception as e:
+            return self._send_json({"error": f"analyze_failed: {e.__class__.__name__}: {e}"}, 500)
+
+        project_dir = self._project_dir_for(project_slug)
+        try:
+            out_path = save_timing(project_dir, timing)
+        except Exception as e:
+            return self._send_json({"error": f"save_failed: {e}"}, 500)
+
+        lyr = timing.get("lyrics") or {}
+        self._send_json({
+            "ok": True,
+            "project": project_slug,
+            "timing_path": out_path,
+            "summary": {
+                "duration": timing["source"]["duration"],
+                "bpm": timing["tempo"]["bpm"],
+                "beats": len(timing.get("beats", [])),
+                "downbeats": len(timing.get("downbeats", [])),
+                "bars": len(timing.get("bars", [])),
+                "sections": [
+                    {"index": s["index"], "label": s.get("label"),
+                     "start": s["start"], "end": s["end"], "energy": s.get("energy")}
+                    for s in timing.get("sections", [])
+                ],
+                "lyrics_engine": lyr.get("engine"),
+                "lyrics_words": len(lyr.get("words", [])),
+                "lyrics_lines": len(lyr.get("lines", [])),
+            },
+        })
+
+    # ------------------------------------------------------------------
+    # Shot gates — per-shot audit / motion-review / signoff state
+    # ------------------------------------------------------------------
+
+    def _load_v6_project_shots(self) -> list:
+        project_path = os.path.join(OUTPUT_DIR, "pipeline", "project.json")
+        if not os.path.isfile(project_path):
+            return []
+        try:
+            with open(project_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data.get("shots", []) or []
+        except (json.JSONDecodeError, IOError):
+            return []
+
+    def _handle_v6_shot_gates_get(self):
+        """GET ?project=<slug>&sync=1 — return shot_gates.json.
+
+        With sync=1 (default), reconciles disk state + timing.json before
+        returning so stale cached gates can't mislead the UI.
+        """
+        from urllib.parse import parse_qs, urlparse
+        qs = parse_qs(urlparse(self.path).query)
+        project_slug = (qs.get("project", ["default"])[0] or "default").strip()
+        do_sync = qs.get("sync", ["1"])[0] != "0"
+        project_dir = self._project_dir_for(project_slug)
+
+        try:
+            from lib.shot_gates import (
+                load_gates, sync_gates_with_disk, gate_summary,
+            )
+            from lib.song_timing import load_timing
+        except Exception as e:
+            return self._send_json({"error": f"shot_gates import failed: {e}"}, 500)
+
+        shots = self._load_v6_project_shots()
+        anchors_dir = os.path.join(OUTPUT_DIR, "pipeline", "anchors_v6")
+        clips_dir = os.path.join(OUTPUT_DIR, "pipeline", "clips_v6")
+
+        if do_sync:
+            timing = load_timing(project_dir)
+            state = sync_gates_with_disk(project_dir, shots, anchors_dir, clips_dir, timing)
+        else:
+            state = load_gates(project_dir)
+
+        self._send_json({
+            "ok": True,
+            "project": project_slug,
+            "shots": state.get("shots", {}),
+            "summary": gate_summary(state),
+            "updated_at": state.get("updated_at"),
+        })
+
+    def _handle_v6_shot_gates_sync(self):
+        """POST {project} — force re-sync with disk + timing."""
+        try:
+            body = json.loads(self._read_body() or "{}")
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+        project_slug = (body.get("project") or "default").strip() or "default"
+        project_dir = self._project_dir_for(project_slug)
+
+        try:
+            from lib.shot_gates import sync_gates_with_disk, gate_summary
+            from lib.song_timing import load_timing
+        except Exception as e:
+            return self._send_json({"error": f"import failed: {e}"}, 500)
+
+        shots = self._load_v6_project_shots()
+        anchors_dir = os.path.join(OUTPUT_DIR, "pipeline", "anchors_v6")
+        clips_dir = os.path.join(OUTPUT_DIR, "pipeline", "clips_v6")
+        timing = load_timing(project_dir)
+
+        state = sync_gates_with_disk(project_dir, shots, anchors_dir, clips_dir, timing)
+        self._send_json({
+            "ok": True,
+            "project": project_slug,
+            "shots": state.get("shots", {}),
+            "summary": gate_summary(state),
+        })
+
+    def _handle_v6_shot_gates_set(self):
+        """POST {project, shot_id, gate, value, actor?} — flip a gate.
+
+        gate ∈ {"motion_review_passed", "signed_off"} — audit_passed is set
+        only by running the auditor through /api/v6/anchor/audit or the
+        audit-all endpoint below.
+        """
+        try:
+            body = json.loads(self._read_body() or "{}")
+        except (json.JSONDecodeError, ValueError):
+            return self._send_json({"error": "Invalid JSON"}, 400)
+
+        project_slug = (body.get("project") or "default").strip() or "default"
+        shot_id = (body.get("shot_id") or "").strip()
+        gate = (body.get("gate") or "").strip()
+        value = body.get("value")
+        notes = (body.get("notes") or "").strip()
+        actor = (body.get("actor") or "human").strip()
+
+        if not shot_id:
+            return self._send_json({"error": "shot_id required"}, 400)
+        if gate not in ("motion_review_passed", "signed_off"):
+            return self._send_json({"error": f"unsupported gate: {gate}"}, 400)
+
+        project_dir = self._project_dir_for(project_slug)
+        try:
+            from lib.shot_gates import set_motion_review, set_signoff
+        except Exception as e:
+            return self._send_json({"error": f"import failed: {e}"}, 500)
+
+        if gate == "motion_review_passed":
+            shot = set_motion_review(project_dir, shot_id, bool(value), notes)
+        else:
+            shot = set_signoff(project_dir, shot_id, bool(value), actor)
+        self._send_json({"ok": True, "shot": shot})
+
+    def _handle_v6_shot_gates_audit_all(self):
+        """POST {project, shot_ids?} — audit anchors and persist into gates.
+
+        Calls lib.anchor_auditor.audit_scene_anchor for each scene with an
+        anchor on disk, then writes pass/violations/summary into
+        shot_gates.json so the UI can gate Kling buttons on it.
+
+        Cost: ~$0.08/anchor via Opus vision; 25 shots ≈ $2.00.
+        """
+        try:
+            body = json.loads(self._read_body() or "{}")
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+
+        project_slug = (body.get("project") or "default").strip() or "default"
+        project_dir = self._project_dir_for(project_slug)
+        whitelist = set(body.get("shot_ids") or [])
+        character_rules = body.get("character_rules") or None
+
+        try:
+            from lib.anchor_auditor import audit_scene_anchor
+            from lib.shot_gates import apply_audit_result, gate_summary, load_gates
+        except Exception as e:
+            return self._send_json({"error": f"import failed: {e}"}, 500)
+
+        ok, reason, _t = _check_budget_gate(0.60)
+        if not ok:
+            return self._send_json({"error": "budget_exceeded", "reason": reason}, 402)
+
+        scenes_path = os.path.join(
+            OUTPUT_DIR, "projects", project_slug, "prompt_os", "scenes.json"
+        )
+        if not os.path.isfile(scenes_path):
+            return self._send_json(
+                {"error": f"scenes.json not found for project {project_slug}"}, 404,
+            )
+        try:
+            with open(scenes_path, "r", encoding="utf-8") as f:
+                scenes = json.load(f)
+        except Exception as e:
+            return self._send_json({"error": f"scenes.json read failed: {e}"}, 500)
+
+        anchors_dir = os.path.join(OUTPUT_DIR, "pipeline", "anchors_v6")
+        results = []
+        for scene in scenes:
+            sid = scene.get("id") or ""
+            if not sid:
+                continue
+            if whitelist and sid not in whitelist:
+                continue
+            anchor_path = os.path.join(anchors_dir, sid, "selected.png")
+            if not os.path.isfile(anchor_path):
+                results.append({"shot_id": sid, "skipped": "no_anchor"})
+                continue
+            try:
+                verdict = audit_scene_anchor(scene, anchor_path, character_rules)
+            except Exception as e:
+                results.append({"shot_id": sid, "error": f"{e.__class__.__name__}: {e}"})
+                continue
+            apply_audit_result(project_dir, sid, verdict)
+            vio_list = verdict.get("violations") or []
+            results.append({
+                "shot_id": sid,
+                "pass": bool(verdict.get("pass")),
+                "violations": len(vio_list),
+                "violation_codes": [v.get("code") for v in vio_list if isinstance(v, dict)],
+                "force_passed_codes": verdict.get("force_passed_codes") or [],
+                "summary": (verdict.get("summary") or "")[:500],
+            })
+
+        state = load_gates(project_dir)
+        self._send_json({
+            "ok": True,
+            "project": project_slug,
+            "results": results,
+            "summary": gate_summary(state),
+        })
+
+    def _handle_screenplay_parse(self):
+        """Parse a Fountain/plain-text screenplay into shots."""
+        from lib import screenplay_parser
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        text = body.get("text", "")
+        if not text or not text.strip():
+            self._send_json({"error": "text required"}, 400)
+            return
+        try:
+            parsed = screenplay_parser.parse(text)
+            parsed["shot_sheet_text"] = screenplay_parser.to_shot_sheet_text(parsed)
+            self._send_json(parsed)
+        except Exception as e:
+            self._send_json({"error": f"parse failed: {e}"}, 500)
+
+    def _handle_v6_clip_versions(self, shot_id):
+        """List all saved versions for a shot."""
+        versions_dir = os.path.join(OUTPUT_DIR, "pipeline", "clips_v6", "_versions", shot_id)
+        result = []
+        if os.path.isdir(versions_dir):
+            for f in sorted(os.listdir(versions_dir)):
+                if f.startswith("v") and f.endswith(".mp4"):
+                    v_num = int(f[1:-4]) if f[1:-4].isdigit() else 0
+                    meta_path = os.path.join(versions_dir, f"v{v_num}.json")
+                    meta = {}
+                    if os.path.isfile(meta_path):
+                        try:
+                            with open(meta_path, "r", encoding="utf-8") as mf:
+                                meta = json.load(mf)
+                        except (json.JSONDecodeError, IOError):
+                            pass
+                    result.append({
+                        "version": v_num,
+                        "url": f"/api/v6/clip-version-file/{shot_id}/v{v_num}.mp4",
+                        "meta": meta,
+                    })
+        self._send_json({"shot_id": shot_id, "versions": result})
+
+    def _handle_v6_sonnet_override(self):
+        """Promote a candidate to selected.png. Works for both Opus's
+        auto-pick (frontend always calls this on Accept) and manual override.
+
+        `selected` may be a `/api/v6/anchor-image/...` URL or a filesystem
+        path — we normalize either way, then copy to the same dir as the
+        candidate under the name `selected.png`.
+        """
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        shot_id = body.get("shot_id", "")
+        selected = body.get("selected", "")
+        if not shot_id or not selected:
+            self._send_json({"error": "shot_id and selected required"}, 400)
+            return
+
+        # Normalize URL or path → absolute filesystem path under anchors_v6
+        anchor_base = os.path.join(OUTPUT_DIR, "pipeline", "anchors_v6")
+        rel = selected
+        if rel.startswith("/api/v6/anchor-image/"):
+            rel = rel[len("/api/v6/anchor-image/"):]
+        if rel.startswith("output/pipeline/anchors_v6/"):
+            rel = rel[len("output/pipeline/anchors_v6/"):]
+        src_path = os.path.realpath(os.path.join(anchor_base, rel))
+        anchor_root = os.path.realpath(anchor_base)
+        if not src_path.startswith(anchor_root + os.sep):
+            self._send_json({"error": "path outside anchor root"}, 400)
+            return
+        if not os.path.isfile(src_path):
+            self._send_json({"error": f"file not found: {rel}"}, 404)
+            return
+
+        dest_path = os.path.join(os.path.dirname(src_path), "selected.png")
+        try:
+            import shutil
+            if os.path.realpath(src_path) != os.path.realpath(dest_path):
+                shutil.copy2(src_path, dest_path)
+        except OSError as e:
+            self._send_json({"error": f"copy failed: {e}"}, 500)
+            return
+
+        # Persist the override metadata alongside anchors
+        overrides_path = os.path.join(anchor_base, "_overrides.json")
+        os.makedirs(os.path.dirname(overrides_path), exist_ok=True)
+        overrides = {}
+        if os.path.isfile(overrides_path):
+            try:
+                with open(overrides_path, "r", encoding="utf-8") as f:
+                    overrides = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                overrides = {}
+        overrides[shot_id] = {"selected": selected, "ts": time.time(), "source": "user_override"}
+        with open(overrides_path, "w", encoding="utf-8") as f:
+            json.dump(overrides, f, indent=2)
+        self._send_json({"ok": True, "shot_id": shot_id, "selected": selected,
+                         "promoted_to": dest_path})
+
+    def _handle_v6_sonnet_review(self):
+        """Opus reviews transition between two anchors. (Route name kept for
+        UI backwards-compat; model is claude-opus-4-7.)"""
+        from lib.claude_client import call_vision_json, OPUS_MODEL
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        from_path = body.get("from_anchor", "")
+        to_path = body.get("to_anchor", "")
+        ref_sheet = body.get("ref_sheet", "")
+        transition_type = body.get("transition_type", "hard_cut")
+        from_info = body.get("from_info", {})
+        to_info = body.get("to_info", {})
+
+        # Budget gate (Opus vision, 3 images)
+        est_cost = 0.15
+        ok, reason, _t = _check_budget_gate(est_cost)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason, "est": est_cost}, 402)
+            return
+
+        system = """You are a senior VFX continuity supervisor reviewing anchor frame pairs.
+TARGET: confidence >= 0.90, risk_score <= 0.10.
+Image 1 = character ref, Image 2 = FROM shot, Image 3 = TO shot.
+Score identity/pose/camera/scene/motion continuity 0-1.
+JSON only: {"scores": {"overall_score": N, ...}, "risk_level": "low|medium|high", "confidence": N, "plain_english_summary": "..."}"""
+
+        user_prompt = f"""Review: {from_info.get('shot_id','')} -> {to_info.get('shot_id','')} ({transition_type})
+FROM: {from_info.get('title','')} | TO: {to_info.get('title','')}
+JSON only."""
+
+        images = [p for p in [ref_sheet, from_path, to_path] if os.path.isfile(p)]
+
+        try:
+            result = call_vision_json(user_prompt, images, system=system, model=OPUS_MODEL, max_tokens=2000)
+            self._send_json(result)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_v6_get_references(self):
+        """List V6 refs — merged from uploaded references_v6/ AND preproduction packages."""
+        refs_dir = os.path.join(OUTPUT_DIR, "pipeline", "references_v6")
+        result = {"character": [], "environment": [], "prop": [], "costume": []}
+
+        # 1. Uploaded V6 refs (legacy, still supported)
+        if os.path.isdir(refs_dir):
+            for ref_type in result.keys():
+                type_dir = os.path.join(refs_dir, ref_type)
+                if os.path.isdir(type_dir):
+                    for f in sorted(os.listdir(type_dir)):
+                        if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                            mtime = os.path.getmtime(os.path.join(type_dir, f))
+                            result[ref_type].append({
+                                "name": os.path.splitext(f)[0],
+                                "filename": f,
+                                "url": f"/api/v6/reference-image/{ref_type}/{f}",
+                                "path": os.path.join(type_dir, f),
+                                "source": "upload",
+                                "mtime": mtime,
+                            })
+
+        # 2. Preproduction packages — hero image of each approved/generated package
+        # PROJECT-SCOPED: only emit packages whose `project_slug` field matches
+        # the active project. Legacy packages with no project_slug are skipped
+        # (they pre-date the multi-project refactor and caused the 2026-04-20
+        # Buddy/Owen/Maya cross-project leak into TB anchor generation).
+        try:
+            active_slug = active_project.get_active_slug() or "default"
+        except Exception:
+            active_slug = "default"
+        try:
+            store = self._get_preprod_store()
+            project_root = os.path.realpath(PROJECT_DIR)
+            skipped_unscoped = 0
+            for pkg in store.get_all():
+                ptype = pkg.get("package_type", "")
+                if ptype not in result:
+                    continue
+                hero = pkg.get("hero_image_path")
+                if not hero or not os.path.isfile(hero):
+                    continue
+                pkg_project = (pkg.get("project_slug") or pkg.get("project") or "").strip()
+                if not pkg_project or pkg_project != active_slug:
+                    skipped_unscoped += 1
+                    continue
+                # Build a URL relative to project root (served via /output/ static route)
+                try:
+                    rel = os.path.relpath(os.path.realpath(hero), project_root).replace("\\", "/")
+                    url = "/" + rel
+                except ValueError:
+                    continue
+                result[ptype].append({
+                    "name": pkg.get("name", pkg.get("package_id", "")),
+                    "filename": os.path.basename(hero),
+                    "url": url,
+                    "path": hero,
+                    "source": "preproduction",
+                    "package_id": pkg.get("package_id"),
+                    "project_slug": pkg_project,
+                    "hero_view": pkg.get("hero_view"),
+                    "status": pkg.get("status", "generated"),
+                    "mtime": os.path.getmtime(hero),
+                    "sheet_count": len([s for s in pkg.get("sheet_images", []) if s.get("image_path")]),
+                })
+            if skipped_unscoped:
+                print(f"[REFS] skipped {skipped_unscoped} unscoped preprod packages for project={active_slug}")
+        except Exception as e:
+            # Preprod merge is optional — don't break the V6 refs list if the store is missing
+            pass
+
+        self._send_json({"references": result})
+
+    def _handle_v6_sonnet_audit_prompt(self):
+        """Opus reviews assembled shot prompts and recommends improvements.
+        (Route name kept for UI backwards-compat; model is claude-opus-4-7.)"""
+        from lib.claude_client import call_json, OPUS_MODEL
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        anchor_prompt = body.get("anchor_prompt", "")
+        video_prompt = body.get("video_prompt", "")
+        shot_id = body.get("shot_id", "")
+        shot_context = body.get("shot_context", {})
+
+        # Budget gate (Opus text-only audit)
+        est_cost = 0.08
+        ok, reason, _t = _check_budget_gate(est_cost)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason, "est": est_cost}, 402)
+            return
+
+        system = """You are a senior cinematography prompt engineer for AI video generation (Kling 3.0 image-to-video).
+Your job: review assembled prompts and recommend specific improvements for realism and continuity.
+
+RULES FOR ANCHOR PROMPTS (still image generation via Gemini):
+- Describe framing, composition, lighting. DO NOT describe the subject in detail — reference images carry identity.
+- Aim for photorealistic cinema stills, not illustrations.
+
+RULES FOR VIDEO PROMPTS (Kling 3.0 i2v, 15-40 words):
+- Camera movement FIRST, then 1-2 subject actions max.
+- No sound words. No scene re-description (anchor carries visual).
+- Add environmental micro-motion (wind, leaves, light shifts).
+- Observational documentary style, not directed/posed.
+
+Return JSON: {
+  "anchor_prompt_revised": "...",
+  "video_prompt_revised": "...",
+  "changes_made": ["list of what you changed and why"],
+  "confidence": 0.0-1.0,
+  "word_count_anchor": N,
+  "word_count_video": N
+}"""
+
+        user_prompt = f"""Shot: {shot_id}
+Context: {json.dumps(shot_context)}
+
+ANCHOR PROMPT TO REVIEW:
+{anchor_prompt}
+
+VIDEO PROMPT TO REVIEW:
+{video_prompt}
+
+Revise both prompts following the rules. Keep video prompt 15-40 words."""
+
+        try:
+            result = call_json(user_prompt, system=system, model=OPUS_MODEL, max_tokens=1500)
+            self._send_json(result)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_v6_anchor_audit(self):
+        """Vision-audit a single anchor PNG against character/emblem rules.
+
+        Body: {shot_id: str, project?: str, character_rules?: dict,
+               callout_path?: str}
+        If callout_path is omitted, the handler tries to auto-locate an emblem
+        callout PNG at output/prompt_os/previews/characters/<id>_callout*.png
+        and passes it as the second image to the auditor.
+        """
+        from lib.anchor_auditor import audit_scene_anchor
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+        shot_id = (body.get("shot_id") or "").strip()
+        project_slug = (body.get("project") or "default").strip() or "default"
+        character_rules = body.get("character_rules") or None
+        callout_path = (body.get("callout_path") or "").strip() or None
+        if not shot_id:
+            self._send_json({"error": "shot_id required"}, 400)
+            return
+
+        ok, reason, _t = _check_budget_gate(0.02)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason}, 402)
+            return
+
+        scenes_path = os.path.join(
+            OUTPUT_DIR, "projects", project_slug, "prompt_os", "scenes.json"
+        )
+        if not os.path.isfile(scenes_path):
+            self._send_json({"error": f"scenes.json not found for project {project_slug}"}, 404)
+            return
+        try:
+            with open(scenes_path, "r", encoding="utf-8") as f:
+                scenes = json.load(f)
+        except Exception as e:
+            self._send_json({"error": f"scenes.json read failed: {e}"}, 500)
+            return
+        scene = next((s for s in scenes if s.get("id") == shot_id), None)
+        if scene is None:
+            self._send_json({"error": f"shot {shot_id} not in scenes.json"}, 404)
+            return
+        anchor_path = os.path.join(OUTPUT_DIR, "pipeline", "anchors_v6", shot_id, "selected.png")
+        if not os.path.isfile(anchor_path):
+            self._send_json({
+                "shot_id": shot_id,
+                "pass": False,
+                "status": "missing_anchor",
+                "violations": [{"code": "missing_anchor", "severity": "high",
+                                "detail": "no anchor image on disk"}],
+            })
+            return
+        if not callout_path:
+            import glob as _glob
+            cand = sorted(_glob.glob(os.path.join(
+                OUTPUT_DIR, "prompt_os", "previews", "characters", "*_callout*.png"
+            )), key=os.path.getmtime, reverse=True)
+            if cand:
+                callout_path = cand[0]
+        try:
+            verdict = audit_scene_anchor(scene, anchor_path, character_rules,
+                                         callout_path=callout_path)
+        except Exception as e:
+            self._send_json({"error": f"audit failed: {e}"}, 500)
+            return
+        # Persist into shot_gates so the UI can gate Kling on this result
+        try:
+            from lib.shot_gates import apply_audit_result
+            project_dir = self._project_dir_for(project_slug)
+            apply_audit_result(project_dir, shot_id, verdict)
+        except Exception:
+            pass
+        self._send_json({
+            "shot_id": shot_id,
+            "anchor_path": anchor_path,
+            "callout_path": callout_path,
+            **verdict,
+        })
+
+    def _handle_v6_anchors_audit_batch(self):
+        """Audit every anchor in the project. Returns per-shot verdicts.
+
+        Body: {project?: str, character_rules?: dict}
+        """
+        from lib.anchor_auditor import audit_batch
+        try:
+            body = json.loads(self._read_body())
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+        project_slug = (body.get("project") or "default").strip() or "default"
+        character_rules = body.get("character_rules") or None
+
+        ok, reason, _t = _check_budget_gate(0.40)
+        if not ok:
+            self._send_json({"error": "budget_exceeded", "reason": reason}, 402)
+            return
+
+        scenes_path = os.path.join(
+            OUTPUT_DIR, "projects", project_slug, "prompt_os", "scenes.json"
+        )
+        if not os.path.isfile(scenes_path):
+            self._send_json({"error": f"scenes.json not found for project {project_slug}"}, 404)
+            return
+        try:
+            with open(scenes_path, "r", encoding="utf-8") as f:
+                scenes = json.load(f)
+        except Exception as e:
+            self._send_json({"error": f"scenes.json read failed: {e}"}, 500)
+            return
+        anchors_dir = os.path.join(OUTPUT_DIR, "pipeline", "anchors_v6")
+        try:
+            report = audit_batch(scenes, anchors_dir, character_rules)
+        except Exception as e:
+            self._send_json({"error": f"audit_batch failed: {e}"}, 500)
+            return
+        audits_dir = os.path.join(OUTPUT_DIR, "pipeline", "audits")
+        try:
+            os.makedirs(audits_dir, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            with open(os.path.join(audits_dir, f"anchors_{ts}.json"), "w", encoding="utf-8") as f:
+                json.dump(report, f, indent=2)
+        except Exception:
+            pass
+        self._send_json(report)
+
+    def _handle_v6_reference_upload(self):
+        """Upload reference photo for V6 pipeline (character, environment, prop sheets)."""
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._send_json({"error": "Expected multipart/form-data"}, 400)
+            return
+
+        parts_ct = content_type.split("boundary=")
+        if len(parts_ct) < 2:
+            self._send_json({"error": "No boundary"}, 400)
+            return
+        boundary = parts_ct[1].strip().encode()
+
+        body = self._read_body()
+        parts = self._parse_multipart(body, boundary)
+
+        ref_type = "character"  # character, environment, prop, costume
+        ref_name = ""
+        file_data = None
+        file_ext = ".png"
+
+        for part in parts:
+            if part.get("name") == "type":
+                ref_type = part["data"].decode().strip()
+            elif part.get("name") == "name":
+                ref_name = part["data"].decode().strip()
+            elif part.get("name") == "file" and part.get("filename"):
+                file_data = part["data"]
+                ext = os.path.splitext(part["filename"])[1].lower()
+                if ext in (".png", ".jpg", ".jpeg", ".webp"):
+                    file_ext = ext
+
+        if not file_data:
+            self._send_json({"error": "No file uploaded"}, 400)
+            return
+        if not ref_name:
+            ref_name = f"ref_{ref_type}_{int(time.time())}"
+
+        # Save to output/pipeline/references_v6/<type>/<name>.<ext>
+        refs_dir = os.path.join(OUTPUT_DIR, "pipeline", "references_v6", ref_type)
+        os.makedirs(refs_dir, exist_ok=True)
+        safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', ref_name)
+        filepath = os.path.join(refs_dir, f"{safe_name}{file_ext}")
+        with open(filepath, "wb") as f:
+            f.write(file_data)
+
+        self._send_json({
+            "ok": True,
+            "path": filepath,
+            "url": f"/api/v6/anchor-image/../references_v6/{ref_type}/{safe_name}{file_ext}",
+            "type": ref_type,
+            "name": ref_name
+        })
 
     def _handle_pipeline_reset(self):
         """Reset pipeline to a specific state."""
@@ -12142,9 +18601,50 @@ _SSL_CERT = os.environ.get("LUMN_SSL_CERT", "")
 _SSL_KEY = os.environ.get("LUMN_SSL_KEY", "")
 
 
+def _preflight_production_checks():
+    """Refuse to start in production mode without the safety baseline set.
+    Enable by setting LUMN_PRODUCTION=1 when running behind a public tunnel."""
+    if os.environ.get("LUMN_PRODUCTION") != "1":
+        return
+    missing = []
+    tok = os.environ.get("LUMN_API_TOKEN", "").strip()
+    if not tok or tok == "test" or len(tok) < 16:
+        missing.append("LUMN_API_TOKEN (>=16 chars, not 'test')")
+    if not os.environ.get("LUMN_BETA_PASSWORD", "").strip():
+        missing.append("LUMN_BETA_PASSWORD (shared invite code)")
+    if not os.environ.get("LUMN_DAILY_CAP_CENTS", "").strip():
+        missing.append("LUMN_DAILY_CAP_CENTS (global spend cap)")
+    if not os.environ.get("LUMN_ADMIN_EMAILS", "").strip():
+        missing.append("LUMN_ADMIN_EMAILS (so /api/metrics is reachable)")
+    if missing:
+        print("\n[PRODUCTION MODE] Refusing to start. Set these env vars first:")
+        for m in missing:
+            print(f"  - {m}")
+        print("\nOr unset LUMN_PRODUCTION to run in dev mode.\n")
+        raise SystemExit(1)
+    print("[PRODUCTION MODE] preflight passed — beta gate active")
+
+
 def main():
     _cleanup_old_temp_files()
-    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    _preflight_production_checks()
+
+    # One-time migration: move pre-refactor output/prompt_os/ into
+    # output/projects/default/. Safe to call on every boot — returns None
+    # once projects/ has at least one subdirectory.
+    try:
+        _migrated_slug = active_project.migrate_legacy_workspace()
+        if _migrated_slug:
+            print(f"[migration] Moved legacy workspace into project '{_migrated_slug}'")
+        active_project.ensure_vault_scaffold()
+    except Exception as _e:
+        print(f"[migration] WARN: {_e}")
+
+    # ThreadingHTTPServer: one thread per request so parallel fetches from the
+    # browser don't queue behind a long-running generation. Single-threaded
+    # HTTPServer caused ERR_CONNECTION_REFUSED storms under Playwright load.
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    server.daemon_threads = True
 
     if _SSL_CERT and _SSL_KEY and os.path.isfile(_SSL_CERT) and os.path.isfile(_SSL_KEY):
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

@@ -1,4 +1,13 @@
-# ROADMAP V2 — 50 New Items + Tweaks to Existing Features
+# ROADMAP V2 — 50 New Items + Tweaks to Existing Features (HISTORICAL)
+
+## Status: SUPERSEDED by V6 pipeline (see WHITEPAPER.txt)
+
+> **This is a historical roadmap from the pre-V6 era.** Items referencing Runway
+> moderation, Runway/Grok polling, "cyberpunk dark" theme toggle, and per-scene
+> engine override reflect an older architecture. V6 runs on fal.ai (Gemini 3.1
+> Flash + Kling 3.0) with Claude QA, has retired the cyberpunk aesthetic in favor
+> of the current Inter Tight / muted / backdrop-blur look, and uses a single video
+> engine per production (no engine mixing). Retained for historical context only.
 
 ## STATUS: V1 Roadmap (50 items) — 28 completed, 22 remaining need UI wiring
 
@@ -85,7 +94,7 @@ T20. When photo is uploaded, auto-suggest a prompt based on the image content
 40. **Social media caption generator** — AI-generated captions/hashtags for each platform
 
 ### UI & UX (41-50)
-41. **Dark/light mode** — toggle between cyberpunk dark and clean light theme
+41. **Dark/light mode** — toggle between dark and light themes (note: current V6 aesthetic is the cinematic Inter Tight / muted / backdrop-blur style; the cyberpunk theme referenced here is historical)
 42. **Drag scene to timeline** — visual drag from card view to a horizontal timeline
 43. **Fullscreen scene preview** — click a clip to see it fullscreen with playback controls
 44. **Bulk prompt editor** — edit all scene prompts in a single text area (one per line)

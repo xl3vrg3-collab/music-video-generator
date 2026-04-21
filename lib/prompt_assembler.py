@@ -652,18 +652,32 @@ def compile_shot_prompt(
         id_parts = [p for p in [char_block, costume_block] if p]
         identity = ", ".join(id_parts)
 
-    # 4. ACTION
+    # 4. ACTION — accept dict (cinematic shape) or string (MV scenes.json shape).
+    # Subject action must lead the verb so video models bind motion to the subject, not the camera.
     action = shot.get("action", {})
     action_parts = []
-    if action.get("summary"):
-        action_parts.append(action["summary"])
-    if action.get("start_pose"):
-        action_parts.append(f"starting from {action['start_pose']}")
-    if action.get("end_pose"):
-        action_parts.append(f"transitioning to {action['end_pose']}")
+    if isinstance(action, dict):
+        if action.get("summary"):
+            action_parts.append(action["summary"])
+        if action.get("start_pose"):
+            action_parts.append(f"starting from {action['start_pose']}")
+        if action.get("end_pose"):
+            action_parts.append(f"transitioning to {action['end_pose']}")
+        summary_text = action.get("summary") or ""
+    elif isinstance(action, str) and action.strip():
+        action_parts.append(action.strip())
+        summary_text = action.strip()
+    else:
+        summary_text = ""
+    # Fallback for MV scenes.json shape (shotDescription is the verb)
+    if not action_parts:
+        desc = shot.get("shotDescription") or shot.get("shot_description") or ""
+        if isinstance(desc, str) and desc.strip():
+            action_parts.append(desc.strip())
+            summary_text = desc.strip()
     # Layers add depth
     layers = shot.get("layers", {})
-    if layers.get("surface") and layers["surface"] not in (action.get("summary") or ""):
+    if layers.get("surface") and layers["surface"] not in summary_text:
         action_parts.append(layers["surface"])
     action_block = ", ".join(action_parts) if action_parts else ""
 
@@ -824,8 +838,9 @@ def compile_shot_prompt_v4(
         if name:
             parts.append(name)
 
-    # 4. Action (always — this is the shot-specific content)
-    action = shot.get("action", "")
+    # 4. Action (always — this is the shot-specific content).
+    # Fall back to shotDescription so scenes.json MV shape still emits a subject verb.
+    action = shot.get("action", "") or shot.get("shotDescription", "") or shot.get("shot_description", "")
     if isinstance(action, dict):
         action = action.get("summary", "")
     if action:
@@ -958,8 +973,8 @@ def compile_anchor_prompt(shot: dict, style_bible: dict = None,
     if style_str:
         parts.append(style_str[:80])
 
-    # 3. Action / scene description
-    action = shot.get("action", "")
+    # 3. Action / scene description — fall back to shotDescription (MV scenes.json shape)
+    action = shot.get("action", "") or shot.get("shotDescription", "") or shot.get("shot_description", "")
     if isinstance(action, dict):
         action = action.get("summary", "")
     if action:

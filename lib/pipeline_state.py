@@ -56,6 +56,7 @@ class PipelineState:
     def __init__(self, output_dir: str):
         self.output_dir = output_dir
         self._state_file = os.path.join(output_dir, "pipeline_state.json")
+        self._plan_file = os.path.join(output_dir, "pipeline_plan.json")
 
         # Core state
         self.state = "IDLE"
@@ -143,22 +144,22 @@ class PipelineState:
     def reset_to(self, state: str):
         """
         Reset pipeline to a specific state for re-running.
-        Clears data that would be regenerated from that state forward.
+        Clears data that belongs to stages AFTER the target state.
+        Data produced AT the target state is preserved.
         """
         if state not in PIPELINE_STATES:
             raise ValueError(f"Unknown state: {state}")
 
         idx = PIPELINE_STATES.index(state)
 
-        # Clear data from later stages
-        if idx <= PIPELINE_STATES.index("ASSETS_EXTRACTED"):
+        # Clear data produced after this state
+        if idx < PIPELINE_STATES.index("ASSETS_EXTRACTED"):
             self.packages = []
-        if idx <= PIPELINE_STATES.index("PLAN_READY"):
+        if idx < PIPELINE_STATES.index("PLAN_READY"):
             self.plan = {}
+        if idx < PIPELINE_STATES.index("ANCHORS_GENERATING") or idx == PIPELINE_STATES.index("ANCHORS_GENERATING"):
             self.anchors = {}
-        if idx <= PIPELINE_STATES.index("ANCHORS_GENERATING"):
-            self.anchors = {}
-        if idx <= PIPELINE_STATES.index("SHOTS_GENERATING"):
+        if idx < PIPELINE_STATES.index("CONFORM"):
             self.output_file = ""
 
         self._set_state(state)
@@ -212,7 +213,7 @@ class PipelineState:
     # ── Persistence ──
 
     def save(self):
-        """Save state to JSON file."""
+        """Save state to JSON file. The plan goes to a sidecar file."""
         os.makedirs(self.output_dir, exist_ok=True)
         self.updated_at = time.time()
         data = {
@@ -225,16 +226,20 @@ class PipelineState:
             "story_model": self.story_model,
             "extraction": self.extraction,
             "packages": self.packages,
-            "plan_ref": bool(self.plan),  # don't duplicate the full plan
+            "plan_ref": bool(self.plan),
             "anchors": self.anchors,
             "output_file": self.output_file,
             "errors": self.errors,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
-            "state_history": self.state_history[-50:],  # keep last 50
+            "state_history": self.state_history[-50:],
         }
         with open(self._state_file, "w") as f:
             json.dump(data, f, indent=2)
+        # Persist plan to sidecar file so prerequisite checks survive restarts.
+        if self.plan:
+            with open(self._plan_file, "w") as f:
+                json.dump(self.plan, f, indent=2)
 
     def load(self):
         """Load state from JSON file."""
@@ -257,6 +262,13 @@ class PipelineState:
         self.created_at = data.get("created_at", time.time())
         self.updated_at = data.get("updated_at", time.time())
         self.state_history = data.get("state_history", [])
+        # Load plan sidecar if present.
+        if os.path.isfile(self._plan_file):
+            try:
+                with open(self._plan_file) as pf:
+                    self.plan = json.load(pf)
+            except (json.JSONDecodeError, ValueError):
+                self.plan = {}
 
     # ── Internal helpers ──
 
@@ -283,25 +295,29 @@ class PipelineState:
         return True
 
     def _all_anchors_done(self) -> bool:
-        """Check if all shots have generated anchors."""
+        """Check if all shots have been processed (success, fail, or skip)."""
         shots = self.plan.get("scenes", [])
         if not shots:
             return False
+        terminal = ("generated", "approved", "rejected", "failed", "skipped")
         for s in shots:
             sid = s.get("shot_id", s.get("id", ""))
             anchor = self.anchors.get(sid, {})
-            if anchor.get("status") not in ("generated", "approved", "rejected"):
+            if anchor.get("status") not in terminal:
                 return False
         return True
 
     def _all_anchors_approved(self) -> bool:
-        """Check if all anchors are approved (or no anchors needed)."""
+        """Check if all anchors are in a terminal state (approved/failed/skipped)."""
+        if not self.anchors:
+            return False
         for anchor in self.anchors.values():
-            if anchor.get("status") == "rejected":
+            status = anchor.get("status")
+            if status == "rejected":
                 return False
-            if anchor.get("status") not in ("approved", "generated"):
+            if status not in ("approved", "generated", "failed", "skipped"):
                 return False
-        return len(self.anchors) > 0
+        return True
 
     def _all_shots_done(self) -> bool:
         """Check if all shots have generated clips."""

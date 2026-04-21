@@ -362,15 +362,15 @@ def _split_action(visual_prompt, n_shots):
 
 # ── Available models by provider ──
 AVAILABLE_MODELS = {
+    "claude-opus-4-7":    {"provider": "anthropic", "label": "Claude Opus 4.7",    "tier": "director"},
     "claude-sonnet-4-6":  {"provider": "anthropic", "label": "Claude Sonnet 4.6",  "tier": "premium"},
-    "claude-haiku-4-5":   {"provider": "anthropic", "label": "Claude Haiku 4.5",   "tier": "standard"},
     "grok-3":             {"provider": "xai",       "label": "Grok 3",             "tier": "premium"},
     "grok-3-mini":        {"provider": "xai",       "label": "Grok 3 Mini",        "tier": "budget"},
     "gpt-4o":             {"provider": "openai",    "label": "GPT-4o",             "tier": "premium"},
     "gpt-4o-mini":        {"provider": "openai",    "label": "GPT-4o Mini",        "tier": "budget"},
 }
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-opus-4-7"
 
 # Provider API endpoints
 _PROVIDER_URLS = {

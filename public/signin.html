@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LUMN Studio — Beta Access</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    font: 15px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+    background: #0b0b0e; color: #e8e8ec;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    width: 100%; max-width: 380px;
+    background: #14141a; border: 1px solid #24242e; border-radius: 14px;
+    padding: 32px 28px;
+    box-shadow: 0 30px 60px -30px rgba(0,0,0,.6);
+  }
+  h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: -0.01em; }
+  .sub { margin: 0 0 24px; color: #8a8a96; font-size: 13px; }
+  .tabs { display: flex; gap: 4px; background: #0e0e14; padding: 4px;
+          border-radius: 10px; margin-bottom: 20px; }
+  .tab { flex: 1; padding: 8px 0; text-align: center; font-size: 13px;
+         color: #8a8a96; cursor: pointer; border-radius: 7px;
+         user-select: none; transition: .15s; }
+  .tab.active { background: #24242e; color: #fff; }
+  label { display: block; font-size: 12px; color: #8a8a96;
+          margin: 12px 0 6px; text-transform: uppercase; letter-spacing: .05em; }
+  input {
+    width: 100%; padding: 11px 13px;
+    background: #0b0b10; border: 1px solid #24242e; border-radius: 8px;
+    color: #e8e8ec; font: inherit; outline: none;
+  }
+  input:focus { border-color: #4a4aff; }
+  button {
+    width: 100%; margin-top: 20px; padding: 12px;
+    background: linear-gradient(180deg, #5a5aff, #3a3ad8);
+    border: 0; border-radius: 9px; color: #fff; font: 600 14px inherit;
+    cursor: pointer; transition: .15s;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .6; cursor: wait; }
+  .err {
+    margin-top: 14px; padding: 10px 12px;
+    background: #2a1010; border: 1px solid #521818; border-radius: 8px;
+    color: #ff9a9a; font-size: 13px; display: none;
+  }
+  .err.show { display: block; }
+  .foot { margin-top: 18px; text-align: center; font-size: 11px;
+          color: #5a5a66; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>LUMN Studio</h1>
+    <p class="sub">Closed beta — invitation only</p>
+
+    <div class="tabs">
+      <div class="tab active" data-mode="signup">Create account</div>
+      <div class="tab" data-mode="login">Sign in</div>
+    </div>
+
+    <form id="authForm" autocomplete="on">
+      <label>Email</label>
+      <input type="email" name="email" required autocomplete="email">
+
+      <label>Password</label>
+      <input type="password" name="password" required
+             minlength="8" autocomplete="current-password">
+
+      <div id="betaWrap">
+        <label>Beta access code</label>
+        <input type="text" name="beta_password" autocomplete="off"
+               placeholder="From your invite email">
+      </div>
+
+      <button type="submit" id="submitBtn">Create account</button>
+      <div class="err" id="err"></div>
+    </form>
+
+    <p class="foot">Your machine. Your generations. Your keys.</p>
+  </div>
+
+<script>
+let mode = 'signup';
+const tabs = document.querySelectorAll('.tab');
+const submitBtn = document.getElementById('submitBtn');
+const betaWrap = document.getElementById('betaWrap');
+const err = document.getElementById('err');
+const form = document.getElementById('authForm');
+
+function setMode(next) {
+  mode = next;
+  tabs.forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
+  submitBtn.textContent = mode === 'signup' ? 'Create account' : 'Sign in';
+  betaWrap.style.display = mode === 'signup' ? '' : 'none';
+  err.classList.remove('show');
+}
+
+tabs.forEach(t => t.addEventListener('click', () => setMode(t.dataset.mode)));
+
+form.addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  err.classList.remove('show');
+  submitBtn.disabled = true;
+  const fd = new FormData(form);
+  const body = {
+    email: fd.get('email'),
+    password: fd.get('password'),
+  };
+  if (mode === 'signup') body.beta_password = fd.get('beta_password') || '';
+  try {
+    const r = await fetch('/api/auth/' + mode, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      err.textContent = data.error || ('error ' + r.status);
+      err.classList.add('show');
+      submitBtn.disabled = false;
+      return;
+    }
+    window.location.href = '/';
+  } catch (e) {
+    err.textContent = e.message || 'network error';
+    err.classList.add('show');
+    submitBtn.disabled = false;
+  }
+});
+</script>
+<script src="/public/feedback-widget.js" defer></script>
+</body>
+</html>

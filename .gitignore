@@ -5,3 +5,33 @@ references/
 __pycache__/
 *.pyc
 node_modules/
+
+# Heavy local stores (not shipped with source)
+lumn-stitcher/
+lumn.db
+*.db-journal
+logs/
+tmp_verify_*/
+test_photos/
+
+# Binary QA artifacts (generated, not source)
+public/qa_v3_*.png
+public/trailer.mp4
+public/trailer_shot_*.mp4
+public/trailer_qa_*.jpg
+public/_diag_*.jpg
+public/bear_*_backup.png
+public/bear_*_drift.png
+public/bear_*_compare*.png
+public/bear_overlay_diff*.png
+public/hero_candidates/
+public/trailer_shot_*_first.png
+public/trailer_shot_*_lastframe.png
+_tmp_*.html
+LUMN Manifesto.pdf
+
+# Tools cache/temp dirs
+tools/_clip_audit/
+tools/_mv_frames/
+tools/screenshots/
+tools/_pdf_page_*.png

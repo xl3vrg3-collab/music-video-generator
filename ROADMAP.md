@@ -1,14 +1,22 @@
-# LUMN Studio Roadmap
+# LUMN Studio Roadmap (V1 -- HISTORICAL)
 ## Last Updated: 2026-04-06
+## Status: SUPERSEDED by V6 pipeline (see WHITEPAPER.txt)
+
+> **This is a historical roadmap from the pre-V6 / pre-fal.ai era.** References to
+> Runway (`gen4_image_turbo`, `gen4.5`), Grok for generation, and the "Make My
+> Movie" single-CTA flow describe an earlier architecture. V6 runs on fal.ai
+> (Gemini 3.1 Flash + Kling 3.0) with Claude QA and uses the 7-stage stepper
+> (Brief -> Drafts & Refs -> Assets -> Scenes -> Shots -> Render -> Output).
+> Retained for historical context; do not treat items below as the current plan.
 
 ---
 
 ## PHASE 1: One-Click Movie (Next Sprint)
-**Goal:** User provides idea + photos + song → LUMN does everything else
+**Goal:** User provides idea + photos + song -> LUMN does everything else
 
 ### 1.1 "Make My Movie" Button
 - Single CTA on Project page
-- Chains: AI shot sheet → asset creation → frame gen → clip gen → auto-arrange → music sync → render
+- Chains: AI shot sheet -> asset creation -> frame gen -> clip gen -> auto-arrange -> music sync -> render
 - User just reviews and tweaks at any step
 - **AI Needed:** LLM for shot sheet writing (have via Grok/Claude), image gen (have via Runway), video gen (have via Runway)
 

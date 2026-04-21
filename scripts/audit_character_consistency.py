@@ -1,6 +1,6 @@
 """
 Character Consistency Audit – Golden Retriever "Buddy"
-Sends each frame + reference sheet to Claude Haiku vision for structured scoring.
+Sends each frame + reference sheet to Claude Opus vision for structured scoring.
 """
 
 import base64, json, os, sys, time, re
@@ -12,7 +12,7 @@ load_dotenv(Path(r"C:\Users\Mathe\lumn\.env"))
 import anthropic
 
 CLIENT = anthropic.Anthropic()          # reads ANTHROPIC_API_KEY from env
-MODEL  = "claude-haiku-4-5-20251001"
+MODEL  = "claude-opus-4-7"
 
 REF_SHEET   = Path(r"C:\Users\Mathe\lumn\output\preproduction\pkg_char_c852b9c5\sheet.png")
 FRAMES_DIR  = Path(r"C:\Users\Mathe\lumn\output\audit_frames")

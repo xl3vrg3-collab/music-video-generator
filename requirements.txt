@@ -3,3 +3,6 @@ numpy==1.26.4
 librosa==0.10.2
 python-dotenv==1.0.1
 Pillow==10.4.0
+anthropic>=0.7.0
+fal>=0.4.0
+opencv-python>=4.8.0

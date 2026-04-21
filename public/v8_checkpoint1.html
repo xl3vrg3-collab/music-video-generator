@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>TB v8 — Checkpoint 1: Identity + Motif Refs</title>
+<style>
+  body { margin:0; background:#0a0a0e; color:#e8e8ec; font-family: -apple-system, Segoe UI, sans-serif; padding:32px; }
+  h1 { font-weight:300; letter-spacing:.04em; margin:0 0 8px; }
+  .sub { color:#a0a0ac; margin:0 0 32px; }
+  .section { margin-bottom: 48px; }
+  .section h2 { font-weight:300; color:#d0c090; letter-spacing:.04em; border-bottom:1px solid #333; padding-bottom:8px; }
+  .grid-chars { display:grid; grid-template-columns: repeat(3, 1fr); gap:16px; }
+  .grid-motifs { display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; }
+  .card { background:#13131a; border:1px solid #2a2a33; border-radius:8px; overflow:hidden; }
+  .card .img-wrap { aspect-ratio: 3/4; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  .card.motif .img-wrap { aspect-ratio: 1/1; }
+  .card.motif-wide .img-wrap { aspect-ratio: 16/9; }
+  .card img { width:100%; height:100%; object-fit:contain; display:block; }
+  .card .label { padding:10px 14px; font-size:13px; border-top:1px solid #2a2a33; }
+  .card .label strong { display:block; color:#f0f0f6; }
+  .card .label span { color:#888; font-size:11px; letter-spacing:.05em; text-transform:uppercase; }
+  .note { background:#1a1a22; border-left:3px solid #d0c090; padding:12px 16px; margin-top:24px; color:#c0c0c8; font-size:14px; }
+</style>
+</head>
+<body>
+<h1>TB v8 — Checkpoint 1</h1>
+<p class="sub">Identity + motif references for drift-controlled render. Review before anchor-gen spend (~$1.08 next).</p>
+
+<div class="section">
+  <h2>Characters — 3 subjects</h2>
+  <div class="grid-chars">
+    <div class="card">
+      <div class="img-wrap"><img src="/output/projects/default/prompt_os/char_previews/6d31f281-4cc_full_1776646911.png"></div>
+      <div class="label"><strong>Adult TB (approved)</strong><span>already locked</span></div>
+    </div>
+    <div class="card">
+      <div class="img-wrap"><img src="/output/projects/default/prompt_os/char_previews/09a47558-063_full_1776649309.png"></div>
+      <div class="label"><strong>Young TB (cub) — new</strong><span>half-height · necklace intact · no hoodie</span></div>
+    </div>
+    <div class="card">
+      <div class="img-wrap"><img src="/output/projects/default/prompt_os/char_previews/acca572f-e6d_full_1776649310.png"></div>
+      <div class="label"><strong>Girl-cub (the Lost One) — new</strong><span>honey-gold · amber eyes · silhouette refs</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Motifs — 6 reference plates</h2>
+  <div class="grid-motifs">
+    <div class="card motif">
+      <div class="img-wrap"><img src="/output/projects/default/prompt_os/ref_previews/necklace_whole_1776649698.png"></div>
+      <div class="label"><strong>Necklace (Whole)</strong><span>Acts 1 · 3 · 7 · 9</span></div>
+    </div>
+    <div class="card motif">
+      <div class="img-wrap"><img src="/output/projects/default/prompt_os/ref_previews/necklace_breaking_1776649698.png"></div>
+      <div class="label"><strong>Necklace (Breaking)</strong><span>Act 4 chorus hit</span></div>
+    </div>
+    <div class="card motif">
+      <div class="img-wrap"><img src="/output/projects/default/prompt_os/ref_previews/gold_bead_1776649698.png"></div>
+      <div class="label"><strong>Single Gold Bead</strong><span>Acts 4c · 7a · 9</span></div>
+    </div>
+    <div class="card motif motif-wide" style="grid-column: span 2;">
+      <div class="img-wrap"><img src="/output/projects/default/prompt_os/ref_previews/gold_fur_swatch_1776649698.png"></div>
+      <div class="label"><strong>Gold-threaded Fur Swatch</strong><span>Acts 7+ only — post-integration</span></div>
+    </div>
+    <div class="card motif">
+      <div class="img-wrap"><img src="/output/projects/default/prompt_os/ref_previews/girl_pawprint_1776649698.png"></div>
+      <div class="label"><strong>Girl's Paw-print</strong><span>Act 2c rain-glass</span></div>
+    </div>
+    <div class="card motif" style="grid-column: 1;">
+      <div class="img-wrap"><img src="/output/projects/default/prompt_os/ref_previews/girl_reaching_hand_1776649698.png"></div>
+      <div class="label"><strong>Girl's Reaching Paw</strong><span>Act 4c shatter reveal</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  Spend so far: ~$0.25 (8 Gemini generations). Next step: generate 30 shot anchors at ~$1.08 — pause for your sign-off. Drift risk: the most important visual contract is Young-TB vs Girl-cub scale + necklace integrity. Audit the two new character sheets most carefully.
+</div>
+</body>
+</html>
